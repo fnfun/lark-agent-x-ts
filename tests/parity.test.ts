@@ -71,12 +71,12 @@ describe('与原项目 Python 实现逐项对照', () => {
     expect(got.map(({ content_data: _, ...m }) => m)).toEqual(
       want.map(({ content_data: _, ...m }) => m) as never,
     );
-    got.forEach((m, i) =>
+    for (const [i, m] of got.entries()) {
       sameJson(
         m.content_data === null ? null : storageJson(m.content_data),
         want[i]?.content_data ?? null,
-      ),
-    );
+      );
+    }
   });
 
   for (const s of fixtures.send) {
