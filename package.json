@@ -1,0 +1,26 @@
+{
+  "name": "lark-agent-x-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "飞书 / Lark 网页版消息通道（迁移自 cv-cat/LarkAgentX）",
+  "type": "module",
+  "bin": {
+    "lark": "./src/cli/main.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "build": "bun build ./src/cli/main.ts --compile --minify --outfile dist/lark"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.4.3",
+    "@types/qrcode": "^1.5.6",
+    "typescript": "^7.0.2"
+  }
+}

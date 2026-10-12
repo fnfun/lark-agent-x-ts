@@ -1,0 +1,127 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { LarkMessage } from '../src/proto/decoders.js';
+import { nowStamp, parseStorageUrl, Storage } from '../src/storage/index.js';
+
+let dir: string;
+let st: Storage;
+
+const msg = (over: Partial<LarkMessage> = {}): LarkMessage => ({
+  msg_id: '7000000000000000001',
+  msg_type: 4,
+  msg_type_name: 'TEXT',
+  from_id: '7100000000000000001',
+  chat_id: '7200000000000000001',
+  chat_type: 2,
+  chat_type_name: 'GROUP',
+  scope: 'chat',
+  anchor: '',
+  at_me: false,
+  root_id: '',
+  parent_id: '',
+  cid: '',
+  position: 5,
+  create_time: 1_790_000_000,
+  content: '月报导出能加个按部门筛选吗',
+  content_data: { text: 'x', richText: { elementIds: ['1'] }, raw: new Uint8Array(3) },
+  ...over,
+});
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'larkx-st-'));
+  st = new Storage(`sqlite:///${join(dir, 'm.db')}`);
+});
+afterEach(async () => {
+  await st.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe('Storage', () => {
+  test('连接串沿用 SQLAlchemy 写法', () => {
+    expect(parseStorageUrl('sqlite:////abs/x.db')).toEqual({
+      dialect: 'sqlite',
+      url: 'sqlite:///abs/x.db',
+    });
+    expect(parseStorageUrl('mysql+pymysql://u:p@h:3306/db')).toEqual({
+      dialect: 'mysql',
+      url: 'mysql://u:p@h:3306/db',
+    });
+    expect(() => parseStorageUrl('postgres://x')).toThrow('不支持的存储连接串');
+  });
+
+  test('入库：content_data 按 Python 格式序列化，字节换成占位；会话记下名字与最新 position', async () => {
+    expect(await st.saveMessage(msg(), { senderName: '同事甲', chatName: '项目协作群' })).toBe(
+      true,
+    );
+    const [row] = await st.getMessages('7200000000000000001');
+    expect(row).toMatchObject({
+      msg_id: '7000000000000000001',
+      sender_name: '同事甲',
+      position: 5,
+      direction: 'in',
+    });
+    expect(row?.content_data).toBe(
+      '{"text": "x", "richText": {"elementIds": ["1"]}, "raw": "<3 bytes>"}',
+    );
+    expect(row?.stored_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}$/);
+    const [chat] = await st.listChats();
+    expect(chat).toMatchObject({
+      chat_id: '7200000000000000001',
+      name: '项目协作群',
+      chat_type: 2,
+      last_position: 5,
+    });
+  });
+
+  test('重复消息不再入库；先落库没有 position 的记录由回显补全并视作首次入库', async () => {
+    expect(await st.saveMessage(msg({ position: null }), { direction: 'out' })).toBe(true);
+    expect(await st.saveMessage(msg({ position: null }))).toBe(false);
+    expect(await st.saveMessage(msg({ position: 9, content: '回显' }), { direction: 'out' })).toBe(
+      true,
+    );
+    expect(await st.saveMessage(msg({ position: 9 }))).toBe(false);
+    const rows = await st.getMessages('7200000000000000001');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ position: 9, content: '回显' });
+    expect((await st.listChats())[0]?.last_position).toBe(9);
+  });
+
+  test('按话题筛选、按时间倒序取最近 N 条后升序返回', async () => {
+    for (let i = 1; i <= 4; i++)
+      await st.saveMessage(
+        msg({ msg_id: `m${i}`, create_time: 1000 + i, anchor: i % 2 ? 't1' : '', position: i }),
+      );
+    expect(
+      (await st.getMessages('7200000000000000001', { limit: 2 })).map((r) => r.msg_id),
+    ).toEqual(['m3', 'm4']);
+    expect(
+      (await st.getMessages('7200000000000000001', { anchor: 't1' })).map((r) => r.msg_id),
+    ).toEqual(['m1', 'm3']);
+    expect(
+      (await st.getMessages('7200000000000000001', { anchor: '' })).map((r) => r.msg_id),
+    ).toEqual(['m2', 'm4']);
+    expect((await st.getMessage('m2'))?.msg_id).toBe('m2');
+    expect(await st.getMessage('m9')).toBeUndefined();
+  });
+
+  test('会话名与 agent 会话', async () => {
+    await st.updateChatName('c1', '群一', 2);
+    await st.updateChatName('c1', '群一改名', 2);
+    expect(await st.getChatName('c1')).toBe('群一改名');
+    await st.sessionUpsert('c1:', 'c1', '', 'sid-1', false);
+    await st.sessionTouch('c1:');
+    await st.sessionUpsert('c1:', 'c1', '', 'sid-1', true);
+    expect(await st.sessionGet('c1:')).toMatchObject({
+      agent_session_id: 'sid-1',
+      started: 1,
+      msg_count: 1,
+    });
+    expect((await st.listSessions()).map((s) => s.session_key)).toEqual(['c1:']);
+  });
+
+  test('时间戳格式与 SQLAlchemy 一致', () => {
+    expect(nowStamp(new Date(2026, 9, 13, 1, 2, 3, 45))).toBe('2026-10-13 01:02:03.045000');
+  });
+});
