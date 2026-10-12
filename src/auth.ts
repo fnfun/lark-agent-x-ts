@@ -61,7 +61,7 @@ export class LarkAuth {
       csrf_token: this.csrfToken,
       web_app_id: this.webAppId,
     };
-    writeFileSync(this.path, pyDumps(data, { indent: 2 }), { encoding: 'utf8', mode: 0o600 });
+    writeFileSync(this.path, pyDumps(data, { indent: 2 }), 'utf8');
     logger.info(`凭证已保存到 ${this.path}`);
   }
 

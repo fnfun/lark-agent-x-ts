@@ -1,6 +1,6 @@
 # lark-agent-x-ts
 
-飞书 / Lark 网页版消息通道的 TypeScript 实现：以个人账号扫码登录，长连接接收全部消息，并以本人身份发送消息、标记已读。
+飞书 / Lark 网页版消息通道的 TypeScript 实现：以个人账号扫码登录，长连接接收全部消息并入库，以本人身份发消息、标已读、生成消息链接、调任意网关接口，可选接入本地 Claude Code 做"数字人"自动回复。用 Bun 打包成**单文件可执行**，不需要 Python 环境。
 
 > [!IMPORTANT]
 > **本项目迁移自 [cv-cat/LarkAgentX](https://github.com/cv-cat/LarkAgentX)（作者 CVCat）。**
@@ -9,28 +9,99 @@
 > - 迁移基线是 fork [Thxzzzzz/LarkAgentX](https://github.com/Thxzzzzz/LarkAgentX) 的 `feat/message-link` 分支，commit [`3e406cd`](https://github.com/Thxzzzzz/LarkAgentX/commit/3e406cd57aed7c94b058b25676522a07b2eb9818)（2026-10-13）。该 fork 在上游 `97ad48e` 之上增加了引用回复、结构化富文本、消息链接、自聊会话、标记已读等命令。
 > - 原项目未附带开源许可证，默认保留全部权利。因此本仓库目前**保持私有、不对外分发**，也暂不附带许可证；在取得原作者授权之前不会公开或发布到 npm。
 
-## 定位
+## 状态
 
-与原项目的 Python 版相比，本项目只做"消息通道"本身：
+fork 版的全部功能已迁移，命令行用法、数据目录、`credentials.json` 与 `messages.db` 格式都与 fork 版一致，可直接替换 `lark` 命令（Python 版写下的凭证和消息库原样沿用）。
 
-- **保留**：扫码登录与凭证管理、网关接口调用、WebSocket 长连接收消息、消息解码与入库、发送（文本 / 话题回复 / 引用回复 / 富文本）、标记已读、消息链接、自聊会话、历史回填、资源下载。
-- **不迁移**：原项目里把消息交给本地 coding agent 的数字人部分（agent backend / dispatcher），以及 MySQL 存储。
+| 模块 | 原文件（fork 版） | 本仓库 | 验证 |
+|---|---|---|---|
+| 协议资产：网关包、长连接帧、全量网关定义、接口映射 | `larkx/proto/*.proto`、`lark_all_pb2.py`、`cmd_map.json` | `assets/`、`proto/proto.proto` | 由下面的管线重建，与原版逐字节一致 |
+| 登录与凭证：扫码、cookie 导入、凭证校验 | `larkx/auth.py`、`region.py` | `src/auth.ts`、`src/region.ts` | 实测导入/校验/扫码初始化，凭证字段与原版一致 |
+| 网关客户端与消息长连接 | `larkx/client.py` | `src/client.ts` | 实测发送 5 种消息、标已读、消息链接、搜索、拉历史、长连接收回显 |
+| 消息解码（25 种类型）/ 请求构造 | `larkx/proto/decoders.py`、`builders.py` | `src/proto/` | 用原版 Python 生成的对照样本逐项比对 |
+| 本地存储（SQLite / MySQL） | `larkx/storage/` | `src/storage/` | 同一套测试跑 SQLite 与 MySQL 8.4；读 Python 版的库输出逐字节一致 |
+| 数字人（触发规则、会话队列、Claude Code 后端） | `larkx/agent/` | `src/agent/` | 单测（假的 claude 命令）；未用真实 Claude 端到端跑 |
+| 命令行（14 个子命令） | `larkx/cli.py`、`main.py` | `src/cli/` | 只读命令与原版输出逐字节对比 |
+| 资源下载 | `larkx/media.py` | `src/media.ts` | 实测下载的图片与原版逐字节一致 |
+| 协议资产再生成管线 | `dev/proto_pipeline/` | `scripts/proto-pipeline/` | 同一批输入，全部中间产物与资产与原版逐字节一致 |
+| 数字人链路演示 | `dev/demo_*.py` | `scripts/demo-agent.ts` | 默认只打印提示词，`--live` 才调真实后端 |
 
-迁移完成前的兼容目标：命令行用法、`LARKX_HOME` 数据目录、`credentials.json` 与 `messages.db` 的格式都与 fork 版一致，现有调用方可以直接切换可执行文件，无需改动。
+与原版的少量有意差异（map 字段的遍历顺序、网络错误文案等）见 [docs/compat.md](docs/compat.md)。
 
-## 迁移计划
+## 安装与构建
 
-| 模块 | 原文件（fork 版） | 状态 |
-|---|---|---|
-| 协议定义：网关包、长连接帧、接口类型映射 | `larkx/proto/proto.proto`、`lark_all_pb2.py`、`cmd_map.json`、`gateway.py` | 未开始 |
-| 登录与凭证：扫码、cookie 导入、凭证校验 | `larkx/auth.py`、`larkx/region.py` | 未开始 |
-| 网关客户端与长连接 | `larkx/client.py` | 未开始 |
-| 消息解码 / 构造 | `larkx/proto/decoders.py`、`larkx/proto/builders.py` | 未开始 |
-| 本地存储 | `larkx/storage/` | 未开始 |
-| 命令行 | `larkx/cli.py` | 未开始 |
-| 资源下载 | `larkx/media.py` | 未开始 |
+需要 [Bun](https://bun.sh) ≥ 1.3。
 
-protobuf 定义不重新逆向：原项目从飞书网页版提取的定义（约 1.1 万个消息类型）直接导出为描述符复用；提取工具链仍以原项目 `dev/proto_pipeline` 为准。
+```bash
+bun install
+bun run build                 # → dist/lark（当前平台的单文件可执行，约 64MB）
+bun run build:all             # → dist/lark-bun-<平台>：macOS arm64/x64、Linux arm64/x64、Windows x64
+bun src/cli/main.ts <命令>    # 或直接从源码运行
+```
+
+x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转译环境也能跑）。为什么选 Bun 见 [docs/adr/0001-bun-single-binary.md](docs/adr/0001-bun-single-binary.md)。
+
+把 `dist/lark` 放进 PATH，或在调用方（如 niuma 的 `larkx.bin`）里写它的绝对路径。`lark --version` 打印版本与构建 commit。
+
+## 命令
+
+| 命令 | 说明 |
+|-------|------|
+| `lark auth qr` | 扫码登录（推荐；`--region lark` 登录 Lark 国际版） |
+| `lark auth import` | 粘贴 cookie 登录 |
+| `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
+| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本） |
+| `lark read <chat_id> <msg_id...>` | 把消息标为已读（同客户端看过；话题回复按话题标记） |
+| `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
+| `lark self-chat` | 打印与自己的会话 chat_id |
+| `lark listen` | 常驻：长连接收消息入库 |
+| `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
+| `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
+| `lark history <chat_id>` | 拉历史消息（`--save` 入库） |
+| `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件 |
+| `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
+| `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
+| `lark search <关键词>` | 搜索用户/群 |
+| `lark config` | 查看生效配置 |
+
+## 配置
+
+全部有默认值，用环境变量或当前目录的 `.env` 覆盖（Bun 启动时自动加载）：
+
+```bash
+LARKX_REGION=feishu          # feishu(飞书国内版) | lark(Lark 国际版)；只影响还没有凭证时的首次登录
+LARKX_HOME=~/.larkx          # 数据目录：credentials.json、messages.db、login_qr.png
+LARKX_STORAGE_URL=           # 留空=SQLite(LARKX_HOME/messages.db)；MySQL 填 mysql+pymysql://<user>:<password>@<host>:3306/<db>
+LARKX_CONTEXT_SCOPE=anchor   # agent 上下文边界: anchor(会话+话题) | chat(会话) | global(全部共享)
+LARKX_AGENT_BACKEND=claude   # claude | none
+LARKX_SYSTEM_PROMPT=         # 数字人系统提示词，留空用内置默认
+LARKX_MARK_READ=true         # 收到消息自动标已读；false 时由调用方在需要时 `lark read`
+LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _KEYWORDS / _GROUP_AT_ONLY
+```
+
+凭证不放 `.env`，用 `lark auth qr` / `lark auth import` 管理。
+
+## 作为库使用
+
+```ts
+import { LarkAuth, LarkClient } from 'lark-agent-x-ts';
+
+const client = await LarkClient.create(new LarkAuth()); // 读取 ~/.larkx/credentials.json 并联网校验
+await client.sendMsg('你好', '<chat_id>');
+await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
+await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
+```
+
+## 开发
+
+```bash
+bun test                    # 单测 + 与原版的对照测试
+bun run typecheck && bun run lint
+LARKX_TEST_MYSQL_URL=mysql+pymysql://root:test@127.0.0.1:33306/larkx bun test   # 存储测试同时跑 MySQL
+```
+
+- **对照样本**：`tests/fixtures/parity.json` 由 `scripts/gen-parity-fixtures.py` 用 fork 版的 Python 实现生成（合成数据，不含真实消息），改了编解码逻辑时在装有 fork 版的 Python 环境里重新生成。
+- **协议更新**：飞书改协议后按 [scripts/proto-pipeline/README.md](scripts/proto-pipeline/README.md) 重建 `assets/`。
 
 ## 风险提示
 

@@ -4,6 +4,9 @@
   "private": true,
   "description": "飞书 / Lark 网页版消息通道（迁移自 cv-cat/LarkAgentX）",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "bin": {
     "lark": "./src/cli/main.ts"
   },
@@ -14,7 +17,8 @@
     "build": "bun build ./src/cli/main.ts --compile --minify --define BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --outfile dist/lark",
     "proto:fetch": "bun scripts/proto-pipeline/chunkmap.ts && bun scripts/proto-pipeline/download.ts",
     "proto:build": "bun scripts/proto-pipeline/extract.ts && bun scripts/proto-pipeline/gen-protos.ts && bun scripts/proto-pipeline/gen-cmd-table.ts && bun scripts/proto-pipeline/build-assets.ts",
-    "build:all": "for t in bun-darwin-arm64 bun-darwin-x64-baseline bun-linux-arm64 bun-linux-x64-baseline bun-windows-x64-baseline; do bun build ./src/cli/main.ts --compile --minify --define BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=$t --outfile dist/lark-$t || exit 1; done"
+    "build:all": "for t in bun-darwin-arm64 bun-darwin-x64-baseline bun-linux-arm64 bun-linux-x64-baseline bun-windows-x64-baseline; do bun build ./src/cli/main.ts --compile --minify --define BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=$t --outfile dist/lark-$t || exit 1; done",
+    "agent": "bun src/cli/main.ts listen --agent"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
