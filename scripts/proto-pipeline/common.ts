@@ -43,6 +43,7 @@ export const readText = async (path: string): Promise<string> =>
 
 /** Python 的 str.splitlines()：认全部换行符，末尾的换行不产生空行。 */
 export function splitlines(s: string): string[] {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: 就是 Python splitlines 认的分隔符（\x1c-\x1e 为文件/组/记录分隔符）
   const parts = s.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
   if (parts.length && parts.at(-1) === '') parts.pop();
   return parts;
