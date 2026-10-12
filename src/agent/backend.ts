@@ -99,7 +99,7 @@ export class ClaudeCodeBackend implements AgentBackend {
     );
     let proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>;
     try {
-      proc = Bun.spawn(args, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+      proc = Bun.spawn(args, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', env: process.env });
     } catch {
       logger.error('未找到 claude CLI,请确认已安装并在 PATH 中');
       return '';
