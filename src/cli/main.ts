@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { AuthExpired } from '../auth.js';
+import { versionLine } from '../version.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
 
@@ -14,6 +15,7 @@ function topHelp(): string {
   lines.push(`  {${COMMANDS.map((c) => c.name).join(',')}}`);
   for (const c of COMMANDS) lines.push(`    ${c.name.padEnd(20)}${c.help}`);
   lines.push('', 'options:', '  -h, --help            show this help message and exit');
+  lines.push('  --version             print version and build commit, then exit');
   return lines.join('\n');
 }
 
@@ -21,6 +23,10 @@ async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   if (name === '-h' || name === '--help') {
     process.stdout.write(`${topHelp()}\n`);
+    return 0;
+  }
+  if (name === '--version') {
+    process.stdout.write(`${versionLine()}\n`);
     return 0;
   }
   const cmd = COMMANDS.find((c) => c.name === name);
