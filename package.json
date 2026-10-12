@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome check .",
-    "build": "bun build ./src/cli/main.ts --compile --minify --outfile dist/lark"
+    "build": "bun build ./src/cli/main.ts --compile --minify --outfile dist/lark",
+    "proto:fetch": "bun scripts/proto-pipeline/chunkmap.ts && bun scripts/proto-pipeline/download.ts",
+    "proto:build": "bun scripts/proto-pipeline/extract.ts && bun scripts/proto-pipeline/gen-protos.ts && bun scripts/proto-pipeline/gen-cmd-table.ts && bun scripts/proto-pipeline/build-assets.ts",
+    "build:all": "for t in bun-darwin-arm64 bun-darwin-x64 bun-linux-x64 bun-linux-arm64 bun-windows-x64; do bun build ./src/cli/main.ts --compile --minify --target=$t --outfile dist/lark-$t || exit 1; done"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
@@ -19,6 +22,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@bufbuild/buf": "^1.73.0",
     "@types/bun": "^1.4.3",
     "@types/qrcode": "^1.5.6",
     "typescript": "^7.0.2"

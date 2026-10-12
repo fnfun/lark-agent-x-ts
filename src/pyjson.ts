@@ -78,8 +78,10 @@ export function pyDumps(
       if (v.length === 0) return '[]';
       return `[${nl}${v.map((x) => enc(x, depth + 1)).join(itemSep + nl)}${close}]`;
     }
-    if (isPlainObject(v)) {
-      const entries = Object.entries(v);
+    if (isPlainObject(v) || v instanceof Map) {
+      // Map 保留插入顺序（普通对象会把整数键提前），用于需要与 Python dict 顺序一致的场合
+      const entries =
+        v instanceof Map ? [...v].map(([k, x]) => [String(k), x] as const) : Object.entries(v);
       if (entries.length === 0) return '{}';
       return `{${nl}${entries.map(([k, x]) => `${pyString(k)}: ${enc(x, depth + 1)}`).join(itemSep + nl)}${close}}`;
     }

@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.log
+scripts/proto-pipeline/work/
+scripts/proto-pipeline/out/
