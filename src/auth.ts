@@ -153,9 +153,9 @@ export class LarkAuth {
     }
     if (!this.appKey || !this.webAppId) {
       try {
-        const res = await request(urls.messengerPage(this.region), {
+        // 页面会 302 到租户子域名并在途中下发 cookie，要像浏览器一样带着它们跟随重定向
+        const res = await new CookieJar(this.cookies).fetch(urls.messengerPage(this.region), {
           headers: ua,
-          cookies: this.cookies,
         });
         const text = await res.text();
         const key = /appKey: "(.*?)"/.exec(text);

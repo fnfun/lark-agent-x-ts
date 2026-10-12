@@ -75,6 +75,23 @@ export function nowStamp(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds() * 1000, 6)}`;
 }
 
+/**
+ * 读出的行统一成 SQLite 下的形态：MySQL 驱动把 DATETIME 按本机时区解析成 Date（本地时间分量即库里的字面值），
+ * 格式化回 `YYYY-MM-DD HH:MM:SS[.ffffff]`；BIGINT 若以 bigint 返回则转成 number（时间戳与位置都在安全整数内）。
+ */
+function normalizeRow<T>(row: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+    if (v instanceof Date) {
+      const ms = v.getMilliseconds();
+      out[k] = nowStamp(v).replace(/\.\d{6}$/, ms ? `.${String(ms * 1000).padStart(6, '0')}` : '');
+    } else out[k] = typeof v === 'bigint' ? Number(v) : v;
+  }
+  return out as T;
+}
+
+const rows = <T>(result: unknown): T[] => (result as T[]).map(normalizeRow);
+
 /** 入库时 content_data 里的原始字节（内联缩略图等）换成占位，避免撑爆长度、截出非法 JSON。 */
 const jsonDefault = (o: unknown): unknown =>
   o instanceof Uint8Array ? `<${o.length} bytes>` : String(o);
@@ -298,8 +315,9 @@ export class Storage {
 
   async listChats(limit = 50): Promise<ChatRow[]> {
     await this.init();
-    return (await this
-      .sql`SELECT * FROM chats ORDER BY updated_at DESC LIMIT ${limit}`) as ChatRow[];
+    return rows<ChatRow>(
+      await this.sql`SELECT * FROM chats ORDER BY updated_at DESC LIMIT ${limit}`,
+    );
   }
 
   /** 某会话（anchor 不为 undefined 时限定话题，空串=仅主会话流）最近 limit 条，按时间升序。 */
@@ -310,22 +328,23 @@ export class Storage {
     await this.init();
     const anchor = o.anchor === undefined ? this.sql`` : this.sql`AND anchor = ${o.anchor}`;
     const before = o.beforeTs ? this.sql`AND create_time < ${o.beforeTs}` : this.sql``;
-    const rows = (await this
-      .sql`SELECT * FROM messages WHERE chat_id = ${chatId} ${anchor} ${before} ORDER BY create_time DESC LIMIT ${o.limit ?? 50}`) as MessageRow[];
-    return rows.reverse();
+    return rows<MessageRow>(
+      await this
+        .sql`SELECT * FROM messages WHERE chat_id = ${chatId} ${anchor} ${before} ORDER BY create_time DESC LIMIT ${o.limit ?? 50}`,
+    ).reverse();
   }
 
   async getMessage(msgId: string, chatId?: string): Promise<MessageRow | undefined> {
     await this.init();
     const chat = chatId ? this.sql`AND chat_id = ${chatId}` : this.sql``;
-    const [row] = (await this
-      .sql`SELECT * FROM messages WHERE msg_id = ${msgId} ${chat} LIMIT 1`) as MessageRow[];
-    return row;
+    return rows<MessageRow>(
+      await this.sql`SELECT * FROM messages WHERE msg_id = ${msgId} ${chat} LIMIT 1`,
+    )[0];
   }
 
   async findMessages(msgId: string): Promise<MessageRow[]> {
     await this.init();
-    return (await this.sql`SELECT * FROM messages WHERE msg_id = ${msgId}`) as MessageRow[];
+    return rows<MessageRow>(await this.sql`SELECT * FROM messages WHERE msg_id = ${msgId}`);
   }
 
   async getChatName(chatId: string): Promise<string> {
@@ -339,9 +358,9 @@ export class Storage {
 
   async sessionGet(sessionKey: string): Promise<AgentSessionRow | undefined> {
     await this.init();
-    const [row] = (await this
-      .sql`SELECT * FROM agent_sessions WHERE session_key = ${sessionKey}`) as AgentSessionRow[];
-    return row;
+    return rows<AgentSessionRow>(
+      await this.sql`SELECT * FROM agent_sessions WHERE session_key = ${sessionKey}`,
+    )[0];
   }
 
   async sessionUpsert(
@@ -381,7 +400,8 @@ export class Storage {
 
   async listSessions(limit = 50): Promise<AgentSessionRow[]> {
     await this.init();
-    return (await this
-      .sql`SELECT * FROM agent_sessions ORDER BY last_active DESC LIMIT ${limit}`) as AgentSessionRow[];
+    return rows<AgentSessionRow>(
+      await this.sql`SELECT * FROM agent_sessions ORDER BY last_active DESC LIMIT ${limit}`,
+    );
   }
 }

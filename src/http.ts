@@ -72,11 +72,15 @@ function parseSetCookie(line: string): { name: string; value: string; expired: b
 }
 
 /**
- * 登录流程用的 cookie 罐（对应 requests.Session）：手动跟随重定向，收下每一跳的 Set-Cookie，后续请求全部带上。
- * 登录涉及的都是同一区域的子域名，不按域名区分。
+ * cookie 罐（对应 requests 的会话 cookie）：手动跟随重定向，收下每一跳的 Set-Cookie，后续请求全部带上。
+ * 用于扫码登录与 messenger 页面（会 302 到租户子域名并在途中下发 cookie）；涉及的都是同一区域的子域名，不按域名区分。
  */
 export class CookieJar {
-  readonly cookies: Record<string, string> = {};
+  readonly cookies: Record<string, string>;
+
+  constructor(initial: Record<string, string> = {}) {
+    this.cookies = { ...initial };
+  }
 
   absorb(res: Response): void {
     for (const line of res.headers.getSetCookie()) {
