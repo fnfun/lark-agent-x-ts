@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearField, create, fromBinary, toBinary } from '@bufbuild/protobuf';
@@ -138,7 +138,16 @@ function trim(file: FileDescriptorProto, need: Set<string>): FileDescriptorProto
 const cmdMap = (await Bun.file(join(ASSETS_DIR, 'cmd_map.json')).json()) as {
   by_req: Record<string, { resp: string }>;
 };
-const larkAll = await compile(join(OUT_DIR, 'lark_all.proto'));
+// 没有全量 .proto（只改了 proto/proto.proto 或 CORE_REQUESTS，没重跑前几步）时沿用现有的 lark_all.binpb，只重建 proto 与 core
+const larkAllSrc = join(OUT_DIR, 'lark_all.proto');
+const fromSource = existsSync(larkAllSrc);
+const larkAll = fromSource
+  ? await compile(larkAllSrc)
+  : (fromBinary(
+      FileDescriptorSetSchema,
+      new Uint8Array(await Bun.file(join(ASSETS_DIR, 'lark_all.binpb')).arrayBuffer()),
+    ).file[0] as FileDescriptorProto);
+if (!fromSource) console.log(`没有 ${larkAllSrc},沿用 assets/lark_all.binpb`);
 const seeds = CORE_TYPES.map((t) => `.lark.${t}`);
 for (const req of CORE_REQUESTS) {
   const entry = cmdMap.by_req[req];
@@ -146,5 +155,5 @@ for (const req of CORE_REQUESTS) {
   seeds.push(`.lark.${req}`, `.lark.${entry.resp}`);
 }
 await writeSet('proto', await compile(PROTO_SRC));
-await writeSet('lark_all', larkAll);
+if (fromSource) await writeSet('lark_all', larkAll);
 await writeSet('core', trim(larkAll, closure(larkAll, seeds)));
