@@ -53,6 +53,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重） |
 | `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark schedule <chat_id> <text> --at <时间>` / `lark scheduled <chat_id>` | 定时发送（`--at 10m`、`--at "2026-10-15 09:30"`，`--md`；每个会话同时只能有一条待发）/ 列出待发的定时消息（`--cancel`、`--reschedule` 配合 `--at`） |
+| `lark translate <文本>` | 翻译文本（`--to en`，默认 zh）；`--msg` 时参数是消息 id，翻译这些消息 |
 | `lark forward <msg_id> <chat_id...>` | 把一条消息转发到一个或多个会话 |
 | `lark group create <群名>` / `add` / `remove` / `rename` | 建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin 消息（`--remove` 取消） / 列出会话里被 Pin 的消息 |
@@ -114,6 +115,7 @@ await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content), undefined, undefined, async (ev) => console.log(ev.message_id, ev.reaction_type)); // 第 4 个参数收表情变化
 const groupId = await client.createGroup('项目协作群', ['<user_id>']); // 另有 addMembers、removeMembers、updateGroup
 await client.scheduleMessage('<chat_id>', { text: '周会提醒' }, Date.now() + 3_600_000); // 定时发送；scheduledMessages / rescheduleMessage / cancelScheduledMessage
+const [en] = await client.translateText(['周五上线'], 'en'); // translateMessages(ids, 'zh') 翻译消息
 await client.forwardMessage('<msg_id>', ['<chat_id>']); // 转发，返回会话 → 新消息 id
 await client.readStates('<chat_id>', ['<msg_id>']); // 谁读了、谁没读；myReadStates 看自己是否读过
 await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMessage、removeReaction、reactions

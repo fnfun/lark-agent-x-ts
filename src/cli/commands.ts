@@ -381,6 +381,38 @@ const scheduled: Command = {
   },
 };
 
+const translate: Command = {
+  name: 'translate',
+  help: '翻译文本;--msg 时参数是消息 id,翻译这些消息',
+  positionals: [{ name: 'args', nargs: '+', help: '要翻译的文本(--msg 时为消息 id)' }],
+  options: [
+    { name: 'to', kind: 'string', default: 'zh', help: '目标语言(zh、en、ja 等,默认 zh)' },
+    { name: 'msg', kind: 'flag', help: '参数是消息 id' },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const c = await client();
+    const args = a.args as string[];
+    const to = String(a.to);
+    try {
+      if (a.msg) {
+        const list = await c.translateMessages(args, to);
+        if (a.json) printJson(list);
+        else for (const t of list) out(`${t.msgId}\t${t.translated}`);
+        const missing = args.filter((id) => !list.some((t) => t.msgId === id));
+        if (missing.length) err(`没有可翻译的内容: ${missing.join(', ')}`);
+        return 0;
+      }
+      const [translated] = await c.translateText([args.join(' ')], to);
+      out(String(translated));
+      return 0;
+    } catch (e) {
+      err(`翻译失败: ${errorText(e)}`);
+      return 1;
+    }
+  },
+};
+
 const forward: Command = {
   name: 'forward',
   help: '把一条消息转发到一个或多个会话',
@@ -1496,6 +1528,7 @@ export const COMMANDS: Command[] = [
   mediaCommand('file'),
   schedule,
   scheduled,
+  translate,
   forward,
   group,
   pin,

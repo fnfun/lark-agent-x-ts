@@ -197,6 +197,9 @@ export interface FeedGroup {
 /** 一页最多取多少个标签 / 标签项（服务端对过大的 count 报 invalid request）。 */
 const FEED_GROUP_PAGE = 20;
 
+// translate.ContentType.TEXT
+const TRANSLATE_TEXT = 2;
+
 // feed.Shortcut.Type.CHAT
 const SHORTCUT_CHAT = 1;
 
@@ -1040,6 +1043,45 @@ export class LarkClient {
     for (const [chatId, m] of Object.entries((resp.messages ?? {}) as Record<string, Dict>))
       if (m.id) out.set(chatId, String(m.id));
     return out;
+  }
+
+  /**
+   * 翻译文本（客户端"翻译"同款），按顺序返回译文。targetLanguage 如 zh、en、ja；sourceLanguage 留空自动识别。
+   * 不改变任何消息的显示状态。
+   */
+  async translateText(
+    texts: string[],
+    targetLanguage: string,
+    sourceLanguage = '',
+  ): Promise<string[]> {
+    if (!texts.length) return [];
+    const resp = await this.api('translate.TranslateWebXMLRequest', {
+      srcContents: texts,
+      srcLanguage: sourceLanguage,
+      trgLanguage: targetLanguage,
+      contentType: TRANSLATE_TEXT,
+    });
+    const out = ((resp.trgContents ?? []) as string[]).map(String);
+    if (out.length !== texts.length)
+      throw new Error(`翻译结果条数不符: ${out.length}/${texts.length}`);
+    return out;
+  }
+
+  /** 翻译消息（按消息内容的纯文本摘要翻译），返回原文与译文；不存在或没有文字内容的消息跳过。 */
+  async translateMessages(
+    messageIds: string[],
+    targetLanguage: string,
+  ): Promise<{ msgId: string; original: string; translated: string }[]> {
+    const msgs = (await this.getMessages(messageIds)).filter((m) => m.content.trim());
+    const translated = await this.translateText(
+      msgs.map((m) => m.content),
+      targetLanguage,
+    );
+    return msgs.map((m, i) => ({
+      msgId: m.msg_id,
+      original: m.content,
+      translated: translated[i] ?? '',
+    }));
   }
 
   /** 撤回一条消息（自己发的；群管理员也可撤回群里别人的）。服务端没有确认时抛错。 */
