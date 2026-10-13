@@ -151,3 +151,43 @@ describe('按时间范围拉历史', () => {
     expect(await c.historyRange('g1', { since: 9_999_000 })).toEqual([]);
   });
 });
+
+describe('翻译', () => {
+  test('文本翻译按顺序返回；消息翻译用消息的文字内容，跳过没有文字的', async () => {
+    const c = newClient();
+    const reqs: Dict[] = [];
+    c.api = async (type, data) => {
+      if (type === 'messages.PullMessagesByIdsRequest')
+        return {
+          messages: {
+            m1: {
+              id: 'm1',
+              type: 4,
+              chatId: 'g1',
+              content: (await import('./helpers.js')).textContent('周五上线'),
+            },
+            m2: {
+              id: 'm2',
+              type: 4,
+              chatId: 'g1',
+              content: (await import('./helpers.js')).textContent(''),
+            },
+          },
+        };
+      reqs.push(data as Dict);
+      return { trgContents: ((data as Dict).srcContents as string[]).map((t) => `EN(${t})`) };
+    };
+    c.isThreadChat = async () => false;
+    expect(await c.translateText(['甲', '乙'], 'en')).toEqual(['EN(甲)', 'EN(乙)']);
+    expect(reqs[0]).toEqual({
+      srcContents: ['甲', '乙'],
+      srcLanguage: '',
+      trgLanguage: 'en',
+      contentType: 2,
+    });
+    expect(await c.translateMessages(['m1', 'm2', 'm3'], 'en')).toEqual([
+      { msgId: 'm1', original: '周五上线', translated: 'EN(周五上线)' },
+    ]);
+    expect(await c.translateText([], 'en')).toEqual([]);
+  });
+});
