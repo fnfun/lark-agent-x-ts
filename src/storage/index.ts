@@ -53,6 +53,9 @@ export interface AgentSessionRow {
 
 type Dialect = 'sqlite' | 'mysql';
 
+/** 被撤回的消息在库里的内容。 */
+export const RECALLED = '[已撤回]';
+
 /** SQLAlchemy 风格连接串 → Bun.SQL 连接串与方言。 */
 export function parseStorageUrl(url: string): { dialect: Dialect; url: string } {
   const sqlite = /^sqlite:\/\/\/(.*)$/.exec(url);
@@ -259,6 +262,38 @@ export class Storage {
         await tx`INSERT INTO messages ${tx({ ...fields, stored_at: nowStamp() })}`;
       }
       await Storage.touchChat(tx, fields);
+      return true;
+    });
+  }
+
+  /** 本地已有的消息被撤回：内容换成"[已撤回]"。返回本地是否有这条（且之前没标过）。 */
+  async markRecalled(msgId: string, chatId: string): Promise<boolean> {
+    await this.init();
+    return this.sql.begin(async (tx) => {
+      const [row] =
+        (await tx`SELECT id, content FROM messages WHERE msg_id = ${msgId} AND chat_id = ${chatId} LIMIT 1`) as Pick<
+          MessageRow,
+          'id' | 'content'
+        >[];
+      if (!row || row.content === RECALLED) return false;
+      await tx`UPDATE messages SET content = ${RECALLED}, content_data = '' WHERE id = ${row.id}`;
+      return true;
+    });
+  }
+
+  /** 本地已有的消息被编辑：换成新内容。返回是否有更新（本地没有这条或内容没变时为 false）。 */
+  async reviseMessage(msg: LarkMessage): Promise<boolean> {
+    await this.init();
+    const content = msg.content || '';
+    const data = contentDataJson(msg.content_data);
+    return this.sql.begin(async (tx) => {
+      const [row] =
+        (await tx`SELECT id, content FROM messages WHERE msg_id = ${String(msg.msg_id)} AND chat_id = ${String(msg.chat_id)} LIMIT 1`) as Pick<
+          MessageRow,
+          'id' | 'content'
+        >[];
+      if (!row || row.content === content) return false;
+      await tx`UPDATE messages SET content = ${content}, content_data = ${data} WHERE id = ${row.id}`;
       return true;
     });
   }

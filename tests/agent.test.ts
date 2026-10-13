@@ -135,6 +135,44 @@ describe('数字人分发', () => {
   });
 });
 
+describe('撤回与编辑', () => {
+  test('撤回的排队消息不再处理；编辑过的排队消息换成新内容，已处理过的带 <edited> 重新交给 agent', async () => {
+    process.env.LARKX_CONTEXT_SCOPE = 'chat';
+    const backend = new FakeBackend();
+    const d = new AgentDispatcher(backend, async () => undefined);
+    await d.submit(msg({ msg_id: 'm1', content: '周会改到几点' }), '项目协作群', '同事甲', 'me');
+    await d.submit(msg({ msg_id: 'm2', content: '发错了' }), '项目协作群', '同事甲', 'me');
+    await d.submit(
+      msg({ msg_id: 'm3', content: '月报导出要按部门' }),
+      '项目协作群',
+      '同事甲',
+      'me',
+    );
+    expect(d.withdraw('m2')).toBe(1);
+    expect(d.withdraw('m2')).toBe(0);
+    await d.revise(
+      msg({ msg_id: 'm3', content: '月报导出要按部门和月份' }),
+      '项目协作群',
+      '同事甲',
+      'me',
+    );
+    await d.revise(
+      msg({ msg_id: 'm1', content: '周会改到几点（下周）' }),
+      '项目协作群',
+      '同事甲',
+      'me',
+    );
+    // 自己编辑的消息不触发
+    await d.revise(msg({ msg_id: 'm9', from_id: 'me', content: 'x' }), '', '', 'me');
+    backend.release?.();
+    await Bun.sleep(20);
+    const contents = backend.runs.map((r) => /<content>(.*)<\/content>/.exec(r.prompt)?.[1]);
+    expect(contents).toEqual(['周会改到几点', '月报导出要按部门和月份', '周会改到几点（下周）']);
+    expect(backend.runs[1]?.prompt).not.toContain('<edited>');
+    expect(backend.runs[2]?.prompt).toContain('<edited>true</edited>');
+  });
+});
+
 describe('Claude Code 后端', () => {
   let dir: string;
   let st: Storage;

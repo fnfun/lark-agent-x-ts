@@ -856,13 +856,25 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
       }
     }
     const chatName = names.get(chatId) || '';
+    const who = `[${chatName || chatId}] ${senderName || msg.from_id}`;
+    // 撤回与编辑以同一条消息重推：撤回的不再交给 agent；编辑过的更新库里的内容，并让 agent 看到新内容
+    if (msg.recalled) {
+      dispatcher?.withdraw(msg.msg_id);
+      if (await st.markRecalled(msg.msg_id, chatId)) logger.info(`${who} 撤回了一条消息`);
+      return;
+    }
+    if (msg.edited && (await st.reviseMessage(msg))) {
+      logger.info(`${who} 编辑了消息: ${preview(msg.content || '', 80)}`);
+      await dispatcher?.revise(msg, chatName, senderName, la.userId);
+      return;
+    }
     const saved = await st.saveMessage(msg, {
       senderName,
       chatName,
       direction: isOwn ? 'out' : 'in',
     });
     if (!saved) return;
-    const shown = `[${chatName || chatId}] ${senderName || msg.from_id}: ${preview(msg.content || '', 80)}`;
+    const shown = `${who}: ${preview(msg.content || '', 80)}`;
     logger.info(isOwn && process.stderr.isTTY ? `\x1b[36m${shown}\x1b[0m` : shown);
     if (cfg.mark_read && !isOwn && msg.position)
       await c.markRead(chatId, msg.position, [msg.msg_id]);
