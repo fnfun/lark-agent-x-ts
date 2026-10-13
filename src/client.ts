@@ -3,9 +3,12 @@ import type { LarkAuth } from './auth.js';
 import { HttpError, request, USER_AGENT } from './http.js';
 import { accessKey, longRequestId, requestId } from './ids.js';
 import { getLogger } from './log.js';
+import { uploadFile, uploadImage } from './media.js';
 import {
   buildCreateChatPacket,
+  buildFileMessagePacket,
   buildGroupInfoPacket,
+  buildImageMessagePacket,
   buildPostMessagePacket,
   buildRichMessagePacket,
   buildSearchPacket,
@@ -51,11 +54,16 @@ export interface SendOptions {
   replyTo?: string | undefined;
 }
 
-/** sendMessage 的内容：纯文本、结构化富文本（text 为纯文本摘要）或 HTML 富文本。 */
+/**
+ * sendMessage 的内容：纯文本、结构化富文本（text 为纯文本摘要）、HTML 富文本、图片或文件。
+ * 图片与文件传原始字节，发送前自动上传；name 是文件名（文件消息里显示它，图片只用来标注格式）。
+ */
 export type MessageContent =
   | { text: string; links?: boolean }
   | { blocks: RichBlock[]; text: string }
-  | { html: string; title?: string };
+  | { html: string; title?: string }
+  | { image: Uint8Array; name?: string }
+  | { file: Uint8Array; name: string };
 
 /** 服务端已受理发送请求，但拿不到消息 id，无法确认是否发出。 */
 export class SendUnconfirmed extends Error {}
@@ -300,17 +308,30 @@ export class LarkClient {
   /**
    * 发送一条消息并确认送达，返回服务端分配的消息 id；失败时抛错而不是返回 null：
    * 请求失败抛 NetworkError / HttpError，服务端已受理但拿不到消息 id 时抛 SendUnconfirmed（可能已发出，不宜直接重试）。
-   * 内容三选一：纯文本（links 时把 `[文字](url)` 渲染成带文字的超链接）、结构化富文本（text 是纯文本摘要）、HTML 富文本。
+   * 内容见 MessageContent：纯文本（links 时把 `[文字](url)` 渲染成带文字的超链接）、结构化富文本（text 是纯文本摘要）、HTML 富文本、图片、文件；
+   * 图片与文件先上传再发送，上传失败同样抛 NetworkError / HttpError。
    */
   async sendMessage(chatId: string, content: MessageContent, o: SendOptions = {}): Promise<string> {
     const target = await this.threadTarget(chatId, o);
     const cid = longRequestId();
-    const pkt =
-      'blocks' in content
-        ? buildRichMessagePacket(content.blocks, content.text, target, cid)
-        : 'html' in content
-          ? buildPostMessagePacket(content.html, target, cid, content.title ?? '')
-          : buildSendMessagePacket(content.text, target, cid, content.links ?? false);
+    let pkt: Packet;
+    if ('image' in content)
+      pkt = buildImageMessagePacket(
+        await uploadImage(this.auth, content.image, content.name),
+        target,
+        cid,
+      );
+    else if ('file' in content)
+      pkt = buildFileMessagePacket(
+        await uploadFile(this.auth, chatId, content.file, content.name),
+        target,
+        cid,
+      );
+    else if ('blocks' in content)
+      pkt = buildRichMessagePacket(content.blocks, content.text, target, cid);
+    else if ('html' in content)
+      pkt = buildPostMessagePacket(content.html, target, cid, content.title ?? '');
+    else pkt = buildSendMessagePacket(content.text, target, cid, content.links ?? false);
     const resp = await this.gatewayPost(pkt);
     let msgId: string;
     try {

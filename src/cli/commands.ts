@@ -1,20 +1,20 @@
 import { mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { getBackend } from '../agent/backend.js';
 import { AgentDispatcher } from '../agent/dispatcher.js';
 import { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from '../auth.js';
-import { LarkClient } from '../client.js';
+import { LarkClient, type SendOptions } from '../client.js';
 import { dataDir, loadConfig } from '../config.js';
 import { getLogger } from '../log.js';
 import { download, extractResourceKey, messageResourceUrl } from '../media.js';
 import type { RichBlock } from '../proto/builders.js';
-import type { LarkMessage } from '../proto/decoders.js';
+import { type LarkMessage, MSG_TYPE_NAMES } from '../proto/decoders.js';
 import { type Dict, parseJsonKeepingBigInts } from '../proto/dict.js';
 import { getRegion, REGIONS, type Region, urls } from '../region.js';
 import { Storage } from '../storage/index.js';
 import { head, preview } from '../text.js';
-import type { CommandSpec, Parsed } from './args.js';
+import type { CommandSpec, Option, Parsed } from './args.js';
 import { errorText, printJson, pyDatetime, shortTime } from './format.js';
 import { keepListening } from './listen-loop.js';
 import { qrAscii, saveQrPng } from './qr.js';
@@ -124,13 +124,17 @@ const auth: Command = {
   },
 };
 
+const REPLY_OPTIONS: Option[] = [
+  { name: 'root', kind: 'string', help: '话题/线程根消息 id,回复进话题' },
+  { name: 'reply', kind: 'string', help: '引用回复某条消息 id(被引用消息在话题里时自动进话题)' },
+];
+
 const send: Command = {
   name: 'send',
   help: '发送文本消息',
   positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
   options: [
-    { name: 'root', kind: 'string', help: '话题/线程根消息 id,回复进话题' },
-    { name: 'reply', kind: 'string', help: '引用回复某条消息 id(被引用消息在话题里时自动进话题)' },
+    ...REPLY_OPTIONS,
     { name: 'links', kind: 'flag', help: '把文本里的 [文字](url) 发成带文字的超链接' },
     {
       name: 'post',
@@ -149,14 +153,7 @@ const send: Command = {
     const st = new Storage();
     const chatId = String(a.chat_id);
     const text = (a.text as string[]).join(' ');
-    const reply = s(a.reply);
-    let rootId = s(a.root);
-    if (reply && !rootId) {
-      // 被引用的消息若在话题里，引用要带上话题根，否则会落回主会话
-      const quoted = await st.getMessage(reply, chatId);
-      if (quoted?.scope === 'topic' && quoted.anchor) rootId = quoted.anchor;
-    }
-    const o = { rootId, replyTo: reply };
+    const o = await replyTarget(st, chatId, a);
     let msgId: string | null;
     if (a.rich) {
       const raw = String(a.rich);
@@ -169,41 +166,103 @@ const send: Command = {
     } else {
       msgId = await c.sendMsg(text, chatId, o, Boolean(a.links));
     }
-    if (msgId) {
-      const inTopic = Boolean(rootId) && rootId !== reply;
-      const rich = Boolean(a.post || a.rich);
-      // 用服务端 id 落库，监听收到回显时会补全这条而不是再插一条
-      await st.saveMessage(
-        {
-          msg_id: msgId,
-          chat_id: chatId,
-          chat_type: 0,
-          chat_type_name: '',
-          scope: inTopic ? 'topic' : 'chat',
-          anchor: inTopic ? (rootId as string) : '',
-          root_id: rootId || reply || '',
-          parent_id: reply || rootId || '',
-          from_id: c.auth.userId,
-          msg_type: rich ? 2 : 4,
-          msg_type_name: rich ? 'POST' : 'TEXT',
-          at_me: false,
-          cid: '',
-          position: null,
-          content: text,
-          content_data: null,
-          create_time: Math.floor(Date.now() / 1000),
-        },
-        { senderName: '我', direction: 'out' },
-      );
-      await st.close();
-      out(`已发送 msg_id=${msgId}`);
-      return 0;
-    }
+    const rich = Boolean(a.post || a.rich);
+    return finishSend(st, c, chatId, msgId, o, rich ? 2 : 4, text);
+  },
+};
+
+/** --root / --reply → 发送选项；被引用的消息若在话题里，引用要带上话题根，否则会落回主会话。 */
+async function replyTarget(st: Storage, chatId: string, a: Parsed): Promise<SendOptions> {
+  const reply = s(a.reply);
+  let rootId = s(a.root);
+  if (reply && !rootId) {
+    const quoted = await st.getMessage(reply, chatId);
+    if (quoted?.scope === 'topic' && quoted.anchor) rootId = quoted.anchor;
+  }
+  return { rootId, replyTo: reply };
+}
+
+/** 发送结果：成功时用服务端 id 落库（监听收到回显时会补全这条而不是再插一条）并打印 msg_id。 */
+async function finishSend(
+  st: Storage,
+  c: LarkClient,
+  chatId: string,
+  msgId: string | null,
+  o: SendOptions,
+  msgType: number,
+  content: string,
+): Promise<number> {
+  if (!msgId) {
     await st.close();
     err('发送失败');
     return 1;
-  },
-};
+  }
+  const { rootId, replyTo: reply } = o;
+  const inTopic = Boolean(rootId) && rootId !== reply;
+  await st.saveMessage(
+    {
+      msg_id: msgId,
+      chat_id: chatId,
+      chat_type: 0,
+      chat_type_name: '',
+      scope: inTopic ? 'topic' : 'chat',
+      anchor: inTopic ? (rootId as string) : '',
+      root_id: rootId || reply || '',
+      parent_id: reply || rootId || '',
+      from_id: c.auth.userId,
+      msg_type: msgType,
+      msg_type_name: MSG_TYPE_NAMES[msgType] ?? String(msgType),
+      at_me: false,
+      cid: '',
+      position: null,
+      content,
+      content_data: null,
+      create_time: Math.floor(Date.now() / 1000),
+    },
+    { senderName: '我', direction: 'out' },
+  );
+  await st.close();
+  out(`已发送 msg_id=${msgId}`);
+  return 0;
+}
+
+/** 发送图片或文件：读本地文件，上传后发出。 */
+function mediaCommand(kind: 'image' | 'file'): Command {
+  const label = kind === 'image' ? '图片' : '文件';
+  return {
+    name: `send-${kind}`,
+    help: `发送${label}(本地文件,自动上传)`,
+    positionals: [{ name: 'chat_id' }, { name: 'path' }],
+    options: REPLY_OPTIONS,
+    async run(a) {
+      const c = await client();
+      const st = new Storage();
+      const chatId = String(a.chat_id);
+      const path = String(a.path);
+      const name = basename(path);
+      let data: Uint8Array;
+      try {
+        data = new Uint8Array(readFileSync(path));
+      } catch (e) {
+        await st.close();
+        err(`读取文件失败: ${(e as Error).message}`);
+        return 1;
+      }
+      const o = await replyTarget(st, chatId, a);
+      let msgId: string | null = null;
+      try {
+        msgId = await c.sendMessage(
+          chatId,
+          kind === 'image' ? { image: data, name } : { file: data, name },
+          o,
+        );
+      } catch (e) {
+        logger.error(`发送${label}失败: ${errorText(e)}`);
+      }
+      return finishSend(st, c, chatId, msgId, o, kind === 'image' ? 5 : 3, `[${label}] ${name}`);
+    },
+  };
+}
 
 const messageLink: Command = {
   name: 'message-link',
@@ -605,6 +664,8 @@ const listen: Command = {
 export const COMMANDS: Command[] = [
   auth,
   send,
+  mediaCommand('image'),
+  mediaCommand('file'),
   messageLink,
   selfChat,
   read,

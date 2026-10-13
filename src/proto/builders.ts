@@ -234,6 +234,28 @@ export function buildPostMessagePacket(html: string, t: Target, requestId: strin
   return putMessage(2, t, { ...(title ? { title } : {}), text: html }, requestId);
 }
 
+/**
+ * 图片消息：图片先经 uploadImage 上传拿到 key。实测 key 要放在 content.cryptoToken，
+ * 服务端据此生成各尺寸并加密；放在 content.imageKey 会被拒（invalid image key）。
+ */
+export function buildImageMessagePacket(imageKey: string, t: Target, requestId: string) {
+  return putMessage(5, t, { cryptoToken: imageKey }, requestId);
+}
+
+/** 文件消息：文件先经 uploadFile 上传到该会话。 */
+export function buildFileMessagePacket(
+  file: { key: string; name: string; size: number; mime: string },
+  t: Target,
+  requestId: string,
+) {
+  return putMessage(
+    3,
+    t,
+    { fileKey: file.key, fileName: file.name, fileSize: BigInt(file.size), fileMime: file.mime },
+    requestId,
+  );
+}
+
 export function buildCreateChatPacket(userId: string, requestId: string) {
   return wrapPacket(
     13,
