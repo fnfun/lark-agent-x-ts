@@ -27,10 +27,12 @@ import {
 } from './proto/builders.js';
 import {
   decodePushMessages,
+  decodePushReactions,
   enumToInt,
   isThreadChat,
   type LarkMessage,
   parseWsFrame,
+  type ReactionEvent,
   resolveScope,
   toLarkMessage,
 } from './proto/decoders.js';
@@ -87,6 +89,7 @@ export class SendUnconfirmed extends Error {
 }
 
 export type MessageHandler = (msg: LarkMessage) => Promise<void>;
+export type ReactionHandler = (event: ReactionEvent) => Promise<void>;
 
 /** 收件箱里的一个会话：feed 卡片的更新时间 + 会话信息。 */
 export interface RecentChat {
@@ -197,6 +200,8 @@ export interface MissedOptions {
 }
 
 const CHANNEL_CHAT = 1;
+/** 长连接推送：表情变化（reactions.PushReactions）。 */
+const PUSH_REACTIONS = 27;
 /** 话题群一次往回看的话题数。 */
 const RECENT_THREADS = 20;
 
@@ -282,11 +287,13 @@ export class LarkClient {
    * 每个带 sid 的帧都回 ACK，按 wsTiming 发应用层心跳；推送（cmd=6）里的消息按到达顺序串行交给 onMessage。
    * 握手超时、心跳无回应都按异常断开处理，由调用方重连。
    * onOpen 在连上后调用一次：此后的消息都会推送过来，适合在这里补拉断线期间的消息。
+   * onReaction 收表情变化（推送 cmd=27，谁对哪条消息加了 / 取消了哪个表情），与消息走同一条串行队列。
    */
   async connectWebsocket(
     onMessage: MessageHandler,
     signal?: AbortSignal,
     onOpen?: () => void,
+    onReaction?: ReactionHandler,
   ): Promise<void> {
     const url = await this.buildWsUrl();
     const { openTimeoutMs, heartbeatMs, idleTimeoutMs } = this.wsTiming;
@@ -345,6 +352,15 @@ export class LarkClient {
                 LarkClient.packet({ cmd: 1, sid: packet.sid, payload: Uint8Array.of(0x08, 0x00) }),
               ),
             );
+          }
+          if (packet.cmd === PUSH_REACTIONS && onReaction && packet.payload) {
+            for (const ev of decodePushReactions(packet.payload as Uint8Array))
+              chain = chain.then(() =>
+                onReaction(ev).catch((err) =>
+                  logger.error(`表情回调异常: ${(err as Error).message}`),
+                ),
+              );
+            return;
           }
           if (packet.cmd !== 6) return;
           for (const msg of decodePushMessages(raw)) {

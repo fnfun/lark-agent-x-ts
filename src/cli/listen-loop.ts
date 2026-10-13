@@ -1,5 +1,5 @@
 import { AuthExpired } from '../auth.js';
-import type { LarkClient } from '../client.js';
+import type { LarkClient, ReactionHandler } from '../client.js';
 import { getLogger } from '../log.js';
 import type { LarkMessage } from '../proto/decoders.js';
 import { errorText } from './format.js';
@@ -9,6 +9,8 @@ const logger = getLogger('larkx.cli');
 export interface ListenLoopOptions {
   /** 补收 since（毫秒）之后、没经长连接收到的消息。 */
   missed: (since: number) => Promise<LarkMessage[]>;
+  /** 表情变化（可选）。 */
+  onReaction?: ReactionHandler;
   /** 断线后多久重连，默认 10 秒。 */
   retryMs?: number;
   signal?: AbortSignal;
@@ -61,7 +63,7 @@ export async function keepListening(
   };
   while (!o.signal?.aborted) {
     try {
-      await c.connectWebsocket(enqueue, o.signal, onOpen);
+      await c.connectWebsocket(enqueue, o.signal, onOpen, o.onReaction);
       if (o.signal?.aborted) break;
       logger.warning('WS 连接被关闭,重连');
     } catch (e) {

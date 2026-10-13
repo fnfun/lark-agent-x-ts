@@ -31,6 +31,7 @@ const CORE_REQUESTS = [
 const CORE_TYPES = [
   'entities.RichTextElement.AnchorProperty',
   'entities.RichTextElement.MarkdownProperty',
+  'reactions.PushReactions',
 ];
 
 const BUF = join(import.meta.dir, '..', '..', 'node_modules', '.bin', 'buf');

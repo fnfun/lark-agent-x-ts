@@ -2,7 +2,7 @@ import { fromBinary } from '@bufbuild/protobuf';
 import { floatRepr, PyFloat, pyDumps } from '../pyjson.js';
 import { head } from '../text.js';
 import { type Dict, toDict } from './dict.js';
-import { protoEnum, protoType } from './registry.js';
+import { larkType, protoEnum, protoType } from './registry.js';
 
 export const MSG_TYPE_NAMES: Record<number, string> = {
   0: 'UNKNOWN',
@@ -427,4 +427,37 @@ export function contentDataJson(data: Dict | null | undefined): string {
   const fallback = (o: unknown): unknown =>
     o instanceof Uint8Array ? `<${o.length} bytes>` : String(o);
   return head(pyDumps(data, { fallback }), 20000);
+}
+
+/** 一次表情变化（长连接推送 cmd=27）：谁对哪条消息加了 / 取消了哪个表情，以及该消息上各表情的现有数量。 */
+export interface ReactionEvent {
+  message_id: string;
+  reaction_type: string;
+  user_id: string;
+  cancelled: boolean;
+  counts: Record<string, number>;
+}
+
+/** 表情推送（reactions.PushReactions）的 payload → 表情变化；只有带操作人的消息才算一次变化。 */
+export function decodePushReactions(payload: Uint8Array): ReactionEvent[] {
+  const desc = larkType('reactions.PushReactions');
+  const d = toDict(desc, fromBinary(desc, payload));
+  const extras = (d.reactionExtraInfos ?? {}) as Record<string, Dict>;
+  const out: ReactionEvent[] = [];
+  for (const mr of (d.messageReactions ?? []) as Dict[]) {
+    const id = str(mr.messageId);
+    const extra = extras[id];
+    if (!extra?.reactionChatterId || !extra.type) continue;
+    const counts: Record<string, number> = {};
+    for (const r of (mr.reactions ?? []) as Dict[])
+      if (Number(r.count ?? 0) > 0) counts[str(r.type)] = Number(r.count);
+    out.push({
+      message_id: id,
+      reaction_type: str(extra.type),
+      user_id: str(extra.reactionChatterId),
+      cancelled: extra.isCancelled === true,
+      counts,
+    });
+  }
+  return out;
 }

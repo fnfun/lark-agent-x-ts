@@ -10,6 +10,7 @@ export {
   type MessageHit,
   type MessageReactions,
   type MessageSearchOptions,
+  type ReactionHandler,
   type ReadState,
   type RecentChat,
   type SendOptions,
@@ -26,6 +27,6 @@ export {
   uploadImage,
 } from './media.js';
 export type { EditableContent, RichBlock, RichRun, SearchHit } from './proto/builders.js';
-export { contentDataJson, type LarkMessage } from './proto/decoders.js';
+export { contentDataJson, type LarkMessage, type ReactionEvent } from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
 export { getRegion, REGIONS, type Region } from './region.js';

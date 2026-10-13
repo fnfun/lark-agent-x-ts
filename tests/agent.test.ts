@@ -173,6 +173,44 @@ describe('撤回与编辑', () => {
   });
 });
 
+describe('表情事件交给数字人', () => {
+  test('前缀、群里只认 @我 不拦表情事件，排除的会话照常排除；提示词带 <reaction> 与被加表情的原消息', async () => {
+    process.env.LARKX_TRIGGER_PREFIX = '/run';
+    process.env.LARKX_TRIGGER_GROUP_AT_ONLY = 'true';
+    process.env.LARKX_TRIGGER_EXCLUDE_CHATS = 'c9';
+    const backend = new FakeBackend();
+    backend.release = () => undefined;
+    const d = new AgentDispatcher(backend, async () => undefined);
+    const ev = { message_id: 'm1', reaction_type: 'THUMBSUP', user_id: 'u-peer', cancelled: false };
+    const quote = { id: 'm1', sender_id: 'me', sender_name: '我', content: '要我现在发布吗？' };
+    await d.submitReaction(
+      ev,
+      msg({ msg_id: 'm1', chat_id: 'c9', from_id: 'me' }),
+      quote,
+      '',
+      '同事甲',
+      'me',
+    );
+    expect(backend.runs).toHaveLength(0);
+    await d.submitReaction(
+      ev,
+      msg({ msg_id: 'm1', from_id: 'me' }),
+      quote,
+      '项目协作群',
+      '同事甲',
+      'me',
+    );
+    await Bun.sleep(10);
+    expect(backend.runs).toHaveLength(1);
+    const prompt = backend.runs[0]?.prompt ?? '';
+    expect(prompt).toContain('<sender id="u-peer" name="同事甲"/>');
+    expect(prompt).toContain('<reaction type="THUMBSUP" cancelled="false"/>');
+    expect(prompt).toContain(
+      '<quote id="m1" sender_id="me" sender_name="我">要我现在发布吗？</quote>',
+    );
+  });
+});
+
 describe('Claude Code 后端', () => {
   let dir: string;
   let st: Storage;

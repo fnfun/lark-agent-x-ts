@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { create, toBinary } from '@bufbuild/protobuf';
 import { keepListening } from '../src/cli/listen-loop.js';
 import type { LarkMessage } from '../src/proto/decoders.js';
 import type { Dict } from '../src/proto/dict.js';
+import { larkType, protoType } from '../src/proto/registry.js';
 import { Storage } from '../src/storage/index.js';
 import { entity, newClient, pushFrame } from './helpers.js';
 
@@ -269,5 +271,78 @@ describe('推送里的撤回与编辑', () => {
       '5': [true, false],
     });
     expect('recalled' in (got.find((m) => m.msg_id.endsWith('1')) as object)).toBe(false);
+  });
+});
+
+describe('表情事件', () => {
+  const reactionFrame = () => {
+    const desc = larkType('reactions.PushReactions');
+    const payload = toBinary(
+      desc,
+      create(desc, {
+        messageReactions: [
+          {
+            messageId: '7000000000000000001',
+            reactions: [
+              { type: 'THUMBSUP', count: 2 },
+              { type: 'OK', count: 0 },
+            ],
+          },
+          { messageId: '7000000000000000002', reactions: [] },
+        ],
+        reactionExtraInfos: {
+          '7000000000000000001': { reactionChatterId: '7100000000000000002', type: 'THUMBSUP' },
+        },
+      } as Record<string, unknown>),
+    );
+    const packet = create(protoType('Packet'), { sid: 'sid-9', cmd: 27, payload } as Record<
+      string,
+      unknown
+    >);
+    return toBinary(
+      protoType('Frame'),
+      create(protoType('Frame'), { payload: toBinary(protoType('Packet'), packet) } as Record<
+        string,
+        unknown
+      >),
+    );
+  };
+
+  test('推送 cmd=27 解出谁对哪条消息加了哪个表情，交给 onReaction', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return srv.upgrade(req) ? undefined : new Response('no', { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send(reactionFrame());
+          setTimeout(() => ws.close(1000), 50);
+        },
+        message() {},
+      },
+    });
+    try {
+      const c = newClient();
+      c.buildWsUrl = async () => `ws://localhost:${server.port}`;
+      const got: unknown[] = [];
+      await c.connectWebsocket(
+        async () => undefined,
+        undefined,
+        undefined,
+        async (ev) => void got.push(ev),
+      );
+      expect(got).toEqual([
+        {
+          message_id: '7000000000000000001',
+          reaction_type: 'THUMBSUP',
+          user_id: '7100000000000000002',
+          cancelled: false,
+          counts: { THUMBSUP: 2 },
+        },
+      ]);
+    } finally {
+      server.stop(true);
+    }
   });
 });

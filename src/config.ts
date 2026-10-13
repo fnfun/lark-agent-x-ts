@@ -33,6 +33,8 @@ export interface Config {
   system_prompt: string;
   /** 收到消息即标已读。 */
   mark_read: boolean;
+  /** 别人对我的消息加 / 取消表情时交给数字人（如把点赞当作同意执行），默认关。 */
+  agent_reactions: boolean;
   triggers: Triggers;
 }
 
@@ -95,6 +97,7 @@ export function loadConfig(): Config {
     agent_backend: env('agent_backend') ?? 'claude',
     system_prompt: env('system_prompt') ?? '',
     mark_read: markRead === undefined ? true : asBool(markRead),
+    agent_reactions: asBool(env('agent_reactions') ?? ''),
     triggers,
   };
 }
