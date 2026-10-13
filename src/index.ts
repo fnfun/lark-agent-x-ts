@@ -13,6 +13,7 @@ export {
   type RecentChat,
   type SendOptions,
   SendUnconfirmed,
+  type UnreadChat,
 } from './client.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';

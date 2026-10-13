@@ -83,6 +83,18 @@ export interface RecentChat {
   chat: Dict | null;
 }
 
+/** 有未读的会话：unread 是会话未读数（话题群另计新话题数）。 */
+export interface UnreadChat {
+  chatId: string;
+  name: string;
+  /** 1 单聊、2 群聊、3 旧版话题群（新版话题群也是 2，看 threadChat）。 */
+  chatType: number;
+  threadChat: boolean;
+  unread: number;
+  /** 话题群里未读的新话题数。 */
+  unreadThreads: number;
+}
+
 /** 跨会话搜消息的条件；时间为毫秒时间戳。 */
 export interface MessageSearchOptions {
   /** 只搜这些会话。 */
@@ -830,7 +842,7 @@ export class LarkClient {
     const out: LarkMessage[] = [];
     for (const id of messageIds) {
       const v = found[id];
-      if (v) out.push(await this.fixThreadScope(toLarkMessage(v, {})));
+      if (v) out.push(await this.fixThreadScope(toLarkMessage(v, { selfId: this.auth.userId })));
     }
     return out;
   }
@@ -859,7 +871,7 @@ export class LarkClient {
     });
     return Object.entries((resp.messages ?? {}) as Record<string, Dict>)
       .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([, v]) => toLarkMessage(v, {}));
+      .map(([, v]) => toLarkMessage(v, { selfId: this.auth.userId }));
   }
 
   /**
@@ -897,7 +909,11 @@ export class LarkClient {
         const roots = (resp.rootMessages ?? {}) as Record<string, Dict>;
         add(
           Object.values(roots).map((v) =>
-            toLarkMessage(v, { threadChat: true, fallbackChatId: rc.chatId }),
+            toLarkMessage(v, {
+              threadChat: true,
+              fallbackChatId: rc.chatId,
+              selfId: this.auth.userId,
+            }),
           ),
         );
         const updated = Object.values((resp.threads ?? {}) as Record<string, Dict>)
@@ -917,7 +933,13 @@ export class LarkClient {
         });
         for (const [pos, v] of Object.entries((resp.messages ?? {}) as Record<string, Dict>)) {
           if (Number(v.replyCount ?? 0) > 0) threads.push(String(v.id));
-          add([toLarkMessage(v, { fallbackChatId: rc.chatId, fallbackPosition: Number(pos) })]);
+          add([
+            toLarkMessage(v, {
+              fallbackChatId: rc.chatId,
+              fallbackPosition: Number(pos),
+              selfId: this.auth.userId,
+            }),
+          ]);
         }
       }
       if (enumToInt(chat.type ?? 0) !== 1)
@@ -927,6 +949,93 @@ export class LarkClient {
       (a, b) =>
         (a.create_time ?? 0) - (b.create_time ?? 0) || (a.position ?? 0) - (b.position ?? 0),
     );
+  }
+
+  /**
+   * 收件箱里有未读的会话（since 毫秒之后有变动的，默认最近 30 天），按最近变动从新到旧。
+   * 未读数同客户端角标：会话未读消息数，话题群另计未读的新话题数。
+   */
+  async unreadChats(since = Date.now() - 30 * 86_400_000): Promise<UnreadChat[]> {
+    const out: UnreadChat[] = [];
+    for (const rc of await this.recentChats(since)) {
+      const chat = rc.chat ?? (await this.getChatInfo(rc.chatId));
+      if (!chat) continue;
+      const unread = int(chat.newMessageCount, 0);
+      const unreadThreads = int(chat.newThreadCount, 0);
+      if (unread <= 0 && unreadThreads <= 0) continue;
+      out.push({
+        chatId: rc.chatId,
+        name: String(chat.name ?? ''),
+        chatType: enumToInt(chat.type ?? 0),
+        threadChat: isThreadChat(chat),
+        unread,
+        unreadThreads,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 一个会话里的未读消息（已读位置之后的，最多 limit 条），按时间升序。
+   * 话题群取已读话题位置之后的新话题，以及最近话题里已读位置之后的回复。
+   */
+  async unreadMessages(chatId: string, limit = 50): Promise<LarkMessage[]> {
+    const chat = await this.getChatInfo(chatId);
+    if (!chat) return [];
+    const selfId = this.auth.userId;
+    const out: LarkMessage[] = [];
+    if (isThreadChat(chat)) {
+      const lastThread = int(chat.lastThreadPosition);
+      if (lastThread < 0) return [];
+      const first = Math.max(0, lastThread - RECENT_THREADS + 1);
+      const resp = await this.api('thread.PullThreadsByPositionsRequest', {
+        channelId: chatId,
+        type: CHANNEL_CHAT,
+        positions: Array.from({ length: lastThread - first + 1 }, (_, i) => first + i),
+      });
+      const readThread = int(chat.readThreadPosition);
+      const roots = (resp.rootMessages ?? {}) as Record<string, Dict>;
+      for (const t of Object.values((resp.threads ?? {}) as Record<string, Dict>)) {
+        const root = roots[String(t.id)];
+        if (root && int(t.position) > readThread)
+          out.push(toLarkMessage(root, { threadChat: true, fallbackChatId: chatId, selfId }));
+        const read = int(t.readPosition);
+        const last = int(t.lastMessagePosition);
+        if (last <= read) continue;
+        const from = Math.max(read + 1, last - limit + 1, 0);
+        const replies = await this.api('thread.PullThreadMessagesByPositionsRequest', {
+          threadId: String(t.id),
+          positions: Array.from({ length: last - from + 1 }, (_, i) => from + i),
+        });
+        for (const v of Object.values((replies.messages ?? {}) as Record<string, Dict>))
+          out.push(toLarkMessage(v, { selfId }));
+      }
+    } else {
+      const last = int(chat.lastMessagePosition);
+      const from = Math.max(int(chat.readPosition) + 1, last - limit + 1, 0);
+      if (last >= from) {
+        const resp = await this.api('messages.PullMessagesByPositionsRequest', {
+          chatId,
+          positions: Array.from({ length: last - from + 1 }, (_, i) => from + i),
+        });
+        for (const [pos, v] of Object.entries((resp.messages ?? {}) as Record<string, Dict>))
+          out.push(
+            toLarkMessage(v, { fallbackChatId: chatId, fallbackPosition: Number(pos), selfId }),
+          );
+      }
+    }
+    return out
+      .filter((m) => m.from_id && m.from_id !== selfId && !m.recalled)
+      .sort((a, b) => (a.create_time ?? 0) - (b.create_time ?? 0))
+      .slice(-limit);
+  }
+
+  /** 各会话里还没读的、@ 了我（或 @所有人）的消息，按时间升序。 */
+  async unreadMentions(since?: number): Promise<LarkMessage[]> {
+    const out: LarkMessage[] = [];
+    for (const chat of await this.unreadChats(since))
+      out.push(...(await this.unreadMessages(chat.chatId)).filter((m) => m.at_me));
+    return out.sort((a, b) => (a.create_time ?? 0) - (b.create_time ?? 0));
   }
 
   /** 按 position 拉历史消息并解码；save 时逐条入库（单条失败忽略）。 */
