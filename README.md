@@ -56,6 +56,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark group create <群名>` / `add` / `remove` / `rename` | 建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin 消息（`--remove` 取消） / 列出会话里被 Pin 的消息 |
 | `lark shortcut [chat_id,...]` | 在会话列表里置顶会话（`--remove` 取消，不带参数列出已置顶的） |
+| `lark tags [标签]` | 会话标签（分组）：列出标签，或列出某标签里的会话 |
 | `lark flag <msg_id...>` / `lark flags` | 标记消息（`--chat` 标记会话，`--remove` 取消） / 列出我的标记 |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | 撤回消息 / 编辑自己发的文本或富文本消息（`--links`、`--rich`） |
 | `lark react <msg_id> <表情>` / `lark reactions <msg_id...>` | 加表情回复（如 `THUMBSUP`、`DONE`，`--remove` 去掉） / 查看消息上的表情 |
@@ -91,7 +92,7 @@ LARKX_AGENT_BACKEND=claude   # claude | none
 LARKX_SYSTEM_PROMPT=         # 数字人系统提示词，留空用内置默认
 LARKX_MARK_READ=true         # 收到消息自动标已读；false 时由调用方在需要时 `lark read`
 LARKX_AGENT_REACTIONS=false  # 别人对我的消息加/取消表情时交给数字人（如把点赞当作同意执行）
-LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _KEYWORDS / _GROUP_AT_ONLY
+LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _INCLUDE_TAGS（会话标签名或 id）/ _KEYWORDS / _GROUP_AT_ONLY
 ```
 
 凭证不放 `.env`，用 `lark auth qr` / `lark auth import` 管理。

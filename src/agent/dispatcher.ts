@@ -111,6 +111,12 @@ class SessionWorker {
 /** 数字人分发：按触发规则筛消息、按会话边界排队，支持 /clear（开新会话）与 /stop（清空排队）。 */
 export class AgentDispatcher {
   private readonly workers = new Map<string, SessionWorker>();
+  private tagChats: Set<string> | null = null;
+
+  /** LARKX_TRIGGER_INCLUDE_TAGS 解析出的会话（这些标签里的 chat_id）。 */
+  setTagChats(chatIds: Iterable<string>): void {
+    this.tagChats = new Set(chatIds);
+  }
 
   constructor(
     private readonly backend: AgentBackend,
@@ -138,6 +144,8 @@ export class AgentDispatcher {
     if (t.include_chats.length && !t.include_chats.map(String).includes(chatId)) return false;
     if (t.exclude_chats.length && t.exclude_chats.map(String).includes(chatId)) return false;
     if (t.include_senders.length && !t.include_senders.map(String).includes(senderId)) return false;
+    // 标签里的会话由 listen 解析后经 setTagChats 给进来；还没解析到时宁可不处理
+    if (t.include_tags.length && !this.tagChats?.has(chatId)) return false;
     if (t.keywords.length && !t.keywords.some((kw) => content.includes(kw))) return false;
     if (t.group_at_only && (typeName === 'group' || typeName === 'topic_group') && !msg.at_me)
       return false;
@@ -231,13 +239,9 @@ export class AgentDispatcher {
       parent_id: ev.message_id,
     };
     const t = { ...this.cfg.triggers, prefix: '', keywords: [], group_at_only: false };
-    if (
-      !new AgentDispatcher(this.backend, this.replyFn, { ...this.cfg, triggers: t }).shouldHandle(
-        msg,
-        myUserId,
-      )
-    )
-      return;
+    const filter = new AgentDispatcher(this.backend, this.replyFn, { ...this.cfg, triggers: t });
+    if (this.tagChats) filter.setTagChats(this.tagChats);
+    if (!filter.shouldHandle(msg, myUserId)) return;
     this.enqueue({
       ...msg,
       _chat_name: chatName,

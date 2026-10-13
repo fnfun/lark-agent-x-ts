@@ -1154,6 +1154,50 @@ async function interactiveLogin(): Promise<LarkAuth> {
   }
 }
 
+/** 标签里的会话会变，数字人按标签筛选时隔一段时间重新解析。 */
+const TAG_REFRESH_MS = 5 * 60_000;
+
+/** 按名字或 id 找标签，返回这些标签里的全部会话；找不到的标签记警告。 */
+async function tagChats(c: LarkClient, wanted: string[]): Promise<Set<string>> {
+  const groups = await c.feedGroups();
+  const chats = new Set<string>();
+  for (const w of wanted) {
+    const g = groups.find((x) => x.id === w || x.name === w);
+    if (!g) {
+      logger.warning(`找不到会话标签: ${w}`);
+      continue;
+    }
+    for (const id of await c.feedGroupChats(g.id)) chats.add(id);
+  }
+  return chats;
+}
+
+const tags: Command = {
+  name: 'tags',
+  help: '会话标签(分组):不带参数列出标签;带标签名或 id 列出其中的会话',
+  positionals: [{ name: 'tag', nargs: '?' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const c = await client();
+    if (a.tag === undefined) {
+      const groups = await c.feedGroups();
+      if (a.json) printJson(groups);
+      else for (const g of groups) out(`${g.id}\t${g.name}\t${g.type}`);
+      return 0;
+    }
+    const groups = await c.feedGroups();
+    const g = groups.find((x) => x.id === a.tag || x.name === a.tag);
+    if (!g) {
+      err(`找不到会话标签: ${a.tag}`);
+      return 1;
+    }
+    const ids = await c.feedGroupChats(g.id);
+    if (a.json) printJson(ids);
+    else for (const id of ids) out(id);
+    return 0;
+  },
+};
+
 async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
   const c = await LarkClient.create(la);
   const st = new Storage();
@@ -1186,6 +1230,17 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
         c.sendMsg(text, chatId, { rootId }),
       )
     : null;
+  if (dispatcher && cfg.triggers.include_tags.length) {
+    const refresh = async () => {
+      try {
+        dispatcher.setTagChats(await tagChats(c, cfg.triggers.include_tags));
+      } catch (e) {
+        logger.warning(`解析会话标签失败: ${errorText(e)}`);
+      }
+    };
+    await refresh();
+    setInterval(refresh, TAG_REFRESH_MS);
+  }
   const names = new Map<string, string | null>();
   /** 回复（引用或话题回复）所接的那条消息：先查本地库，没有再向服务端取；取不到时不带。 */
   const quoted = async (msg: LarkMessage): Promise<QuotedMessage | undefined> => {
@@ -1356,6 +1411,7 @@ export const COMMANDS: Command[] = [
   pin,
   pins,
   shortcut,
+  tags,
   flag,
   flags,
   recall,
