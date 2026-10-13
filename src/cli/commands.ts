@@ -422,19 +422,77 @@ const api: Command = {
   },
 };
 
-/** 拉取结果的输出（history / get / thread 共用）：一行一条，或 --json 时去掉 content_data 的完整字段。 */
-function printMessages(msgs: LarkMessage[], json: boolean): void {
+/**
+ * 拉取结果的输出（history / get / thread 共用）：一行一条，或 --json 时去掉 content_data 的完整字段。
+ * names 给出时（--names）发送者显示为名字，--json 多一个 from_name。
+ */
+function printMessages(msgs: LarkMessage[], json: boolean, names?: Map<string, string>): void {
   if (json) {
-    printJson(msgs.map(({ content_data: _, ...rest }) => rest));
+    printJson(
+      msgs.map(({ content_data: _, ...rest }) =>
+        names ? { ...rest, from_name: names.get(rest.from_id) ?? '' } : rest,
+      ),
+    );
     return;
   }
   for (const m of msgs) {
     const scope = m.anchor ? `[${m.scope}:${head(m.anchor, 8)}]` : '';
+    const sender = names?.get(m.from_id) || m.from_id;
     out(
-      `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${m.from_id}: ${preview(m.content || '', 120)}`,
+      `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${sender}: ${preview(m.content || '', 120)}`,
     );
   }
 }
+
+const NAMES_OPTION: Option = {
+  name: 'names',
+  kind: 'flag',
+  help: '发送者显示为名字(--json 时多一个 from_name)',
+};
+
+/** --names 时查发送者名字；查不到的照旧显示 id。 */
+async function senderNames(
+  c: LarkClient,
+  msgs: LarkMessage[],
+  want: boolean,
+): Promise<Map<string, string> | undefined> {
+  if (!want) return undefined;
+  try {
+    return await c.userNames(msgs.map((m) => m.from_id));
+  } catch (e) {
+    logger.warning(`查发送者名字失败: ${errorText(e)}`);
+    return new Map();
+  }
+}
+
+const members: Command = {
+  name: 'members',
+  help: '列出会话成员(id、名字、类型 user/bot)',
+  positionals: [{ name: 'chat_id' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const list = await (await client()).chatMembers(String(a.chat_id));
+    if (a.json) printJson(list);
+    else for (const m of list) out(`${m.id}\t${m.name}\t${m.type}`);
+    return 0;
+  },
+};
+
+const users: Command = {
+  name: 'users',
+  help: '按用户 id 查名字(批量)',
+  positionals: [{ name: 'user_ids', nargs: '+' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const ids = a.user_ids as string[];
+    const names = await (await client()).userNames(ids);
+    if (a.json) printJson(Object.fromEntries(names));
+    else for (const id of ids) if (names.has(id)) out(`${id}\t${names.get(id)}`);
+    const missing = ids.filter((id) => !names.has(id));
+    if (missing.length) err(`查不到: ${missing.join(', ')}`);
+    return missing.length ? 1 : 0;
+  },
+};
 
 const getCmd: Command = {
   name: 'get',
@@ -442,13 +500,15 @@ const getCmd: Command = {
   positionals: [{ name: 'message_ids', nargs: '+' }],
   options: [
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    NAMES_OPTION,
     { name: 'json', kind: 'flag' },
   ],
   async run(a) {
     const ids = a.message_ids as string[];
-    const msgs = await (await client()).getMessages(ids);
+    const c = await client();
+    const msgs = await c.getMessages(ids);
     await saveAll(msgs, Boolean(a.save));
-    printMessages(msgs, Boolean(a.json));
+    printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
     const missing = ids.filter((id) => !msgs.some((m) => m.msg_id === id));
     if (missing.length) err(`找不到消息: ${missing.join(', ')}`);
     return missing.length ? 1 : 0;
@@ -462,16 +522,18 @@ const thread: Command = {
   options: [
     { name: 'count', kind: 'int', default: 50, help: '最多取多少条回复' },
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    NAMES_OPTION,
     { name: 'json', kind: 'flag' },
   ],
   async run(a) {
-    const msgs = await (await client()).threadMessages(String(a.root_id), Number(a.count));
+    const c = await client();
+    const msgs = await c.threadMessages(String(a.root_id), Number(a.count));
     if (!msgs.length) {
       err(`找不到话题根消息: ${a.root_id}`);
       return 1;
     }
     await saveAll(msgs, Boolean(a.save));
-    printMessages(msgs, Boolean(a.json));
+    printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
     return 0;
   },
 };
@@ -491,6 +553,7 @@ const history: Command = {
     { name: 'start', kind: 'int', help: '起始 position(默认从最新往前)' },
     { name: 'count', kind: 'int', default: 20 },
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    NAMES_OPTION,
     { name: 'json', kind: 'flag' },
   ],
   async run(a) {
@@ -525,7 +588,7 @@ const history: Command = {
       st ? (m: LarkMessage) => st.saveMessage(m) : undefined,
     );
     await st?.close();
-    printMessages(msgs, Boolean(a.json));
+    printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
     if (a.save) out(`已入库 ${msgs.length} 条`);
     return 0;
   },
@@ -765,6 +828,8 @@ export const COMMANDS: Command[] = [
   sessions,
   messages,
   search,
+  members,
+  users,
   api,
   history,
   getCmd,

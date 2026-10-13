@@ -79,6 +79,37 @@ export interface RecentChat {
   chat: Dict | null;
 }
 
+/** 群成员（或按 id 查到的用户）。name 已按备注名 > 当前语言显示名 > 默认名取好。 */
+export interface ChatMember {
+  id: string;
+  name: string;
+  type: 'user' | 'bot' | 'ai' | 'unknown';
+}
+
+const CHATTER_TYPES: Record<number, ChatMember['type']> = { 1: 'user', 2: 'bot', 3: 'ai' };
+
+/** entities.Chatter → 显示名：自己设的备注名优先，其次当前语言的显示名，再次默认显示名与 name。 */
+export function chatterName(v: Dict, locale = 'zh_CN'): string {
+  const display = (v.displayName ?? {}) as {
+    defaultVal?: string;
+    i18nVals?: Record<string, string>;
+  };
+  return String(
+    v.alias ||
+      display.i18nVals?.[locale.toLowerCase()] ||
+      display.defaultVal ||
+      v.name ||
+      v.enUsName ||
+      '',
+  );
+}
+
+const toMember = (id: string, v: Dict, locale: string): ChatMember => ({
+  id,
+  name: chatterName(v, locale),
+  type: CHATTER_TYPES[enumToInt(v.type ?? 0)] ?? 'unknown',
+});
+
 /** 补收断线期间的消息时，本地已有记录的查询方式（都可省略，省略时按本地什么都没有处理）。 */
 export interface MissedOptions {
   /** 本地已有的该会话最大 position，没有记录时为 -1（会话 position 从 0 起）；只从它之后拉，减少重复。 */
@@ -109,6 +140,7 @@ async function gatewayReason(res: Response): Promise<string> {
 /** 网页协议客户端：网关请求（HTTP + protobuf）与消息长连接。 */
 export class LarkClient {
   private readonly threadChats = new Map<string, boolean>();
+  private readonly chatterNames = new Map<string, string>();
 
   private constructor(readonly auth: LarkAuth) {}
 
@@ -441,6 +473,50 @@ export class LarkClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 批量查用户（或机器人）的显示名，返回 id → 名字；查不到的 id 不在结果里。结果在进程内缓存，同一 id 只查一次。
+   */
+  async userNames(ids: string[]): Promise<Map<string, string>> {
+    const want = [...new Set(ids.filter(Boolean))];
+    const missing = want.filter((id) => !this.chatterNames.has(id));
+    for (let i = 0; i < missing.length; i += 100) {
+      const resp = await this.api('chatters.PullChattersByIdsRequest', {
+        chatterIds: missing.slice(i, i + 100),
+      });
+      for (const [id, v] of Object.entries((resp.chatters ?? {}) as Record<string, Dict>))
+        this.chatterNames.set(id, chatterName(v, this.auth.region.locale));
+    }
+    const out = new Map<string, string>();
+    for (const id of want) {
+      const name = this.chatterNames.get(id);
+      if (name !== undefined) out.set(id, name);
+    }
+    return out;
+  }
+
+  /** 会话成员（含机器人），最多取 max 个；翻页参数（cursor / offset / orderCursor）原样带回，直到服务端不再给。 */
+  async chatMembers(chatId: string, max = 5000): Promise<ChatMember[]> {
+    const members = new Map<string, ChatMember>();
+    let page: Dict = {};
+    for (;;) {
+      const resp = await this.api('chats.PullChatChattersRequest', { chatId, limit: 100, ...page });
+      const before = members.size;
+      for (const field of ['chatters', 'updateChatters'])
+        for (const [id, v] of Object.entries((resp[field] ?? {}) as Record<string, Dict>)) {
+          const m = toMember(id, v, this.auth.region.locale);
+          members.set(id, m);
+          this.chatterNames.set(id, m.name);
+        }
+      const next: Dict = {};
+      if (resp.nextCursor) next.cursor = resp.nextCursor;
+      if (resp.nextOffset) next.offset = resp.nextOffset;
+      if (resp.nextOrderCursor) next.orderCursor = resp.nextOrderCursor;
+      if (!Object.keys(next).length || members.size === before || members.size >= max) break;
+      page = next;
+    }
+    return [...members.values()].slice(0, max);
   }
 
   /** 收到消息即标已读（listen 的 LARKX_MARK_READ）；失败只记 debug。 */

@@ -65,6 +65,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
+| `lark members <chat_id>` / `lark users <user_id...>` | 会话成员（id、名字、user/bot） / 批量查用户名字；`history`、`get`、`thread` 加 `--names` 时发送者显示为名字 |
 | `lark config` | 查看生效配置 |
 
 ## 配置
@@ -97,6 +98,7 @@ await client.sendMsg('你好', '<chat_id>');
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
+const names = await client.userNames(['<user_id>']); // id → 名字（批量、缓存）；chatMembers(chatId) 列群成员
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
 ```
