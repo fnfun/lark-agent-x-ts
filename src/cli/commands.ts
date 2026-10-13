@@ -264,6 +264,96 @@ function mediaCommand(kind: 'image' | 'file'): Command {
   };
 }
 
+const recall: Command = {
+  name: 'recall',
+  help: '撤回消息(自己发的;群管理员可撤回群里别人的)',
+  positionals: [{ name: 'message_ids', nargs: '+' }],
+  async run(a) {
+    const c = await client();
+    let failed = 0;
+    for (const id of a.message_ids as string[]) {
+      try {
+        await c.recallMessage(id);
+        out(`已撤回 msg_id=${id}`);
+      } catch (e) {
+        failed++;
+        err(`撤回 ${id} 失败: ${errorText(e)}`);
+      }
+    }
+    return failed ? 1 : 0;
+  },
+};
+
+const edit: Command = {
+  name: 'edit',
+  help: '编辑自己发的文本/富文本消息(整条替换,对方看到"已编辑")',
+  positionals: [{ name: 'msg_id' }, { name: 'text', nargs: '+' }],
+  options: [
+    { name: 'links', kind: 'flag', help: '把文本里的 [文字](url) 发成带文字的超链接' },
+    {
+      name: 'rich',
+      kind: 'string',
+      help: '结构化富文本 JSON(或 @文件路径),text 作为纯文本摘要;原消息须是富文本',
+    },
+  ],
+  async run(a) {
+    const c = await client();
+    const id = String(a.msg_id);
+    const text = (a.text as string[]).join(' ');
+    try {
+      if (a.rich) {
+        const raw = String(a.rich);
+        const spec = JSON.parse(raw.startsWith('@') ? readFileSync(raw.slice(1), 'utf8') : raw) as {
+          blocks?: RichBlock[];
+        };
+        await c.editMessage(id, { blocks: spec.blocks ?? [], text });
+      } else await c.editMessage(id, { text, links: Boolean(a.links) });
+    } catch (e) {
+      err(`编辑失败: ${errorText(e)}`);
+      return 1;
+    }
+    out(`已编辑 msg_id=${id}`);
+    return 0;
+  },
+};
+
+const react: Command = {
+  name: 'react',
+  help: '给消息加表情回复(如 THUMBSUP、OK、DONE、SMILE);--remove 去掉',
+  positionals: [{ name: 'msg_id' }, { name: 'reaction_type' }],
+  options: [{ name: 'remove', kind: 'flag', help: '去掉自己加的这个表情' }],
+  async run(a) {
+    const c = await client();
+    const id = String(a.msg_id);
+    const type = String(a.reaction_type);
+    try {
+      if (a.remove) await c.removeReaction(id, type);
+      else await c.addReaction(id, type);
+    } catch (e) {
+      err(`${a.remove ? '去掉' : '添加'}表情失败: ${errorText(e)}`);
+      return 1;
+    }
+    out(`已${a.remove ? '去掉' : '添加'}表情 ${type} msg_id=${id}`);
+    return 0;
+  },
+};
+
+const reactions: Command = {
+  name: 'reactions',
+  help: '查看消息上的表情回复',
+  positionals: [{ name: 'message_ids', nargs: '+' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const list = await (await client()).reactions(a.message_ids as string[]);
+    if (a.json) printJson(list);
+    else
+      for (const m of list)
+        for (const r of m.reactions)
+          out(`${m.messageId}\t${r.type}\t${r.count}\t${r.userIds.join(',')}`);
+    return 0;
+  },
+};
+
 const messageLink: Command = {
   name: 'message-link',
   help: '生成消息链接(applink client/message/link/open?token=...);多个消息 id 生成一个合并链接',
@@ -820,6 +910,10 @@ export const COMMANDS: Command[] = [
   send,
   mediaCommand('image'),
   mediaCommand('file'),
+  recall,
+  edit,
+  react,
+  reactions,
   messageLink,
   selfChat,
   read,

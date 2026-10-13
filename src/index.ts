@@ -7,6 +7,7 @@ export {
   LarkClient,
   type MessageContent,
   type MessageHandler,
+  type MessageReactions,
   type RecentChat,
   type SendOptions,
   SendUnconfirmed,
@@ -20,7 +21,7 @@ export {
   uploadFile,
   uploadImage,
 } from './media.js';
-export type { RichBlock, RichRun, SearchHit } from './proto/builders.js';
+export type { EditableContent, RichBlock, RichRun, SearchHit } from './proto/builders.js';
 export { contentDataJson, type LarkMessage } from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
 export { getRegion, REGIONS, type Region } from './region.js';
