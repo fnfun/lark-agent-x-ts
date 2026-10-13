@@ -621,6 +621,45 @@ const searchMessages: Command = {
   },
 };
 
+const unread: Command = {
+  name: 'unread',
+  help: '未读:默认列出有未读的会话;--chat 看某会话的未读消息;--at 只看 @我 的未读消息',
+  options: [
+    { name: 'chat', kind: 'string', help: '只看这个会话的未读消息' },
+    { name: 'at', kind: 'flag', help: '各会话里 @我(或 @所有人)的未读消息' },
+    {
+      name: 'since',
+      kind: 'string',
+      help: '只看这之后有变动的会话(默认 30d;格式同 search-messages)',
+    },
+    NAMES_OPTION,
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    let since: number | undefined;
+    try {
+      since = a.since === undefined ? undefined : parseTimeArg(String(a.since));
+    } catch (e) {
+      err((e as Error).message);
+      return 1;
+    }
+    const c = await client();
+    if (a.chat || a.at) {
+      const msgs = a.chat ? await c.unreadMessages(String(a.chat)) : await c.unreadMentions(since);
+      printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
+      return 0;
+    }
+    const chats = await c.unreadChats(since);
+    if (a.json) printJson(chats);
+    else
+      for (const u of chats)
+        out(
+          `${u.chatId}\t${CHAT_TYPE_LABELS[u.threadChat ? 3 : u.chatType] ?? '?'}\t${u.name || '(未命名)'}\t未读 ${u.unread}${u.unreadThreads ? `,新话题 ${u.unreadThreads}` : ''}`,
+        );
+    return 0;
+  },
+};
+
 const members: Command = {
   name: 'members',
   help: '列出会话成员(id、名字、类型 user/bot)',
@@ -1001,6 +1040,7 @@ export const COMMANDS: Command[] = [
   messages,
   search,
   searchMessages,
+  unread,
   members,
   users,
   api,

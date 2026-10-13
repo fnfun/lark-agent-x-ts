@@ -336,10 +336,34 @@ export function parseWsFrame(raw: Uint8Array): [Dict, Dict] {
   return [frameDict, toDict(protoType('Packet'), fromBinary(protoType('Packet'), payload))];
 }
 
+/** 消息是否 @ 了 selfId：服务端给的被 @ 名单（atUserIdList），或富文本里 @所有人。 */
+function mentions(v: Dict, data: Dict | null, selfId: string): boolean {
+  if (((v.atUserIdList as unknown[] | undefined) ?? []).some((id) => String(id) === selfId))
+    return true;
+  const rt = data?.richText as Dict | undefined;
+  const dict = ((rt?.elements as Dict | undefined)?.dictionary ?? {}) as Record<string, Dict>;
+  for (const id of (rt?.atIds as string[] | undefined) ?? []) {
+    const prop = dict[id]?.property as Uint8Array | undefined;
+    if (!prop?.length) continue;
+    try {
+      const at = toDict(protoType('AtProperty'), fromBinary(protoType('AtProperty'), prop));
+      if (at.userId === 'all' || String(at.userId) === selfId) return true;
+    } catch {}
+  }
+  return false;
+}
+
 /** 实体消息 dict（推送或拉取结果）→ LarkMessage。 */
 export function toLarkMessage(
   v: Dict,
-  o: { atMe?: boolean; threadChat?: boolean; fallbackChatId?: string; fallbackPosition?: number },
+  o: {
+    atMe?: boolean;
+    threadChat?: boolean;
+    fallbackChatId?: string;
+    fallbackPosition?: number;
+    /** 当前账号 id：没有推送给的 atMe 时（拉取的消息），据消息里被 @ 的人算 at_me。 */
+    selfId?: string;
+  },
 ): LarkMessage {
   const msgType = enumToInt(v.type ?? 0);
   const chatType = enumToInt(v.chatType ?? 0);
@@ -370,7 +394,7 @@ export function toLarkMessage(
     chat_type_name: CHAT_TYPE_NAMES[chatType] ?? String(chatType),
     scope,
     anchor,
-    at_me: o.atMe ?? false,
+    at_me: o.atMe ?? (o.selfId ? mentions(v, data, o.selfId) : false),
     root_id: rootId,
     parent_id: str(v.parentId),
     cid: str(v.cid),
