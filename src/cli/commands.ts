@@ -18,6 +18,7 @@ import type { CommandSpec, Option, Parsed } from './args.js';
 import { errorText, printJson, pyDatetime, shortTime } from './format.js';
 import { keepListening } from './listen-loop.js';
 import { qrAscii, saveQrPng } from './qr.js';
+import { parseTimeArg } from './time.js';
 
 const logger = getLogger('larkx.cli');
 
@@ -555,6 +556,57 @@ async function senderNames(
   }
 }
 
+const list = (v: Parsed[string]) =>
+  v === undefined
+    ? undefined
+    : String(v)
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+
+const searchMessages: Command = {
+  name: 'search-messages',
+  help: '跨会话搜消息(同客户端搜索框的"消息")',
+  positionals: [{ name: 'query', nargs: '+' }],
+  options: [
+    { name: 'chat', kind: 'string', help: '只搜这些会话(chat_id,逗号分隔)' },
+    { name: 'from', kind: 'string', help: '只搜这些人发的(user_id,逗号分隔)' },
+    {
+      name: 'since',
+      kind: 'string',
+      help: '起始时间:30m/2h/3d/1w、2026-10-01、2026-10-01 09:30 或时间戳',
+    },
+    { name: 'until', kind: 'string', help: '截止时间(格式同 --since)' },
+    { name: 'limit', kind: 'int', default: 20 },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    let since: number | undefined;
+    let until: number | undefined;
+    try {
+      since = a.since === undefined ? undefined : parseTimeArg(String(a.since));
+      until = a.until === undefined ? undefined : parseTimeArg(String(a.until));
+    } catch (e) {
+      err((e as Error).message);
+      return 1;
+    }
+    const hits = await (await client()).searchMessages((a.query as string[]).join(' '), {
+      chatIds: list(a.chat),
+      fromIds: list(a.from),
+      since,
+      until,
+      limit: Number(a.limit),
+    });
+    if (a.json) printJson(hits);
+    else
+      for (const h of hits)
+        out(
+          `${h.msgId} [${shortTime(h.createTime)}] ${h.chatId}(${h.chatTitle}) ${preview(h.summary, 120)}`,
+        );
+    return 0;
+  },
+};
+
 const members: Command = {
   name: 'members',
   help: '列出会话成员(id、名字、类型 user/bot)',
@@ -934,6 +986,7 @@ export const COMMANDS: Command[] = [
   sessions,
   messages,
   search,
+  searchMessages,
   members,
   users,
   api,
