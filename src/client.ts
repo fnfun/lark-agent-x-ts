@@ -81,6 +81,35 @@ export interface RecentChat {
   chat: Dict | null;
 }
 
+/** 跨会话搜消息的条件；时间为毫秒时间戳。 */
+export interface MessageSearchOptions {
+  /** 只搜这些会话。 */
+  chatIds?: string[] | undefined;
+  /** 只搜这些人发的。 */
+  fromIds?: string[] | undefined;
+  since?: number | undefined;
+  until?: number | undefined;
+  /** 最多返回多少条，默认 20。 */
+  limit?: number | undefined;
+}
+
+/** 一条搜索命中：summary 是服务端给的摘要（"发送者: 内容…"，去掉了高亮标记），chatTitle 是会话名。 */
+export interface MessageHit {
+  msgId: string;
+  chatId: string;
+  chatTitle: string;
+  fromId: string;
+  /** 秒级时间戳。 */
+  createTime: number;
+  position: number | null;
+  msgType: number;
+  p2p: boolean;
+  summary: string;
+}
+
+const SEARCH_ENTITY_MESSAGE = 5;
+const unhighlight = (s: unknown) => String(s ?? '').replace(/<\/?h>/g, '');
+
 /** 一条消息上的表情回复。 */
 export interface MessageReactions {
   messageId: string;
@@ -438,6 +467,63 @@ export class LarkClient {
   async search(query: string): Promise<SearchHit[]> {
     const pkt = buildSearchPacket(query, longRequestId(), this.auth.region.locale);
     return decodeSearchResponse(await this.gatewayPost(pkt));
+  }
+
+  /**
+   * 跨会话搜消息（同客户端搜索框的"消息"），按服务端的相关度排序；可按会话、发送人、时间过滤。
+   * 服务端的搜索有索引延迟，刚发出的消息可能要过一会儿才搜得到。
+   */
+  async searchMessages(query: string, o: MessageSearchOptions = {}): Promise<MessageHit[]> {
+    const limit = o.limit ?? 20;
+    const filter: Dict = {};
+    if (o.chatIds?.length) filter.chatIds = o.chatIds;
+    if (o.fromIds?.length) filter.creatorIds = o.fromIds;
+    if (o.since !== undefined || o.until !== undefined)
+      filter.timeRange = {
+        ...(o.since !== undefined ? { startTime: String(Math.floor(o.since / 1000)) } : {}),
+        ...(o.until !== undefined ? { endTime: String(Math.floor(o.until / 1000)) } : {}),
+      };
+    const session = requestCid();
+    const out: MessageHit[] = [];
+    let token = '';
+    for (let seq = 1; out.length < limit; seq++) {
+      const resp = await this.api('usearch.UniversalSearchRequest', {
+        header: {
+          searchSession: session,
+          sessionSeqId: seq,
+          query,
+          ...(token ? { paginationToken: token } : {}),
+          searchContext: {
+            tagName: 'MESSAGE',
+            entityItems: [{ type: SEARCH_ENTITY_MESSAGE, filter: { messageFilter: filter } }],
+            commonFilter: { includeOuterTenant: true },
+            sourceKey: 'messenger',
+          },
+          locale: this.auth.region.locale,
+          pageSize: Math.min(limit - out.length, 50),
+          extraParam: {},
+        },
+      });
+      for (const r of (resp.results ?? []) as Dict[]) {
+        const m = ((r.resultMeta as Dict | undefined)?.messageMeta ?? {}) as Dict;
+        if (r.type !== SEARCH_ENTITY_MESSAGE || !m.id) continue;
+        out.push({
+          msgId: String(m.id),
+          chatId: String(m.chatId ?? ''),
+          chatTitle: unhighlight(r.titleHighlighted),
+          fromId: String(m.fromId ?? ''),
+          createTime: Number(m.createTime ?? 0),
+          position: m.position === undefined ? null : Number(m.position),
+          msgType: enumToInt(m.type ?? 0),
+          p2p: m.isP2pChat === true,
+          summary: unhighlight(r.summaryHighlighted),
+        });
+      }
+      const header = (resp.header ?? {}) as Dict;
+      token = String(header.paginationToken ?? '');
+      if (!header.hasMore || !token || !(resp.results as unknown[] | undefined)?.length) break;
+    }
+    return out.slice(0, limit);
   }
 
   async createChat(userId: string): Promise<string | null> {
