@@ -260,6 +260,35 @@ describe('HTTP', () => {
     }
   });
 
+  test('网关出错时 HttpError 带上响应 Packet 里的出错原因，报错文案不变', async () => {
+    const body = toBinary(
+      protoType('Packet'),
+      create(protoType('Packet'), { sid: 'chat not in thread mode' }),
+    );
+    const server = Bun.serve({ port: 0, fetch: () => new Response(body, { status: 400 }) });
+    try {
+      const c = newClient();
+      Object.assign(c.auth, { region: { gateway: '' }, cookies: {}, gatewayAppId: '1' });
+      const { urls } = await import('../src/region.js');
+      const orig = urls.gateway;
+      urls.gateway = () => `http://localhost:${server.port}/gw`;
+      try {
+        const e = (await c
+          .api('messages.PullMessagesByIdsRequest', {})
+          .catch((x) => x)) as HttpError;
+        expect(e).toBeInstanceOf(HttpError);
+        expect(e.reason).toBe('chat not in thread mode');
+        expect(e.message).toBe(
+          `400 Client Error: Bad Request for url: http://localhost:${server.port}/gw`,
+        );
+      } finally {
+        urls.gateway = orig;
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test('非 2xx 的报错格式同 requests；连不上时报网络错误', async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response('x', { status: 400 }) });
     try {

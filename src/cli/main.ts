@@ -3,6 +3,7 @@ import '../bun-assets.js';
 import { AuthExpired } from '../auth.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
+import { errorText } from './format.js';
 import { versionLine } from './version.js';
 
 const PROG = 'lark';
@@ -51,7 +52,7 @@ async function main(argv: string[]): Promise<number> {
     }
     // 凭证失效、网络错误等：只打印原因（对应原项目未捕获异常的最后一行），不打印调用栈
     const name = e instanceof AuthExpired ? 'AuthExpired' : (e as Error).name || 'Error';
-    process.stderr.write(`${name}: ${(e as Error).message}\n`);
+    process.stderr.write(`${name}: ${errorText(e)}\n`);
     return 1;
   }
 }

@@ -1,6 +1,6 @@
 import { create, fromBinary, type Message, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from './auth.js';
-import { raiseForStatus, request, USER_AGENT } from './http.js';
+import { HttpError, request, USER_AGENT } from './http.js';
 import { accessKey, longRequestId, requestId } from './ids.js';
 import { getLogger } from './log.js';
 import {
@@ -68,6 +68,16 @@ export interface RecentChat {
   updatedAt: number;
   /** 会话信息（与 getChatInfo 同为 entities.Chat）；服务端没带时为 null。 */
   chat: Dict | null;
+}
+
+/** 网关出错时响应体仍是 Packet，错误文本放在 sid 字段里；解不出来时为空串。 */
+async function gatewayReason(res: Response): Promise<string> {
+  try {
+    const pkt = fromBinary(protoType('Packet'), new Uint8Array(await res.arrayBuffer()));
+    return (pkt as unknown as { sid?: string }).sid ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** 网页协议客户端：网关请求（HTTP + protobuf）与消息长连接。 */
@@ -256,7 +266,7 @@ export class LarkClient {
       cookies: this.auth.cookies,
       body: toBinary(protoType('Packet'), packet),
     });
-    raiseForStatus(res);
+    if (!res.ok) throw new HttpError(res.status, res.statusText, res.url, await gatewayReason(res));
     return new Uint8Array(await res.arrayBuffer());
   }
 

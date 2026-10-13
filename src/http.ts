@@ -2,12 +2,17 @@
 export const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 
-/** 非 2xx 响应（对应 requests 的 raise_for_status，消息格式一致）。 */
+/**
+ * 非 2xx 响应（对应 requests 的 raise_for_status，消息格式一致）。
+ * reason 是服务端给的出错原因（网关响应里的错误文本，如 `chat not in thread mode`），没有时为空串；
+ * 它不进 message，以免改变与原版一致的报错文案。
+ */
 export class HttpError extends Error {
   constructor(
     readonly status: number,
     statusText: string,
     url: string,
+    readonly reason = '',
   ) {
     super(`${status} ${status < 500 ? 'Client' : 'Server'} Error: ${statusText} for url: ${url}`);
   }
