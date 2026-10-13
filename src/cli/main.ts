@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import './embedded-assets.js';
+import '../bun-assets.js';
 import { AuthExpired } from '../auth.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';

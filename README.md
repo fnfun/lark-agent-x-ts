@@ -83,7 +83,7 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 
 ## 作为库使用
 
-库入口在 Node（≥ 22.19）与 Bun 下都能用，导出登录凭证、网关客户端、消息长连接与资源下载；消息库（`Bun.SQL`）与本地 agent（`Bun.spawn`）依赖 Bun，只在命令行里用。作为 git 依赖安装时，`prepare` 会把库编译到 `lib/`（Node 加载它，Bun 直接加载 `src/`）。
+库入口在 Node（≥ 22.19）与 Bun 下都能用，导出登录凭证、网关客户端、消息长连接与资源下载；消息库（`Bun.SQL`）与本地 agent（`Bun.spawn`）依赖 Bun，只在命令行里用。作为 git 依赖安装时，Node 加载 `prepare` 编译出的 `lib/`，Bun 直接加载 `src/`（TypeScript 项目在 tsconfig 里设 `customConditions: ["bun"]` 即可直接用源码做类型检查，不依赖 `lib/`）。把本库打进自己的 Bun 单文件可执行时，在入口处 `import 'lark-agent-x-ts/bun-assets'`，协议资产随之嵌入。
 
 ```ts
 import { LarkAuth, LarkClient, setLogSink } from 'lark-agent-x-ts';
