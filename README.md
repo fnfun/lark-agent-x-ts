@@ -53,6 +53,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重） |
 | `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark forward <msg_id> <chat_id...>` | 把一条消息转发到一个或多个会话 |
+| `lark group create <群名>` / `add` / `remove` / `rename` | 建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | 撤回消息 / 编辑自己发的文本或富文本消息（`--links`、`--rich`） |
 | `lark react <msg_id> <表情>` / `lark reactions <msg_id...>` | 加表情回复（如 `THUMBSUP`、`DONE`，`--remove` 去掉） / 查看消息上的表情 |
 | `lark read-status <chat_id> <msg_id...>` | 消息的已读情况：已读/未读人数与未读名单（发送方视角，`--names`）；`--me` 看我自己是否读过 |
@@ -106,6 +107,7 @@ await client.sendMessage('<chat_id>', { markdown: '## 结论\n- 周五上线' })
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content), undefined, undefined, async (ev) => console.log(ev.message_id, ev.reaction_type)); // 第 4 个参数收表情变化
+const groupId = await client.createGroup('项目协作群', ['<user_id>']); // 另有 addMembers、removeMembers、updateGroup
 await client.forwardMessage('<msg_id>', ['<chat_id>']); // 转发，返回会话 → 新消息 id
 await client.readStates('<chat_id>', ['<msg_id>']); // 谁读了、谁没读；myReadStates 看自己是否读过
 await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMessage、removeReaction、reactions
