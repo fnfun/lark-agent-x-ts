@@ -166,3 +166,21 @@ describe('已读情况', () => {
     );
   });
 });
+
+describe('转发', () => {
+  test('每个目标会话各带一个 cid，返回会话 → 新消息 id，没转成的不在结果里', async () => {
+    const c = newClient();
+    let req: Dict = {};
+    c.api = async (type, data) => {
+      expect(type).toBe('messages.PutTransmitMessageRequest');
+      req = data as Dict;
+      return { messages: { c1: { id: '7000000000000000101' } } };
+    };
+    const got = await c.forwardMessage('7000000000000000001', ['c1', 'c2']);
+    expect(got).toEqual(new Map([['c1', '7000000000000000101']]));
+    expect([req.chatIds, req.messageId]).toEqual([['c1', 'c2'], '7000000000000000001']);
+    const cids = req.cids as Record<string, string>;
+    expect(Object.keys(cids)).toEqual(['c1', 'c2']);
+    expect(cids.c1).not.toBe(cids.c2);
+  });
+});

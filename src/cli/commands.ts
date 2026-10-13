@@ -293,6 +293,26 @@ function mediaCommand(kind: 'image' | 'file'): Command {
   };
 }
 
+const forward: Command = {
+  name: 'forward',
+  help: '把一条消息转发到一个或多个会话',
+  positionals: [{ name: 'msg_id' }, { name: 'chat_ids', nargs: '+' }],
+  async run(a) {
+    const targets = a.chat_ids as string[];
+    let sent: Map<string, string>;
+    try {
+      sent = await (await client()).forwardMessage(String(a.msg_id), targets);
+    } catch (e) {
+      err(`转发失败: ${errorText(e)}`);
+      return 1;
+    }
+    for (const chatId of targets)
+      if (sent.has(chatId)) out(`已转发 chat_id=${chatId} msg_id=${sent.get(chatId)}`);
+      else err(`转发到 ${chatId} 失败`);
+    return sent.size === targets.length ? 0 : 1;
+  },
+};
+
 const recall: Command = {
   name: 'recall',
   help: '撤回消息(自己发的;群管理员可撤回群里别人的)',
@@ -1150,6 +1170,7 @@ export const COMMANDS: Command[] = [
   send,
   mediaCommand('image'),
   mediaCommand('file'),
+  forward,
   recall,
   edit,
   react,
