@@ -20,6 +20,8 @@ export interface Triggers {
   include_chats: string[];
   exclude_chats: string[];
   include_senders: string[];
+  /** 只处理这些会话标签（名字或 id）里的会话。 */
+  include_tags: string[];
   keywords: string[];
   group_at_only: boolean;
 }
@@ -44,6 +46,7 @@ const TRIGGER_ENV: Record<keyof Triggers, string> = {
   include_chats: 'LARKX_TRIGGER_INCLUDE_CHATS',
   exclude_chats: 'LARKX_TRIGGER_EXCLUDE_CHATS',
   include_senders: 'LARKX_TRIGGER_INCLUDE_SENDERS',
+  include_tags: 'LARKX_TRIGGER_INCLUDE_TAGS',
   keywords: 'LARKX_TRIGGER_KEYWORDS',
   group_at_only: 'LARKX_TRIGGER_GROUP_AT_ONLY',
 };
@@ -80,6 +83,7 @@ export function loadConfig(): Config {
     include_chats: [],
     exclude_chats: [],
     include_senders: [],
+    include_tags: [],
     keywords: [],
     group_at_only: false,
   };

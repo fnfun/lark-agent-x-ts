@@ -128,3 +128,45 @@ describe('群管理', () => {
     await expect(c.createGroup('x')).rejects.toThrow('建群失败');
   });
 });
+
+describe('会话标签', () => {
+  test('列出标签（翻页、按位置排序）与标签里的会话（只要会话、去掉排除项）', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    let groupPage = 0;
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      if (type === 'feed.PullFeedGroupsRequest')
+        return groupPage++ === 0
+          ? {
+              feedGroups: [{ id: 2n, name: '客户', type: 1, pos: 2n }],
+              hasMore: true,
+              nextCursor: 'c1',
+            }
+          : {
+              feedGroups: [{ id: 1n, name: '待回复', type: 2, pos: 1n }],
+              hasMore: false,
+              nextCursor: 'c2',
+            };
+      return {
+        data: {
+          '2': {
+            feedGroupItems: [
+              { feedCardId: 71n, feedCardType: 1 },
+              { feedCardId: 72n, feedCardType: 3 },
+              { feedCardId: 73n, feedCardType: 1, exclude: true },
+            ],
+            hasMore: false,
+          },
+        },
+      };
+    };
+    expect(await c.feedGroups()).toEqual([
+      { id: '1', name: '待回复', type: 'keyword' },
+      { id: '2', name: '客户', type: 'normal' },
+    ]);
+    expect(reqs.map(([, d]) => d)).toEqual([{ count: '20' }, { count: '20', cursor: 'c1' }]);
+    expect(await c.feedGroupChats('2')).toEqual(['71']);
+    expect(reqs.at(-1)?.[1]).toEqual({ args: { '2': { count: '20' } } });
+  });
+});

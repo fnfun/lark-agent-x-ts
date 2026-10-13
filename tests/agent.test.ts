@@ -35,6 +35,7 @@ const ENV_KEYS = [
   'LARKX_TRIGGER_GROUP_AT_ONLY',
   'LARKX_TRIGGER_KEYWORDS',
   'LARKX_TRIGGER_EXCLUDE_CHATS',
+  'LARKX_TRIGGER_INCLUDE_TAGS',
   'LARKX_HOME',
 ];
 let saved: Record<string, string | undefined>;
@@ -132,6 +133,17 @@ describe('数字人分发', () => {
     backend.release?.();
     await Bun.sleep(10);
     expect(backend.runs).toHaveLength(1);
+  });
+});
+
+describe('按会话标签筛选', () => {
+  test('设了 LARKX_TRIGGER_INCLUDE_TAGS 时只处理标签里的会话；标签还没解析到时都不处理', () => {
+    process.env.LARKX_TRIGGER_INCLUDE_TAGS = '客户';
+    const d = new AgentDispatcher(new FakeBackend(), async () => undefined);
+    expect(d.shouldHandle(msg({ chat_id: 'c1' }), 'me')).toBe(false);
+    d.setTagChats(['c1']);
+    expect(d.shouldHandle(msg({ chat_id: 'c1' }), 'me')).toBe(true);
+    expect(d.shouldHandle(msg({ chat_id: 'c2' }), 'me')).toBe(false);
   });
 });
 

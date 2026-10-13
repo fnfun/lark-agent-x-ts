@@ -172,6 +172,16 @@ export interface PinnedMessage {
   message: LarkMessage | null;
 }
 
+/** 会话列表里的一个标签（分组）。keyword 是按关键词自动归类的标签。 */
+export interface FeedGroup {
+  id: string;
+  name: string;
+  type: 'normal' | 'keyword' | 'unknown';
+}
+
+/** 一页最多取多少个标签 / 标签项（服务端对过大的 count 报 invalid request）。 */
+const FEED_GROUP_PAGE = 20;
+
 // feed.Shortcut.Type.CHAT
 const SHORTCUT_CHAT = 1;
 
@@ -819,6 +829,47 @@ export class LarkClient {
       cursor = next;
     }
     return out.sort((a, b) => b.pinnedAt - a.pinnedAt).slice(0, max);
+  }
+
+  /** 我的会话标签（分组），按标签位置排序。 */
+  async feedGroups(): Promise<FeedGroup[]> {
+    const groups: Dict[] = [];
+    let cursor = '';
+    for (let page = 0; page < 50; page++) {
+      const resp = await this.api('feed.PullFeedGroupsRequest', {
+        count: String(FEED_GROUP_PAGE),
+        ...(cursor ? { cursor } : {}),
+      });
+      groups.push(...((resp.feedGroups ?? []) as Dict[]));
+      const next = String(resp.nextCursor ?? '');
+      if (!resp.hasMore || !next || next === cursor) break;
+      cursor = next;
+    }
+    return groups
+      .sort((a, b) => int(a.pos, 0) - int(b.pos, 0))
+      .map((g) => ({
+        id: String(g.id),
+        name: String(g.name ?? ''),
+        type: ({ 1: 'normal', 2: 'keyword' } as const)[int(g.type, 0) as 1 | 2] ?? 'unknown',
+      }));
+  }
+
+  /** 某个标签里的会话（chat_id）。 */
+  async feedGroupChats(groupId: string): Promise<string[]> {
+    const out = new Set<string>();
+    let cursor = '';
+    for (let page = 0; page < 100; page++) {
+      const resp = await this.api('feed.PullFeedGroupItemsRequest', {
+        args: { [groupId]: { count: String(FEED_GROUP_PAGE), ...(cursor ? { cursor } : {}) } },
+      });
+      const data = ((resp.data ?? {}) as Record<string, Dict>)[groupId] ?? {};
+      for (const it of (data.feedGroupItems ?? []) as Dict[])
+        if (int(it.feedCardType, 0) === CARD_CHAT && !it.exclude) out.add(String(it.feedCardId));
+      const next = String(data.nextCursor ?? '');
+      if (!data.hasMore || !next || next === cursor) break;
+      cursor = next;
+    }
+    return [...out];
   }
 
   /** 会话列表里置顶的会话（chat_id），按置顶顺序。 */
