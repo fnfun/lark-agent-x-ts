@@ -1,0 +1,96 @@
+import { describe, expect, test } from 'bun:test';
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
+import { extractRichText } from '../src/proto/decoders.js';
+import { type Dict, toDict } from '../src/proto/dict.js';
+import { larkType, protoType } from '../src/proto/registry.js';
+import { newClient } from './helpers.js';
+
+/** 拦截网关请求：解出 cmd 与请求体（按给定的 lark 类型），返回空响应。 */
+function capture(c: ReturnType<typeof newClient>, reqType: string) {
+  const seen: { cmd: number; body: Dict }[] = [];
+  c.gatewayPost = async (pkt) => {
+    const p = pkt as unknown as { cmd: number; payload: Uint8Array };
+    seen.push({
+      cmd: p.cmd,
+      body: toDict(larkType(reqType), fromBinary(larkType(reqType), p.payload)),
+    });
+    return toBinary(protoType('Packet'), create(protoType('Packet')));
+  };
+  return seen;
+}
+
+describe('撤回、编辑与表情', () => {
+  test('撤回：服务端回 ok 才算成功', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    let reply: Dict = { message: 'ok' };
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      return reply;
+    };
+    await c.recallMessage('7000000000000000001');
+    expect(reqs).toEqual([['messages.DeleteMessageRequest', { id: '7000000000000000001' }]]);
+    reply = {};
+    await expect(c.recallMessage('7000000000000000001')).rejects.toThrow('撤回失败');
+  });
+
+  test('编辑：文本按 TEXT、结构化内容按 POST 整条替换，消息 id 按 int64 发送', async () => {
+    const c = newClient();
+    const seen = capture(c, 'messages.EditMessageRequest');
+    await c.editMessage('7000000000000000001', {
+      text: '改过的 [文档](https://example.com/d)',
+      links: true,
+    });
+    await c.editMessage('7000000000000000002', {
+      blocks: [{ type: 'p', runs: [{ text: '结论：', bold: true }, { text: '周五上线' }] }],
+      text: '结论：周五上线',
+    });
+    expect(seen.map((s) => [s.cmd, s.body.msgId, s.body.type])).toEqual([
+      [900010, 7000000000000000001n, 4],
+      [900010, 7000000000000000002n, 2],
+    ]);
+    const rt = (s: { body: Dict }) => (s.body.content as Dict).richText as Dict;
+    expect(extractRichText(rt(seen[0] as { body: Dict }))).toBe('改过的 '); // 链接元素不计入纯文本摘要
+    expect(rt(seen[0] as { body: Dict }).anchorIds).toEqual(['2']);
+    expect(extractRichText(rt(seen[1] as { body: Dict }))).toBe('结论：周五上线');
+    expect(seen.every((s) => typeof s.body.cid === 'string' && s.body.cid.length === 10)).toBe(
+      true,
+    );
+  });
+
+  test('表情：加、去与查询（加过的人取自更新时间表）', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      if (type !== 'reactions.PullReactionsRequest') return {};
+      return {
+        messageReactions: [
+          {
+            messageId: 'm1',
+            reactions: [
+              { type: 'THUMBSUP', count: 2, nanoUpdateTimes: { u1: 1n, u2: 2n } },
+              { type: 'DONE', count: 1, userIds: ['u3'] },
+              { type: 'OK', count: 0, nanoUpdateTimes: {} },
+            ],
+          },
+        ],
+      };
+    };
+    await c.addReaction('m1', 'THUMBSUP');
+    await c.removeReaction('m1', 'THUMBSUP');
+    expect(await c.reactions(['m1'])).toEqual([
+      {
+        messageId: 'm1',
+        reactions: [
+          { type: 'THUMBSUP', count: 2, userIds: ['u1', 'u2'] },
+          { type: 'DONE', count: 1, userIds: ['u3'] },
+        ],
+      },
+    ]);
+    expect(reqs.slice(0, 2)).toEqual([
+      ['reactions.PutReactionRequest', { messageId: 'm1', reactionType: 'THUMBSUP' }],
+      ['reactions.DeleteReactionRequest', { messageId: 'm1', reactionType: 'THUMBSUP' }],
+    ]);
+  });
+});

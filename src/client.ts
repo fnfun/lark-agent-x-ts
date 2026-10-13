@@ -1,7 +1,7 @@
 import { create, fromBinary, type Message, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from './auth.js';
 import { HttpError, request, USER_AGENT } from './http.js';
-import { accessKey, longRequestId, requestId } from './ids.js';
+import { accessKey, longRequestId, requestCid, requestId } from './ids.js';
 import { getLogger } from './log.js';
 import { uploadFile, uploadImage } from './media.js';
 import {
@@ -19,7 +19,9 @@ import {
   decodePutMessageResponse,
   decodeSearchResponse,
   decodeUserInfoResponse,
+  type EditableContent,
   type RichBlock,
+  richTextOf,
   type SearchHit,
 } from './proto/builders.js';
 import {
@@ -77,6 +79,12 @@ export interface RecentChat {
   updatedAt: number;
   /** 会话信息（与 getChatInfo 同为 entities.Chat）；服务端没带时为 null。 */
   chat: Dict | null;
+}
+
+/** 一条消息上的表情回复。 */
+export interface MessageReactions {
+  messageId: string;
+  reactions: { type: string; count: number; userIds: string[] }[];
 }
 
 /** 群成员（或按 id 查到的用户）。name 已按备注名 > 当前语言显示名 > 默认名取好。 */
@@ -519,6 +527,58 @@ export class LarkClient {
     return [...members.values()].slice(0, max);
   }
 
+  /** 撤回一条消息（自己发的；群管理员也可撤回群里别人的）。服务端没有确认时抛错。 */
+  async recallMessage(msgId: string): Promise<void> {
+    const resp = await this.api('messages.DeleteMessageRequest', { id: msgId });
+    if (resp.message !== 'ok')
+      throw new Error(`撤回失败: ${String(resp.message ?? '服务端没有确认')}`);
+  }
+
+  /**
+   * 编辑自己发的文本或富文本消息，内容整条替换；对方看到"已编辑"。
+   * 纯文本消息只能改成纯文本（content 用 text），富文本消息用 blocks；超过可编辑时限等由服务端拒绝（HttpError.reason 说明原因）。
+   */
+  async editMessage(msgId: string, content: EditableContent): Promise<void> {
+    const { type, richText } = richTextOf(content);
+    await this.call('messages.EditMessageRequest', {
+      msgId: BigInt(msgId),
+      cid: requestCid(),
+      type,
+      content: { richText },
+    });
+  }
+
+  /** 给消息加表情回复，reactionType 如 THUMBSUP、OK、DONE、SMILE（与客户端表情面板的 key 一致）。 */
+  async addReaction(msgId: string, reactionType: string): Promise<void> {
+    await this.api('reactions.PutReactionRequest', { messageId: msgId, reactionType });
+  }
+
+  /** 去掉自己加的某个表情回复。 */
+  async removeReaction(msgId: string, reactionType: string): Promise<void> {
+    await this.api('reactions.DeleteReactionRequest', { messageId: msgId, reactionType });
+  }
+
+  /** 消息上的表情回复：每种表情的数量与加过的人。 */
+  async reactions(messageIds: string[]): Promise<MessageReactions[]> {
+    const resp = await this.api('reactions.PullReactionsRequest', { messageIds, fetchUsers: true });
+    return ((resp.messageReactions ?? []) as Dict[]).map((mr) => ({
+      messageId: String(mr.messageId),
+      // 表情被全部去掉后服务端仍会返回一条 count=0 的记录，不算
+      reactions: ((mr.reactions ?? []) as Dict[])
+        .filter((r) => Number(r.count ?? 0) > 0)
+        .map((r) => ({
+          type: String(r.type),
+          count: Number(r.count ?? 0),
+          userIds: [
+            ...new Set([
+              ...((r.userIds as string[] | undefined) ?? []),
+              ...Object.keys((r.nanoUpdateTimes ?? r.udpateTimes ?? {}) as Dict),
+            ]),
+          ],
+        })),
+    }));
+  }
+
   /** 收到消息即标已读（listen 的 LARKX_MARK_READ）；失败只记 debug。 */
   async markRead(chatId: string, maxPosition: number, messageIds?: string[]): Promise<boolean> {
     try {
@@ -594,15 +654,26 @@ export class LarkClient {
   /** 调任意网关接口：请求类型名（如 chats.PullChatsByIdsRequest）或 cmd 数字；返回响应 dict（无响应类型时为 Packet dict）。 */
   async api(typeOrCmd: string | number, data?: Dict | null): Promise<Dict> {
     const { cmd, req, resp } = resolveCmd(typeOrCmd);
-    const pkt = LarkClient.packet({
-      cmd,
-      cid: longRequestId(),
-      ...(req ? { payload: toBinary(req, fromDict(req, data)) } : {}),
-    });
+    return this.post(cmd, req ? toBinary(req, fromDict(req, data)) : undefined, resp);
+  }
+
+  /** 同 api，但请求按 protobuf 对象构造：字节字段直接给 Uint8Array，int64 给 bigint（富文本元素的 property 就是字节）。 */
+  private async call(typeName: string, init: Record<string, unknown>): Promise<Dict> {
+    const { cmd, req, resp } = resolveCmd(typeName);
+    if (!req) throw new Error(`${typeName} 不是请求类型`);
+    return this.post(cmd, toBinary(req, create(req, init)), resp);
+  }
+
+  private async post(
+    cmd: number,
+    payload: Uint8Array | undefined,
+    resp: ReturnType<typeof resolveCmd>['resp'],
+  ): Promise<Dict> {
+    const pkt = LarkClient.packet({ cmd, cid: longRequestId(), ...(payload ? { payload } : {}) });
     const content = await this.gatewayPost(pkt);
     const respPkt = fromBinary(protoType('Packet'), content);
-    const payload = (respPkt as unknown as { payload: Uint8Array }).payload;
-    if (resp && payload.length) return toDict(resp, fromBinary(resp, payload));
+    const body = (respPkt as unknown as { payload?: Uint8Array }).payload;
+    if (resp && body?.length) return toDict(resp, fromBinary(resp, body));
     return toDict(protoType('Packet'), respPkt);
   }
 

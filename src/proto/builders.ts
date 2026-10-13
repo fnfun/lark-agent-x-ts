@@ -170,6 +170,18 @@ function fillRichBlocks(blocks: RichBlock[], innerText: string): RichTextInit {
   return rt;
 }
 
+/** 可编辑的消息内容：纯文本（links 同 sendMessage）或结构化富文本（text 为纯文本摘要）。 */
+export type EditableContent =
+  | { text: string; links?: boolean }
+  | { blocks: RichBlock[]; text: string };
+
+/** 编辑消息用的 richText 与消息类型（文本 4、富文本 2）；与发送时的写法一致。 */
+export function richTextOf(content: EditableContent): { type: 2 | 4; richText: RichTextInit } {
+  if ('blocks' in content)
+    return { type: 2, richText: fillRichBlocks(content.blocks, content.text) };
+  return { type: 4, richText: fillRichText(content.text, content.links ?? false) };
+}
+
 export interface Target {
   chatId: string;
   rootId?: string | undefined;
