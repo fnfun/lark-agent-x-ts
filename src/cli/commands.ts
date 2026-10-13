@@ -313,6 +313,61 @@ const forward: Command = {
   },
 };
 
+const group: Command = {
+  name: 'group',
+  help: '群管理:create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>',
+  positionals: [
+    { name: 'action', choices: ['create', 'add', 'remove', 'rename'] },
+    { name: 'args', nargs: '+' },
+  ],
+  options: [
+    { name: 'members', kind: 'string', help: 'create 时一起拉进群的人(user_id,逗号分隔)' },
+    { name: 'desc', kind: 'string', help: '群描述(create / rename)' },
+    { name: 'topic', kind: 'flag', help: 'create 时建话题群' },
+  ],
+  async run(a) {
+    const c = await client();
+    const [first, ...rest] = a.args as string[];
+    const target = String(first);
+    try {
+      switch (a.action) {
+        case 'create': {
+          const id = await c.createGroup([target, ...rest].join(' '), list(a.members) ?? [], {
+            ...(a.desc ? { description: String(a.desc) } : {}),
+            topic: Boolean(a.topic),
+          });
+          out(`已建群 chat_id=${id}`);
+          return 0;
+        }
+        case 'add':
+        case 'remove':
+          if (!rest.length) {
+            err('需要 user_id');
+            return 2;
+          }
+          if (a.action === 'add') await c.addMembers(target, rest);
+          else await c.removeMembers(target, rest);
+          out(`已${a.action === 'add' ? '拉进' : '移出'} ${rest.length} 人 chat_id=${target}`);
+          return 0;
+        default:
+          if (!rest.length && !a.desc) {
+            err('需要新群名或 --desc');
+            return 2;
+          }
+          await c.updateGroup(target, {
+            ...(rest.length ? { name: rest.join(' ') } : {}),
+            ...(a.desc ? { description: String(a.desc) } : {}),
+          });
+          out(`已更新 chat_id=${target}`);
+          return 0;
+      }
+    } catch (e) {
+      err(`群操作失败: ${errorText(e)}`);
+      return 1;
+    }
+  },
+};
+
 const recall: Command = {
   name: 'recall',
   help: '撤回消息(自己发的;群管理员可撤回群里别人的)',
@@ -1171,6 +1226,7 @@ export const COMMANDS: Command[] = [
   mediaCommand('image'),
   mediaCommand('file'),
   forward,
+  group,
   recall,
   edit,
   react,

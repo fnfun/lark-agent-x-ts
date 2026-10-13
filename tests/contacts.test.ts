@@ -78,3 +78,53 @@ describe('人名与群成员', () => {
     expect(batches).toHaveLength(2);
   });
 });
+
+describe('群管理', () => {
+  test('建群、拉人、移出、改名的请求字段', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      return type === 'chats.PutChatRequest' ? { chat: { id: '7200000000000000009' } } : {};
+    };
+    expect(
+      await c.createGroup('项目协作群', ['u1', 'u2'], {
+        description: '周报',
+        topic: true,
+        cid: 'g1cid',
+      }),
+    ).toBe('7200000000000000009');
+    await c.createGroup('只有我', [], { cid: 'g2cid' });
+    await c.addMembers('7200000000000000009', ['u3']);
+    await c.removeMembers('7200000000000000009', ['u2']);
+    await c.updateGroup('7200000000000000009', { name: '项目协作群（二期）' });
+    await c.updateGroup('7200000000000000009', { description: '' });
+    await c.updateGroup('7200000000000000009', {});
+    expect(reqs).toEqual([
+      [
+        'chats.PutChatRequest',
+        {
+          type: 2,
+          groupName: '项目协作群',
+          groupDesc: '周报',
+          chatterIds: ['u1', 'u2'],
+          chatMode: 3,
+          cid: 'g1cid',
+        },
+      ],
+      ['chats.PutChatRequest', { type: 2, groupName: '只有我', chatterIds: [], cid: 'g2cid' }],
+      ['chats.PutChatChatterRequest', { chatId: '7200000000000000009', chatterIds: ['u3'] }],
+      ['chats.DeleteChatChatterRequest', { chatId: '7200000000000000009', chatterIds: ['u2'] }],
+      [
+        'chats.PatchGroupChatRequest',
+        { chatId: '7200000000000000009', name: '项目协作群（二期）', updateFields: [1] },
+      ],
+      [
+        'chats.PatchGroupChatRequest',
+        { chatId: '7200000000000000009', description: '', updateFields: [3] },
+      ],
+    ]);
+    c.api = async () => ({});
+    await expect(c.createGroup('x')).rejects.toThrow('建群失败');
+  });
+});

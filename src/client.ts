@@ -200,6 +200,10 @@ export interface MissedOptions {
 }
 
 const CHANNEL_CHAT = 1;
+// Chat.ChatMode.THREAD_V2（新版话题群）；PatchGroupChatRequest.UpdateFields 的 NAME、DESCRIPTION
+const CHAT_MODE_THREAD_V2 = 3;
+const GROUP_FIELD_NAME = 1;
+const GROUP_FIELD_DESCRIPTION = 3;
 /** 长连接推送：表情变化（reactions.PushReactions）。 */
 const PUSH_REACTIONS = 27;
 /** 话题群一次往回看的话题数。 */
@@ -692,6 +696,52 @@ export class LarkClient {
       page = next;
     }
     return [...members.values()].slice(0, max);
+  }
+
+  /**
+   * 建群并拉人（memberIds 可为空，即只有自己），返回新群的 chat_id。topic 为 true 时建话题群。
+   * 群对成员可见、会通知被拉的人；同一个 cid 重发不会建出两个群。
+   */
+  async createGroup(
+    name: string,
+    memberIds: string[] = [],
+    o: { description?: string; topic?: boolean; cid?: string } = {},
+  ): Promise<string> {
+    const resp = await this.api('chats.PutChatRequest', {
+      type: 2,
+      groupName: name,
+      ...(o.description ? { groupDesc: o.description } : {}),
+      chatterIds: memberIds,
+      ...(o.topic ? { chatMode: CHAT_MODE_THREAD_V2 } : {}),
+      cid: o.cid || requestCid(),
+    });
+    const id = String((resp.chat as Dict | undefined)?.id ?? '');
+    if (!id) throw new Error('建群失败: 响应里没有会话 id');
+    return id;
+  }
+
+  /** 把人拉进群（需要有拉人权限）。 */
+  async addMembers(chatId: string, userIds: string[]): Promise<void> {
+    await this.api('chats.PutChatChatterRequest', { chatId, chatterIds: userIds });
+  }
+
+  /** 把人移出群（需要是群主或管理员）。 */
+  async removeMembers(chatId: string, userIds: string[]): Promise<void> {
+    await this.api('chats.DeleteChatChatterRequest', { chatId, chatterIds: userIds });
+  }
+
+  /** 改群名 / 群描述（给了哪个改哪个）。 */
+  async updateGroup(chatId: string, o: { name?: string; description?: string }): Promise<void> {
+    const fields: number[] = [];
+    if (o.name !== undefined) fields.push(GROUP_FIELD_NAME);
+    if (o.description !== undefined) fields.push(GROUP_FIELD_DESCRIPTION);
+    if (!fields.length) return;
+    await this.api('chats.PatchGroupChatRequest', {
+      chatId,
+      ...(o.name !== undefined ? { name: o.name } : {}),
+      ...(o.description !== undefined ? { description: o.description } : {}),
+      updateFields: fields,
+    });
   }
 
   /**
