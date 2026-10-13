@@ -10,10 +10,19 @@ export const INSTRUCTIONS =
   '以上是飞书会话里新到的一条消息(XML 里有会话/发送者/内容)。你是这个数字人,完整对话历史你都有。如果对方也是机器人且只是互相客套寒暄,直接结束不要再接话。';
 export const OUTPUT_RULES = '不需要回复就直接结束,不要解释、不要复述消息。';
 
-/** 交给 agent 的消息：解码结果加上会话名、发送者名。 */
+/** 被引用（回复）的那条消息：数字人要看到原文才知道对方在接哪句话。 */
+export interface QuotedMessage {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+}
+
+/** 交给 agent 的消息：解码结果加上会话名、发送者名，回复别人时带上被引用的原文。 */
 export interface AgentMessage extends LarkMessage {
   _chat_name?: string;
   _sender_name?: string;
+  _quote?: QuotedMessage;
 }
 
 export type ReplyFn = (chatId: string, text: string, rootId?: string) => Promise<unknown>;
@@ -49,6 +58,10 @@ export function buildXmlMessage(m: AgentMessage): string {
     `  <sender id=${quoteAttr(String(m.from_id))} name=${quoteAttr(m._sender_name || '')}/>`,
   );
   if (m.at_me) lines.push('  <at_me>true</at_me>');
+  if (m._quote)
+    lines.push(
+      `  <quote id=${quoteAttr(m._quote.id)} sender_id=${quoteAttr(m._quote.sender_id)} sender_name=${quoteAttr(m._quote.sender_name)}>${xmlEscape(m._quote.content)}</quote>`,
+    );
   lines.push(`  <time>${xmlEscape(ts(m))}</time>`);
   lines.push(`  <content>${xmlEscape(m.content || '')}</content>`);
   lines.push('</message>');
@@ -122,7 +135,13 @@ export class AgentDispatcher {
     return true;
   }
 
-  async submit(msg: LarkMessage, chatName = '', senderName = '', myUserId = ''): Promise<void> {
+  async submit(
+    msg: LarkMessage,
+    chatName = '',
+    senderName = '',
+    myUserId = '',
+    quote?: QuotedMessage,
+  ): Promise<void> {
     if (!this.shouldHandle(msg, myUserId)) return;
     const [cmd, remainder] = this.parseCommand(msg.content || '');
     const key = this.sessionKeyOf(msg);
@@ -142,7 +161,12 @@ export class AgentDispatcher {
         return;
       }
     }
-    const item: AgentMessage = { ...msg, _chat_name: chatName, _sender_name: senderName };
+    const item: AgentMessage = {
+      ...msg,
+      _chat_name: chatName,
+      _sender_name: senderName,
+      ...(quote ? { _quote: quote } : {}),
+    };
     if (cmd) item.content = remainder ?? '';
     let worker = this.workers.get(key);
     if (!worker) {

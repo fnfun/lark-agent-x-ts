@@ -59,7 +59,9 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
 | `lark history <chat_id>` | 拉历史消息（`--save` 入库） |
-| `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件 |
+| `lark get <msg_id...>` | 按 id 取消息（可跨会话；`--save` 入库，`--json`） |
+| `lark thread <root_id>` | 拉取一个话题：根消息加最近的回复（`--count`、`--save`、`--json`） |
+| `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
@@ -95,6 +97,7 @@ await client.sendMsg('你好', '<chat_id>');
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
+const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
 ```
 

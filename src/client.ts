@@ -258,13 +258,16 @@ export class LarkClient {
     await chain;
   }
 
+  /** 推送与按 id 拉取的结果里没有会话模式，话题群的根消息要查过 chatMode 才能归到它自己的话题。 */
+  private async fixThreadScope(msg: LarkMessage): Promise<LarkMessage> {
+    if (msg.scope === 'chat' && msg.chat_type === 2 && (await this.isThreadChat(msg.chat_id)))
+      [msg.scope, msg.anchor] = resolveScope(msg.msg_id, msg.msg_type, 2, '', '', true);
+    return msg;
+  }
+
   private async dispatch(msg: LarkMessage, onMessage: MessageHandler): Promise<void> {
     try {
-      // 推送里没有会话模式，话题群的根消息要查过 chatMode 才能归到它自己的话题
-      if (msg.scope === 'chat' && msg.chat_type === 2 && (await this.isThreadChat(msg.chat_id))) {
-        [msg.scope, msg.anchor] = resolveScope(msg.msg_id, msg.msg_type, 2, '', '', true);
-      }
-      await onMessage(msg);
+      await onMessage(await this.fixThreadScope(msg));
     } catch (err) {
       logger.error(`消息回调异常: ${(err as Error).message}`);
     }
@@ -580,6 +583,26 @@ export class LarkClient {
       cursor = next;
     }
     return out;
+  }
+
+  /** 按消息 id 取消息（可跨会话），按传入顺序返回；不存在或无权查看的 id 跳过。 */
+  async getMessages(messageIds: string[]): Promise<LarkMessage[]> {
+    if (!messageIds.length) return [];
+    const resp = await this.api('messages.PullMessagesByIdsRequest', { messageIds });
+    const found = (resp.messages ?? {}) as Record<string, Dict>;
+    const out: LarkMessage[] = [];
+    for (const id of messageIds) {
+      const v = found[id];
+      if (v) out.push(await this.fixThreadScope(toLarkMessage(v, {})));
+    }
+    return out;
+  }
+
+  /** 一个话题的全部上下文：根消息在前，随后是最近 limit 条回复；根消息不存在时为空。 */
+  async threadMessages(rootId: string, limit = 200): Promise<LarkMessage[]> {
+    const [root] = await this.getMessages([rootId]);
+    if (!root) return [];
+    return [root, ...(await this.threadReplies(rootId, limit))];
   }
 
   /**

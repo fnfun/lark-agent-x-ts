@@ -24,4 +24,5 @@
 | 库入口 | `larkx/__init__.py` 导出客户端、凭证、存储与 agent | 只导出 Node 与 Bun 都能运行的部分（凭证、客户端、长连接、资源下载、日志接口） | 存储与 agent 依赖 Bun，进程内嵌入（如 niuma）用不到它们；命令行照旧全部可用 |
 | 长连接保活 | websockets 默认：握手 10 秒超时；协议层 ping 每 20 秒，20 秒无 pong 断开 | 握手 15 秒超时；应用层心跳每 30 秒，65 秒内收不到任何帧断开 | Node 的 WebSocket 没有协议层 ping；服务端对每次应用层心跳都回一帧，可据此判断连接是否还活着 |
 | 断线重连 | 直接重连，断线期间的消息丢失 | 重连后按收件箱里有变动的会话补收断线期间的消息（会话消息与话题回复），按 msg_id 去重后入库并交给数字人 | 数字人不能漏掉有人找它的消息 |
-| 新增 | — | `lark --version`（版本与构建 commit）；`lark send-image` / `send-file`，库的 `sendMessage` 支持图片与文件、`uploadImage` / `uploadFile`；库的 `setLogSink`、`recentChats`（收件箱里某时刻之后有变动的会话）、`connectWebsocket` 的 `onOpen` | 单文件构建没有 git 仓库可查 commit；嵌入别的进程时日志由宿主接管，并在重连后据此补收断线期间的消息；其余为数字人需要的能力（发附件等） |
+| 数字人提示词 | `<message>` 里只有会话、发送者、时间与内容 | 回复别人（引用或话题回复）时多一行 `<quote>`，带被引用消息的发送者与原文；没有引用时与原版一致 | 只看到“可以”“同意”这类回复，数字人不知道对方在接哪句话 |
+| 新增 | — | `lark --version`（版本与构建 commit）；`lark send-image` / `send-file`、`lark get`、`lark thread`，库的 `getMessages` / `threadMessages`，库的 `sendMessage` 支持图片与文件、`uploadImage` / `uploadFile`；库的 `setLogSink`、`recentChats`（收件箱里某时刻之后有变动的会话）、`connectWebsocket` 的 `onOpen` | 单文件构建没有 git 仓库可查 commit；嵌入别的进程时日志由宿主接管，并在重连后据此补收断线期间的消息；其余为数字人需要的能力（发附件等） |
