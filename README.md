@@ -7,7 +7,7 @@
 >
 > - 协议逆向、消息编解码、登录流程与 protobuf 定义均来自原项目，本仓库只是把它们用 TypeScript 重写，功能与思路的原创归原作者所有。
 > - 迁移基线是 fork [Thxzzzzz/LarkAgentX](https://github.com/Thxzzzzz/LarkAgentX) 的 `feat/message-link` 分支，commit [`3e406cd`](https://github.com/Thxzzzzz/LarkAgentX/commit/3e406cd57aed7c94b058b25676522a07b2eb9818)（2026-10-13）。该 fork 在上游 `97ad48e` 之上增加了引用回复、结构化富文本、消息链接、自聊会话、标记已读等命令。
-> - 原项目未附带开源许可证，默认保留全部权利。因此本仓库目前**保持私有、不对外分发**，也暂不附带许可证；在取得原作者授权之前不会公开或发布到 npm。
+> - 原项目未附带开源许可证，版权归原作者。本仓库公开源码仅供学习与交流，**不附带许可证、不发布到 npm**；原作者如有异议，本仓库会随即下线。
 
 ## 状态
 
