@@ -4,6 +4,7 @@ export { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from './auth.js';
 export {
   type ChatMember,
   chatterName,
+  type FlagItem,
   LarkClient,
   type MessageContent,
   type MessageHandler,

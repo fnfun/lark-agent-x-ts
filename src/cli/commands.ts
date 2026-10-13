@@ -368,6 +368,59 @@ const group: Command = {
   },
 };
 
+const flag: Command = {
+  name: 'flag',
+  help: '标记消息(留给自己稍后处理);--chat 标记会话,--remove 取消标记',
+  positionals: [{ name: 'ids', nargs: '+', help: '消息 id(--chat 时为 chat_id)' }],
+  options: [
+    { name: 'chat', kind: 'flag', help: '标记的是会话' },
+    { name: 'remove', kind: 'flag', help: '取消标记' },
+  ],
+  async run(a) {
+    const c = await client();
+    const ids = a.ids as string[];
+    try {
+      if (a.chat) await c.flagChats(ids, Boolean(a.remove));
+      else await c.flagMessages(ids, Boolean(a.remove));
+    } catch (e) {
+      err(`标记失败: ${errorText(e)}`);
+      return 1;
+    }
+    out(`已${a.remove ? '取消标记' : '标记'} ${ids.length} 个${a.chat ? '会话' : '消息'}`);
+    return 0;
+  },
+};
+
+const flags: Command = {
+  name: 'flags',
+  help: '列出我的标记(消息与会话)',
+  options: [
+    { name: 'limit', kind: 'int', default: 50 },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const list = await (await client()).flags(Number(a.limit));
+    if (a.json)
+      printJson(
+        list.map(({ message, ...f }) => {
+          if (!message) return { ...f, message: null };
+          const { content_data: _, ...rest } = message;
+          return { ...f, message: rest };
+        }),
+      );
+    else
+      for (const f of list) {
+        const m = f.message;
+        out(
+          f.type === 'chat'
+            ? `会话 ${f.id}`
+            : `消息 ${f.id} ${m ? `${m.chat_id} [${shortTime(m.create_time)}] ${m.from_id}: ${preview(m.content || '', 100)}` : ''}`,
+        );
+      }
+    return 0;
+  },
+};
+
 const recall: Command = {
   name: 'recall',
   help: '撤回消息(自己发的;群管理员可撤回群里别人的)',
@@ -1227,6 +1280,8 @@ export const COMMANDS: Command[] = [
   mediaCommand('file'),
   forward,
   group,
+  flag,
+  flags,
   recall,
   edit,
   react,

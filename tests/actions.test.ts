@@ -184,3 +184,45 @@ describe('转发', () => {
     expect(cids.c1).not.toBe(cids.c2);
   });
 });
+
+describe('标记', () => {
+  test('标记消息与会话、取消标记、按游标翻页列出并带上消息', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    const pages: Dict[] = [
+      {
+        items: [{ itemId: 7000000000000000001n, flagType: 2, createTime: 100n }],
+        messages: {
+          '7000000000000000001': { id: '7000000000000000001', type: 4, fromId: 'u1', chatId: 'g1' },
+        },
+        hasMore: true,
+        nextCursor: '100:1',
+      },
+      {
+        items: [{ itemId: 7200000000000000001n, flagType: 1, createTime: 200n }],
+        hasMore: false,
+        nextCursor: '0:0',
+      },
+    ];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      if (type === 'feed.PullFlagsRequest')
+        return pages[reqs.filter(([t]) => t === type).length - 1] ?? {};
+      return {};
+    };
+    await c.flagMessages(['m1']);
+    await c.flagMessages(['m1'], true);
+    await c.flagChats(['g1']);
+    const got = await c.flags();
+    expect(reqs.slice(0, 3)).toEqual([
+      ['feed.UpdateFlagsRequest', { items: [{ itemId: 'm1', flagType: 2 }] }],
+      ['feed.UpdateFlagsRequest', { deletedItems: [{ itemId: 'm1', flagType: 2 }] }],
+      ['feed.UpdateFlagsRequest', { items: [{ itemId: 'g1', itemType: 1, flagType: 1 }] }],
+    ]);
+    expect(reqs.slice(3).map(([, d]) => d.cursor)).toEqual([undefined, '100:1']);
+    expect(got.map((f) => [f.type, f.id, f.createTime, f.message?.chat_id ?? null])).toEqual([
+      ['chat', '7200000000000000001', 200, null],
+      ['message', '7000000000000000001', 100, 'g1'],
+    ]);
+  });
+});
