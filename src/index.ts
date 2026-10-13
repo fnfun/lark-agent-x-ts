@@ -2,6 +2,8 @@
 // 消息库（Bun.SQL）与本地 agent（Bun.spawn）依赖 Bun，只在 CLI 里用，见 docs/compat.md。
 export { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from './auth.js';
 export {
+  type ChatMember,
+  chatterName,
   LarkClient,
   type MessageContent,
   type MessageHandler,
