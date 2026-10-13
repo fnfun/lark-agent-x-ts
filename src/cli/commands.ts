@@ -293,6 +293,94 @@ function mediaCommand(kind: 'image' | 'file'): Command {
   };
 }
 
+const schedule: Command = {
+  name: 'schedule',
+  help: '定时发送消息(到点由服务端发出)',
+  positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
+  options: [
+    {
+      name: 'at',
+      kind: 'string',
+      required: true,
+      help: '发送时间:10m/2h/1d 后、2026-10-15 09:30 或时间戳',
+    },
+    ...REPLY_OPTIONS,
+    { name: 'md', kind: 'flag', help: '按 Markdown 发送' },
+  ],
+  async run(a) {
+    let at: number;
+    try {
+      at = parseTimeArg(String(a.at), Date.now(), true);
+    } catch (e) {
+      err((e as Error).message);
+      return 1;
+    }
+    if (at <= Date.now()) {
+      err('发送时间要晚于现在');
+      return 1;
+    }
+    const c = await client();
+    const st = new Storage();
+    const chatId = String(a.chat_id);
+    const text = (a.text as string[]).join(' ');
+    const o = await replyTarget(st, chatId, a);
+    await st.close();
+    try {
+      const id = await c.scheduleMessage(chatId, a.md ? { markdown: text } : { text }, at, o);
+      out(`已定时 msg_id=${id} 发送时间 ${shortTime(Math.floor(at / 1000))}`);
+      return 0;
+    } catch (e) {
+      err(`定时发送失败: ${errorText(e)}`);
+      return 1;
+    }
+  },
+};
+
+const scheduled: Command = {
+  name: 'scheduled',
+  help: '会话里还没发出的定时消息;--cancel 取消,--reschedule 配合 --at 改时间',
+  positionals: [{ name: 'chat_id' }],
+  options: [
+    { name: 'cancel', kind: 'string', metavar: 'MSG_ID', help: '取消这条定时消息' },
+    { name: 'reschedule', kind: 'string', metavar: 'MSG_ID', help: '改这条定时消息的发送时间' },
+    { name: 'at', kind: 'string', help: '新的发送时间(配合 --reschedule)' },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const c = await client();
+    const chatId = String(a.chat_id);
+    try {
+      if (a.cancel) {
+        await c.cancelScheduledMessage(chatId, String(a.cancel));
+        out(`已取消定时消息 msg_id=${a.cancel}`);
+        return 0;
+      }
+      if (a.reschedule) {
+        if (!a.at) {
+          err('--reschedule 需要配合 --at');
+          return 2;
+        }
+        const at = parseTimeArg(String(a.at), Date.now(), true);
+        await c.rescheduleMessage(chatId, String(a.reschedule), at);
+        out(`已改为 ${shortTime(Math.floor(at / 1000))} 发送 msg_id=${a.reschedule}`);
+        return 0;
+      }
+    } catch (e) {
+      err(`操作失败: ${errorText(e)}`);
+      return 1;
+    }
+    const list = await c.scheduledMessages(chatId);
+    if (a.json)
+      printJson(list.map(({ message, ...m }) => ({ ...m, content: message?.content ?? '' })));
+    else
+      for (const m of list)
+        out(
+          `${m.messageId} [${shortTime(Math.floor(m.at / 1000))}]${m.status === 'suspended' ? '(已暂停)' : ''} ${preview(m.message?.content || '', 100)}`,
+        );
+    return 0;
+  },
+};
+
 const forward: Command = {
   name: 'forward',
   help: '把一条消息转发到一个或多个会话',
@@ -1406,6 +1494,8 @@ export const COMMANDS: Command[] = [
   send,
   mediaCommand('image'),
   mediaCommand('file'),
+  schedule,
+  scheduled,
   forward,
   group,
   pin,

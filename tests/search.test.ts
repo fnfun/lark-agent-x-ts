@@ -93,6 +93,7 @@ describe('跨会话搜消息', () => {
     expect(parseTimeArg('2026-10-01 09:30', now)).toBe(new Date(2026, 9, 1, 9, 30).getTime());
     expect(parseTimeArg('1790000000', now)).toBe(1_790_000_000_000);
     expect(parseTimeArg('1790000000123', now)).toBe(1_790_000_000_123);
+    expect(parseTimeArg('10m', now, true)).toBe(now + 10 * 60_000);
     expect(() => parseTimeArg('昨天', now)).toThrow('无法识别的时间');
   });
 });

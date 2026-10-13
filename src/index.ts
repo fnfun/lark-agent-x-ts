@@ -16,6 +16,7 @@ export {
   type ReactionHandler,
   type ReadState,
   type RecentChat,
+  type ScheduledMessage,
   type SendOptions,
   SendUnconfirmed,
   type UnreadChat,
