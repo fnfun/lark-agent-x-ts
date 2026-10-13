@@ -60,7 +60,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库 |
 | `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
-| `lark history <chat_id>` | 拉历史消息（`--save` 入库） |
+| `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`） |
 | `lark get <msg_id...>` | 按 id 取消息（可跨会话；`--save` 入库，`--json`） |
 | `lark thread <root_id>` | 拉取一个话题：根消息加最近的回复（`--count`、`--save`、`--json`） |
 | `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
@@ -105,6 +105,7 @@ await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
 await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMessage、removeReaction、reactions
 const names = await client.userNames(['<user_id>']); // id → 名字（批量、缓存）；chatMembers(chatId) 列群成员
+const today = await client.historyRange('<chat_id>', { since: Date.now() - 3_600_000 }); // 按时间范围拉会话历史
 const mentions = await client.unreadMentions(); // 未读的 @我；unreadChats() / unreadMessages(chatId)
 const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000 }); // 跨会话搜消息
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题

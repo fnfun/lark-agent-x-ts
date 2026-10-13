@@ -1038,6 +1038,67 @@ export class LarkClient {
     return out.sort((a, b) => (a.create_time ?? 0) - (b.create_time ?? 0));
   }
 
+  /**
+   * 按时间切分会话的 position 边界：在它之前的消息都早于 time（毫秒），从它起的都不早于 time；都更早时为最新 position + 1。
+   * 边界可能落在空洞上（该 position 没有消息），作为拉取的起点不影响结果。
+   * 在 position 上二分查找，每步拉一小段（position 可能有空洞：撤回无痕、不可见的消息），约 log2(N) 次请求。
+   */
+  async positionAt(chatId: string, time: number, last?: number): Promise<number> {
+    const end = last ?? int((await this.getChatInfo(chatId))?.lastMessagePosition);
+    const target = Math.floor(time / 1000);
+    /** pos 起第一条存在的消息的 [position, 创建时间]；到 end 都没有时为 null。 */
+    const probe = async (pos: number): Promise<[number, number] | null> => {
+      for (let width = 8; pos <= end; pos += width, width *= 2) {
+        const upto = Math.min(end, pos + width - 1);
+        const resp = await this.api('messages.PullMessagesByPositionsRequest', {
+          chatId,
+          positions: Array.from({ length: upto - pos + 1 }, (_, i) => pos + i),
+        });
+        const found = Object.entries((resp.messages ?? {}) as Record<string, Dict>)
+          .map(([k, v]) => [Number(k), int(v.createTime, 0)] as [number, number])
+          .sort((a, b) => a[0] - b[0])[0];
+        if (found) return found;
+      }
+      return null;
+    };
+    let lo = 0;
+    let hi = end + 1;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const p = await probe(mid);
+      if (!p || p[1] >= target) hi = mid;
+      else lo = p[0] + 1;
+    }
+    return lo;
+  }
+
+  /**
+   * 时间范围内（毫秒，含两端）的会话消息（主会话流，同 pullHistory），最多取最新的 limit 条，按 position 升序。
+   * 先二分查出范围对应的 position，再按 position 拉取。
+   */
+  async historyRange(
+    chatId: string,
+    o: { since?: number | undefined; until?: number | undefined; limit?: number },
+    save?: (msg: LarkMessage) => Promise<unknown>,
+  ): Promise<LarkMessage[]> {
+    const last = int((await this.getChatInfo(chatId))?.lastMessagePosition);
+    if (last < 0) return [];
+    const start = o.since === undefined ? 0 : await this.positionAt(chatId, o.since, last);
+    const end =
+      o.until === undefined ? last : (await this.positionAt(chatId, o.until + 1000, last)) - 1;
+    const first = Math.max(start, end - (o.limit ?? 50) + 1);
+    if (end < first) return [];
+    const msgs = await this.pullHistory(
+      chatId,
+      Array.from({ length: end - first + 1 }, (_, i) => first + i),
+    );
+    const lo = o.since === undefined ? -Infinity : Math.floor(o.since / 1000);
+    const hi = o.until === undefined ? Infinity : Math.floor(o.until / 1000);
+    const inRange = msgs.filter((m) => (m.create_time ?? 0) >= lo && (m.create_time ?? 0) <= hi);
+    if (save) for (const m of inRange) await save(m).catch(() => {});
+    return inRange;
+  }
+
   /** 按 position 拉历史消息并解码；save 时逐条入库（单条失败忽略）。 */
   async pullHistory(
     chatId: string,

@@ -747,6 +747,12 @@ const history: Command = {
   options: [
     { name: 'start', kind: 'int', help: '起始 position(默认从最新往前)' },
     { name: 'count', kind: 'int', default: 20 },
+    {
+      name: 'since',
+      kind: 'string',
+      help: '只要这之后的消息(30m/2h/3d、2026-10-01 09:30 或时间戳;取范围内最新的 count 条)',
+    },
+    { name: 'until', kind: 'string', help: '只要这之前的消息(格式同 --since)' },
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
     NAMES_OPTION,
     { name: 'json', kind: 'flag' },
@@ -755,6 +761,27 @@ const history: Command = {
     const c = await client();
     const chatId = String(a.chat_id);
     const count = Number(a.count);
+    if (a.since !== undefined || a.until !== undefined) {
+      let since: number | undefined;
+      let until: number | undefined;
+      try {
+        since = a.since === undefined ? undefined : parseTimeArg(String(a.since));
+        until = a.until === undefined ? undefined : parseTimeArg(String(a.until));
+      } catch (e) {
+        err((e as Error).message);
+        return 1;
+      }
+      const st = a.save ? new Storage() : undefined;
+      const msgs = await c.historyRange(
+        chatId,
+        { since, until, limit: count },
+        st ? (m: LarkMessage) => st.saveMessage(m) : undefined,
+      );
+      await st?.close();
+      printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
+      if (a.save) out(`已入库 ${msgs.length} 条`);
+      return 0;
+    }
     let start: number;
     if (a.start !== undefined) start = Number(a.start);
     else {

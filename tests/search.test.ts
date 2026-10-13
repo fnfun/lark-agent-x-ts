@@ -96,3 +96,57 @@ describe('跨会话搜消息', () => {
     expect(() => parseTimeArg('昨天', now)).toThrow('无法识别的时间');
   });
 });
+
+describe('按时间范围拉历史', () => {
+  // position 0..99，第 n 条创建于 1000+10n 秒；40..55 是空洞（撤回无痕等）
+  const exists = (p: number) => p >= 0 && p <= 99 && (p < 40 || p > 55);
+  const fakeChat = () => {
+    const c = newClient();
+    let calls = 0;
+    c.getChatInfo = async () => ({ lastMessagePosition: 99 });
+    c.isThreadChat = async () => false;
+    c.api = async (_type, data) => {
+      calls++;
+      const positions = (data as { positions: number[] }).positions;
+      return {
+        messages: Object.fromEntries(
+          positions.filter(exists).map((p) => [
+            String(p),
+            {
+              id: `70000000000000${String(p).padStart(5, '0')}`,
+              type: 4,
+              fromId: 'u1',
+              chatId: 'g1',
+              position: p,
+              createTime: BigInt(1000 + 10 * p),
+            },
+          ]),
+        ),
+      };
+    };
+    return { c, calls: () => calls };
+  };
+
+  test('二分查找时间对应的 position 边界，跨过空洞', async () => {
+    const { c, calls } = fakeChat();
+    expect(await c.positionAt('g1', 1_000_000, 99)).toBe(0);
+    expect(await c.positionAt('g1', 1_300_000, 99)).toBe(30);
+    expect(await c.positionAt('g1', 1_305_000, 99)).toBe(31);
+    // 边界落在空洞里也行：40..55 都没有消息
+    expect(await c.positionAt('g1', 1_450_000, 99)).toBe(40);
+    expect(await c.positionAt('g1', 9_999_000, 99)).toBe(100);
+    expect(calls()).toBeLessThan(60);
+  });
+
+  test('范围内取最新的 limit 条，两端都含', async () => {
+    const { c } = fakeChat();
+    const got = await c.historyRange('g1', { since: 1_300_000, until: 1_600_000, limit: 5 });
+    expect(got.map((m) => m.position)).toEqual([56, 57, 58, 59, 60]);
+    const all = await c.historyRange('g1', { since: 1_300_000, until: 1_600_000, limit: 100 });
+    expect(all.map((m) => m.position)).toEqual([
+      ...Array.from({ length: 10 }, (_, i) => 30 + i),
+      ...Array.from({ length: 5 }, (_, i) => 56 + i),
+    ]);
+    expect(await c.historyRange('g1', { since: 9_999_000 })).toEqual([]);
+  });
+});
