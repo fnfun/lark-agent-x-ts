@@ -54,6 +54,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | 撤回消息 / 编辑自己发的文本或富文本消息（`--links`、`--rich`） |
 | `lark react <msg_id> <表情>` / `lark reactions <msg_id...>` | 加表情回复（如 `THUMBSUP`、`DONE`，`--remove` 去掉） / 查看消息上的表情 |
+| `lark read-status <chat_id> <msg_id...>` | 消息的已读情况：已读/未读人数与未读名单（发送方视角，`--names`）；`--me` 看我自己是否读过 |
 | `lark read <chat_id> <msg_id...>` | 把消息标为已读（同客户端看过；话题回复按话题标记） |
 | `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
 | `lark self-chat` | 打印与自己的会话 chat_id |
@@ -103,6 +104,7 @@ await client.sendMessage('<chat_id>', { markdown: '## 结论\n- 周五上线' })
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
+await client.readStates('<chat_id>', ['<msg_id>']); // 谁读了、谁没读；myReadStates 看自己是否读过
 await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMessage、removeReaction、reactions
 const names = await client.userNames(['<user_id>']); // id → 名字（批量、缓存）；chatMembers(chatId) 列群成员
 const today = await client.historyRange('<chat_id>', { since: Date.now() - 3_600_000 }); // 按时间范围拉会话历史
