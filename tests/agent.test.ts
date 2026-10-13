@@ -75,6 +75,18 @@ describe('数字人分发', () => {
     expect(xml).toContain('<sender id="u-peer" name="同事甲"/>');
     expect(xml).toContain('<at_me>true</at_me>');
     expect(xml).toContain('<content>a&lt;b&gt;</content>');
+    expect(xml).not.toContain('<quote');
+  });
+
+  test('回复别人时提示词带上被引用的原文', () => {
+    const xml = buildXmlMessage({
+      ...msg({ parent_id: 'm0', content: '可以' }),
+      _quote: { id: 'm0', sender_id: 'u-me', sender_name: '我', content: '周五前能交 <初稿> 吗' },
+    });
+    expect(xml).toContain(
+      '<quote id="m0" sender_id="u-me" sender_name="我">周五前能交 &lt;初稿&gt; 吗</quote>',
+    );
+    expect(xml.indexOf('<quote')).toBeLessThan(xml.indexOf('<content>'));
   });
 
   test('触发规则：自己发的、前缀、会话类型、排除会话、群里只认 @我', () => {

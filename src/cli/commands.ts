@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { getBackend } from '../agent/backend.js';
-import { AgentDispatcher } from '../agent/dispatcher.js';
+import { AgentDispatcher, type QuotedMessage } from '../agent/dispatcher.js';
 import { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from '../auth.js';
 import { LarkClient, type SendOptions } from '../client.js';
 import { dataDir, loadConfig } from '../config.js';
@@ -422,6 +422,67 @@ const api: Command = {
   },
 };
 
+/** 拉取结果的输出（history / get / thread 共用）：一行一条，或 --json 时去掉 content_data 的完整字段。 */
+function printMessages(msgs: LarkMessage[], json: boolean): void {
+  if (json) {
+    printJson(msgs.map(({ content_data: _, ...rest }) => rest));
+    return;
+  }
+  for (const m of msgs) {
+    const scope = m.anchor ? `[${m.scope}:${head(m.anchor, 8)}]` : '';
+    out(
+      `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${m.from_id}: ${preview(m.content || '', 120)}`,
+    );
+  }
+}
+
+const getCmd: Command = {
+  name: 'get',
+  help: '按消息 id 取消息(可跨会话;引用回复的原文、链接里的消息都能取)',
+  positionals: [{ name: 'message_ids', nargs: '+' }],
+  options: [
+    { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const ids = a.message_ids as string[];
+    const msgs = await (await client()).getMessages(ids);
+    await saveAll(msgs, Boolean(a.save));
+    printMessages(msgs, Boolean(a.json));
+    const missing = ids.filter((id) => !msgs.some((m) => m.msg_id === id));
+    if (missing.length) err(`找不到消息: ${missing.join(', ')}`);
+    return missing.length ? 1 : 0;
+  },
+};
+
+const thread: Command = {
+  name: 'thread',
+  help: '拉取一个话题:根消息加最近的回复',
+  positionals: [{ name: 'root_id', help: '话题根消息 id(即消息的 anchor)' }],
+  options: [
+    { name: 'count', kind: 'int', default: 50, help: '最多取多少条回复' },
+    { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const msgs = await (await client()).threadMessages(String(a.root_id), Number(a.count));
+    if (!msgs.length) {
+      err(`找不到话题根消息: ${a.root_id}`);
+      return 1;
+    }
+    await saveAll(msgs, Boolean(a.save));
+    printMessages(msgs, Boolean(a.json));
+    return 0;
+  },
+};
+
+async function saveAll(msgs: LarkMessage[], save: boolean): Promise<void> {
+  if (!save) return;
+  const st = new Storage();
+  for (const m of msgs) await st.saveMessage(m).catch(() => {});
+  await st.close();
+}
+
 const history: Command = {
   name: 'history',
   help: '拉取会话历史消息',
@@ -464,16 +525,7 @@ const history: Command = {
       st ? (m: LarkMessage) => st.saveMessage(m) : undefined,
     );
     await st?.close();
-    if (!a.json) {
-      for (const m of msgs) {
-        const scope = m.anchor ? `[${m.scope}:${head(m.anchor, 8)}]` : '';
-        out(
-          `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${m.from_id}: ${preview(m.content || '', 120)}`,
-        );
-      }
-    } else {
-      printJson(msgs.map(({ content_data: _, ...rest }) => rest));
-    }
+    printMessages(msgs, Boolean(a.json));
     if (a.save) out(`已入库 ${msgs.length} 条`);
     return 0;
   },
@@ -507,17 +559,25 @@ const downloadCmd: Command = {
         : await st.findMessages(String(msgId));
       await st.close();
       const r = rows.at(-1);
-      if (!r) {
-        err(`本地未找到消息 ${msgId}(可用 --key/--chat 直接指定)`);
+      let found:
+        | Pick<LarkMessage, 'msg_id' | 'chat_id' | 'msg_type' | 'msg_type_name' | 'content_data'>
+        | undefined;
+      if (r?.content_data) found = { ...r, content_data: JSON.parse(r.content_data) as Dict };
+      else if (msgId) {
+        // 本地没有（或是 lark send 先落的、没有内容的记录）：向服务端按 id 取
+        const c = await LarkClient.create(la);
+        found = (await c.getMessages([msgId]))[0];
+      }
+      if (!found) {
+        err(`未找到消息 ${msgId}(可用 --key/--chat 直接指定)`);
         return 1;
       }
-      const contentData = r.content_data ? (JSON.parse(r.content_data) as Dict) : null;
-      const key = extractResourceKey(r.msg_type, contentData);
+      const key = extractResourceKey(found.msg_type, found.content_data);
       if (!key) {
-        err(`消息 ${msgId} 类型为 ${r.msg_type_name},没有可下载资源`);
+        err(`消息 ${msgId} 类型为 ${found.msg_type_name},没有可下载资源`);
         return 1;
       }
-      url = messageResourceUrl(r.msg_id, key, r.chat_id, fileHost);
+      url = messageResourceUrl(found.msg_id, key, found.chat_id, fileHost);
     }
     const [path, contentType, n] = await download(la, url, String(a.out));
     out(`已下载: ${path} (${contentType}, ${n} 字节)`);
@@ -597,6 +657,34 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
       )
     : null;
   const names = new Map<string, string | null>();
+  /** 回复（引用或话题回复）所接的那条消息：先查本地库，没有再向服务端取；取不到时不带。 */
+  const quoted = async (msg: LarkMessage): Promise<QuotedMessage | undefined> => {
+    const pid = msg.parent_id;
+    if (!pid || pid === '0' || pid === msg.msg_id) return undefined;
+    const row = await st.getMessage(pid, msg.chat_id);
+    if (row?.content)
+      return {
+        id: pid,
+        sender_id: row.sender_id,
+        sender_name: row.sender_name,
+        content: row.content,
+      };
+    try {
+      const [m] = await c.getMessages([pid]);
+      if (!m) return undefined;
+      const key = `${m.from_id}\u0000${msg.chat_id}`;
+      if (!names.has(key)) names.set(key, await c.getUserName(m.from_id, msg.chat_id));
+      return {
+        id: pid,
+        sender_id: m.from_id,
+        sender_name: names.get(key) || '',
+        content: m.content,
+      };
+    } catch (e) {
+      logger.debug(`取被引用消息失败: ${errorText(e)}`);
+      return undefined;
+    }
+  };
   const onMessage = async (msg: LarkMessage) => {
     const chatId = msg.chat_id;
     const chatType = msg.chat_type ?? 0;
@@ -625,7 +713,10 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
     logger.info(isOwn && process.stderr.isTTY ? `\x1b[36m${shown}\x1b[0m` : shown);
     if (cfg.mark_read && !isOwn && msg.position)
       await c.markRead(chatId, msg.position, [msg.msg_id]);
-    if (dispatcher) await dispatcher.submit(msg, chatName, senderName, la.userId);
+    if (dispatcher) {
+      const quote = dispatcher.shouldHandle(msg, la.userId) ? await quoted(msg) : undefined;
+      await dispatcher.submit(msg, chatName, senderName, la.userId, quote);
+    }
   };
   await keepListening(c, onMessage, {
     missed: (since) =>
@@ -676,6 +767,8 @@ export const COMMANDS: Command[] = [
   search,
   api,
   history,
+  getCmd,
+  thread,
   downloadCmd,
   listen,
 ];

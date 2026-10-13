@@ -205,3 +205,43 @@ describe('补收断线期间的消息', () => {
     }
   });
 });
+
+describe('按 id 取消息与话题', () => {
+  test('getMessages 按传入顺序返回、跳过不存在的；话题群的根消息归到自己的话题', async () => {
+    const c = newClient();
+    c.isThreadChat = async (chatId) => chatId === 'tc';
+    c.api = async (_type, data) => {
+      const all: Record<string, Dict> = {
+        '7000000000000000001': entity('7000000000000000001', { chatId: 'g1' }),
+        '7000000000000000002': entity('7000000000000000002', { chatId: 'tc' }),
+      };
+      const ids = (data as { messageIds: string[] }).messageIds;
+      return { messages: Object.fromEntries(ids.filter((i) => all[i]).map((i) => [i, all[i]])) };
+    };
+    const got = await c.getMessages(['7000000000000000002', 'nope', '7000000000000000001']);
+    expect(got.map((m) => [m.msg_id, m.scope, m.anchor])).toEqual([
+      ['7000000000000000002', 'topic', '7000000000000000002'],
+      ['7000000000000000001', 'chat', ''],
+    ]);
+    expect(await c.getMessages([])).toEqual([]);
+  });
+
+  test('threadMessages：根消息在前，随后是回复；根消息不存在时为空', async () => {
+    const c = newClient();
+    c.isThreadChat = async () => false;
+    let rootExists = true;
+    c.api = async (type) => {
+      if (type === 'messages.PullMessagesByIdsRequest')
+        return rootExists ? { messages: { r1: entity('r1') } } : { messages: {} };
+      if (type === 'thread.PullThreadsByIDsRequest')
+        return { threads: { r1: { id: 'r1', lastMessagePosition: 0 } } };
+      return { messages: { '0': entity('7000000000000000011', { rootId: 'r1', threadId: 'r1' }) } };
+    };
+    expect((await c.threadMessages('r1')).map((m) => m.msg_id)).toEqual([
+      'r1',
+      '7000000000000000011',
+    ]);
+    rootExists = false;
+    expect(await c.threadMessages('r1')).toEqual([]);
+  });
+});
