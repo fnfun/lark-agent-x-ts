@@ -152,6 +152,19 @@ export interface ReadState {
   lastRead: { userId: string; time: number } | null;
 }
 
+/** 一个标记（客户端"标记"列表里的一项）：被标记的消息或会话；消息标记带上消息本身。 */
+export interface FlagItem {
+  type: 'message' | 'chat';
+  id: string;
+  /** 标记时间（毫秒）。 */
+  createTime: number;
+  message: LarkMessage | null;
+}
+
+// feed.FlagItem.FlagType 与 FeedCard.Type.CHAT
+const FLAG_FEED = 1;
+const FLAG_MESSAGE = 2;
+
 /** 一条消息上的表情回复。 */
 export interface MessageReactions {
   messageId: string;
@@ -742,6 +755,46 @@ export class LarkClient {
       ...(o.description !== undefined ? { description: o.description } : {}),
       updateFields: fields,
     });
+  }
+
+  /** 标记 / 取消标记消息（同客户端的"标记"，留给自己稍后处理；只有自己看得到）。 */
+  async flagMessages(messageIds: string[], remove = false): Promise<void> {
+    const items = messageIds.map((id) => ({ itemId: id, flagType: FLAG_MESSAGE }));
+    await this.api('feed.UpdateFlagsRequest', remove ? { deletedItems: items } : { items });
+  }
+
+  /** 标记 / 取消标记会话。 */
+  async flagChats(chatIds: string[], remove = false): Promise<void> {
+    const items = chatIds.map((id) => ({ itemId: id, itemType: CARD_CHAT, flagType: FLAG_FEED }));
+    await this.api('feed.UpdateFlagsRequest', remove ? { deletedItems: items } : { items });
+  }
+
+  /** 我的标记列表（最多 max 个），按标记时间从新到旧。 */
+  async flags(max = 200): Promise<FlagItem[]> {
+    const out: FlagItem[] = [];
+    let cursor: string | undefined;
+    while (out.length < max) {
+      const resp = await this.api('feed.PullFlagsRequest', {
+        count: String(Math.min(50, max - out.length)),
+        ...(cursor ? { cursor } : {}),
+      });
+      const msgs = (resp.messages ?? {}) as Record<string, Dict>;
+      for (const f of (resp.items ?? []) as Dict[]) {
+        const id = String(f.itemId);
+        const isMsg = int(f.flagType, 0) === FLAG_MESSAGE;
+        const v = isMsg ? msgs[id] : undefined;
+        out.push({
+          type: isMsg ? 'message' : 'chat',
+          id,
+          createTime: int(f.createTime, 0),
+          message: v ? toLarkMessage(v, { selfId: this.auth.userId }) : null,
+        });
+      }
+      const next = String(resp.nextCursor ?? '');
+      if (!resp.hasMore || !next || next === cursor) break;
+      cursor = next;
+    }
+    return out.sort((a, b) => b.createTime - a.createTime).slice(0, max);
   }
 
   /**
