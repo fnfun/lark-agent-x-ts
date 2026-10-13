@@ -50,7 +50,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark auth qr` | 扫码登录（推荐；`--region lark` 登录 Lark 国际版） |
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
-| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本） |
+| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重） |
 | `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | 撤回消息 / 编辑自己发的文本或富文本消息（`--links`、`--rich`） |
 | `lark react <msg_id> <表情>` / `lark reactions <msg_id...>` | 加表情回复（如 `THUMBSUP`、`DONE`，`--remove` 去掉） / 查看消息上的表情 |

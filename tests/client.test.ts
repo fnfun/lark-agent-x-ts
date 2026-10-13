@@ -3,7 +3,7 @@ import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
 import { LarkClient, SendUnconfirmed } from '../src/client.js';
 import { CookieJar, HttpError, NetworkError, raiseForStatus, request } from '../src/http.js';
-import type { Dict } from '../src/proto/dict.js';
+import { type Dict, toDict } from '../src/proto/dict.js';
 import { protoType } from '../src/proto/registry.js';
 import fixtures from './fixtures/parity.json';
 
@@ -88,6 +88,7 @@ describe('网关客户端', () => {
 
   test('发送失败（网络或响应里没有消息 id）返回 null，不抛错', async () => {
     const c = newClient();
+    c.sendRetryDelayMs = 0;
     c.isThreadChat = async () => false;
     c.gatewayPost = async () => {
       throw new NetworkError('网络请求失败(x): Read timed out');
@@ -102,6 +103,7 @@ describe('网关客户端', () => {
 
   test('sendMessage 失败时抛错：网络错误原样抛出，拿不到消息 id 抛 SendUnconfirmed', async () => {
     const c = newClient();
+    c.sendRetryDelayMs = 0;
     c.isThreadChat = async () => false;
     c.gatewayPost = async () => {
       throw new NetworkError('网络请求失败(x): Read timed out');
@@ -116,6 +118,51 @@ describe('网关客户端', () => {
     expect(await c.sendMessage('c1', { html: '<p>收到</p>', title: '' })).toBe(
       '7000000000000000009',
     );
+  });
+
+  test('发送幂等：失败时用同一个消息 cid 重试；4xx 不重试；SendUnconfirmed 带回 cid', async () => {
+    const c = newClient();
+    c.sendRetryDelayMs = 0;
+    c.isThreadChat = async () => false;
+    const ok = Uint8Array.from(Buffer.from(fixtures.responses.put_message.bytes, 'base64'));
+    const cids: string[] = [];
+    const sentCid = (pkt: unknown) => {
+      const p = (pkt as { payload: Uint8Array }).payload;
+      return String(
+        toDict(protoType('PutMessageRequest'), fromBinary(protoType('PutMessageRequest'), p)).cid,
+      );
+    };
+    let failures = 2;
+    c.gatewayPost = async (pkt) => {
+      cids.push(sentCid(pkt));
+      if (failures-- > 0) throw new NetworkError('网络请求失败(x): Read timed out');
+      return ok;
+    };
+    expect(await c.sendMessage('c1', { text: '收到' }, { cid: 'fixedcid01' })).toBe(
+      '7000000000000000009',
+    );
+    expect(cids).toEqual(['fixedcid01', 'fixedcid01', 'fixedcid01']);
+    // 默认 cid 随机生成，重试时不变
+    cids.length = 0;
+    failures = 1;
+    await c.sendMessage('c1', { text: '收到' });
+    expect(cids).toHaveLength(2);
+    expect(cids[0]).toBe(cids[1] as string);
+    // 4xx 是请求本身的问题，不重试
+    cids.length = 0;
+    c.gatewayPost = async (pkt) => {
+      cids.push(sentCid(pkt));
+      throw new HttpError(400, 'Bad Request', 'u');
+    };
+    await expect(c.sendMessage('c1', { text: '收到' })).rejects.toBeInstanceOf(HttpError);
+    expect(cids).toHaveLength(1);
+    // 重试用完仍拿不到消息 id：SendUnconfirmed 带回 cid，可以之后用它补发
+    c.gatewayPost = async () => toBinary(protoType('Packet'), create(protoType('Packet')));
+    const e = (await c
+      .sendMessage('c1', { text: '收到' }, { cid: 'fixedcid02', retries: 1 })
+      .catch((x) => x)) as SendUnconfirmed;
+    expect(e).toBeInstanceOf(SendUnconfirmed);
+    expect(e.cid).toBe('fixedcid02');
   });
 
   test('长连接：带 sid 的帧回 ACK，推送消息按顺序交给回调，话题群根消息归到自己的话题；服务端异常关闭时抛错', async () => {

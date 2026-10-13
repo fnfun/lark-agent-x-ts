@@ -1,6 +1,6 @@
 import { create, fromBinary, type Message, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from './auth.js';
-import { HttpError, request, USER_AGENT } from './http.js';
+import { HttpError, NetworkError, request, USER_AGENT } from './http.js';
 import { accessKey, longRequestId, requestCid, requestId } from './ids.js';
 import { getLogger } from './log.js';
 import { uploadFile, uploadImage } from './media.js';
@@ -55,6 +55,13 @@ export interface SendOptions {
   rootId?: string | undefined;
   /** 引用某条消息（在话题内引用时同时给 rootId）。 */
   replyTo?: string | undefined;
+  /**
+   * 消息的客户端 id，用于幂等：服务端按它去重，同一个 cid 重发拿到的是同一条消息。
+   * 不给时随机生成；拿到 SendUnconfirmed 后想补发，用它带回的 cid 再发一次即可，不会发重。
+   */
+  cid?: string | undefined;
+  /** 网络错误、5xx 或拿不到消息 id 时用同一个 cid 自动重试的次数，默认 2。 */
+  retries?: number | undefined;
 }
 
 /**
@@ -69,8 +76,15 @@ export type MessageContent =
   | { image: Uint8Array; name?: string }
   | { file: Uint8Array; name: string };
 
-/** 服务端已受理发送请求，但拿不到消息 id，无法确认是否发出。 */
-export class SendUnconfirmed extends Error {}
+/** 服务端已受理发送请求，但拿不到消息 id，无法确认是否发出；用 cid 重发不会发重。 */
+export class SendUnconfirmed extends Error {
+  constructor(
+    message: string,
+    readonly cid = '',
+  ) {
+    super(message);
+  }
+}
 
 export type MessageHandler = (msg: LarkMessage) => Promise<void>;
 
@@ -388,38 +402,61 @@ export class LarkClient {
       rootId: o.rootId,
       replyTo: o.replyTo,
       threadChat: Boolean(o.rootId) && (await this.isThreadChat(chatId)),
+      cid: o.cid || requestCid(),
     };
   }
 
+  /** 发送重试的间隔（毫秒），第 n 次重试等 n 倍。 */
+  sendRetryDelayMs = 1000;
+
   /**
    * 发送一条消息并确认送达，返回服务端分配的消息 id；失败时抛错而不是返回 null：
-   * 请求失败抛 NetworkError / HttpError，服务端已受理但拿不到消息 id 时抛 SendUnconfirmed（可能已发出，不宜直接重试）。
+   * 网络错误、5xx、拿不到消息 id 时按 o.retries 用同一个 cid 重试（服务端去重，不会发重）；仍失败时抛 NetworkError / HttpError，
+   * 或 SendUnconfirmed（服务端已受理但拿不到消息 id，可能已发出；带着 cid，之后用它重发即可）。
    * 内容见 MessageContent：纯文本（links 时把 `[文字](url)` 渲染成带文字的超链接）、结构化富文本（text 是纯文本摘要）、HTML 富文本、图片、文件；
    * 图片与文件先上传再发送，上传失败同样抛 NetworkError / HttpError。
    */
   async sendMessage(chatId: string, content: MessageContent, o: SendOptions = {}): Promise<string> {
     const target = await this.threadTarget(chatId, o);
-    const cid = longRequestId();
+    const requestId = longRequestId();
     let pkt: Packet;
     if ('image' in content)
       pkt = buildImageMessagePacket(
         await uploadImage(this.auth, content.image, content.name),
         target,
-        cid,
+        requestId,
       );
     else if ('file' in content)
       pkt = buildFileMessagePacket(
         await uploadFile(this.auth, chatId, content.file, content.name),
         target,
-        cid,
+        requestId,
       );
     else if ('markdown' in content)
-      pkt = buildMarkdownMessagePacket(content.markdown, target, cid, content.title ?? '');
+      pkt = buildMarkdownMessagePacket(content.markdown, target, requestId, content.title ?? '');
     else if ('blocks' in content)
-      pkt = buildRichMessagePacket(content.blocks, content.text, target, cid);
+      pkt = buildRichMessagePacket(content.blocks, content.text, target, requestId);
     else if ('html' in content)
-      pkt = buildPostMessagePacket(content.html, target, cid, content.title ?? '');
-    else pkt = buildSendMessagePacket(content.text, target, cid, content.links ?? false);
+      pkt = buildPostMessagePacket(content.html, target, requestId, content.title ?? '');
+    else pkt = buildSendMessagePacket(content.text, target, requestId, content.links ?? false);
+    // 服务端按消息 cid 去重，重试同一个包不会发重
+    const retries = o.retries ?? 2;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.postMessage(pkt, target.cid);
+      } catch (err) {
+        const retryable =
+          err instanceof NetworkError ||
+          err instanceof SendUnconfirmed ||
+          (err instanceof HttpError && err.status >= 500);
+        if (!retryable || attempt >= retries) throw err;
+        logger.warning(`发送失败,重试(${attempt + 1}/${retries}): ${(err as Error).message}`);
+        await new Promise((r) => setTimeout(r, this.sendRetryDelayMs * (attempt + 1)));
+      }
+    }
+  }
+
+  private async postMessage(pkt: Packet, cid: string): Promise<string> {
     const resp = await this.gatewayPost(pkt);
     let msgId: string;
     try {
@@ -427,10 +464,11 @@ export class LarkClient {
     } catch (err) {
       throw new SendUnconfirmed(
         `服务端已接受发送请求,但响应解析失败,无法确认是否发出: ${(err as Error).message}`,
+        cid,
       );
     }
     if (!msgId)
-      throw new SendUnconfirmed('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出');
+      throw new SendUnconfirmed('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出', cid);
     return msgId;
   }
 

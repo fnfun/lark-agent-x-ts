@@ -128,6 +128,11 @@ const auth: Command = {
 const REPLY_OPTIONS: Option[] = [
   { name: 'root', kind: 'string', help: '话题/线程根消息 id,回复进话题' },
   { name: 'reply', kind: 'string', help: '引用回复某条消息 id(被引用消息在话题里时自动进话题)' },
+  {
+    name: 'cid',
+    kind: 'string',
+    help: '消息的客户端 id(幂等键):同一个 cid 重发拿到的是同一条消息,不会发重',
+  },
 ];
 
 const send: Command = {
@@ -192,7 +197,7 @@ async function replyTarget(st: Storage, chatId: string, a: Parsed): Promise<Send
     const quoted = await st.getMessage(reply, chatId);
     if (quoted?.scope === 'topic' && quoted.anchor) rootId = quoted.anchor;
   }
-  return { rootId, replyTo: reply };
+  return { rootId, replyTo: reply, cid: s(a.cid) };
 }
 
 /** 发送结果：成功时用服务端 id 落库（监听收到回显时会补全这条而不是再插一条）并打印 msg_id。 */
