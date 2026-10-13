@@ -224,6 +224,8 @@ export interface Target {
   replyTo?: string | undefined;
   /** 会话是否为话题群（话题群拒收 isReplyInThread）。 */
   threadChat?: boolean;
+  /** 消息的客户端 id：服务端按它去重，同一个 cid 重发拿到的是同一条消息。不给时随机生成。 */
+  cid?: string | undefined;
 }
 
 /**
@@ -246,7 +248,7 @@ function putMessage(type: number, t: Target, content: Fields, requestId: string)
   const req = create(protoType('PutMessageRequest'), {
     type,
     chatId: t.chatId,
-    cid: requestCid(),
+    cid: t.cid || requestCid(),
     isNotified: true,
     version: 1,
     ...replyFields(t),
