@@ -27,6 +27,7 @@ interface RichTextInit {
   };
   atIds: string[];
   anchorIds: string[];
+  markdownIds?: string[];
   version?: number;
 }
 
@@ -170,13 +171,48 @@ function fillRichBlocks(blocks: RichBlock[], innerText: string): RichTextInit {
   return rt;
 }
 
-/** 可编辑的消息内容：纯文本（links 同 sendMessage）或结构化富文本（text 为纯文本摘要）。 */
+/**
+ * Markdown 富文本：整段放进一个 MARKDOWN 元素（tag 49），由客户端按 Markdown 渲染（同开放平台富文本的 md 标签），
+ * 标题、列表、代码块、引用、加粗斜体、链接都能显示；innerText 用原文。
+ */
+function fillMarkdown(markdown: string): RichTextInit {
+  const rt = emptyRichText();
+  rt.elements.dictionary['1'] = {
+    tag: 49,
+    childIds: [],
+    property: bin('entities.RichTextElement.MarkdownProperty', { content: markdown }, true),
+  };
+  rt.elementIds.push('1');
+  rt.markdownIds = ['1'];
+  rt.innerText = markdown;
+  rt.version = 1;
+  return rt;
+}
+
+/** Markdown 富文本（POST）消息。 */
+export function buildMarkdownMessagePacket(
+  markdown: string,
+  t: Target,
+  requestId: string,
+  title = '',
+) {
+  return putMessage(
+    2,
+    t,
+    { ...(title ? { title } : {}), richText: fillMarkdown(markdown) },
+    requestId,
+  );
+}
+
+/** 可编辑的消息内容：纯文本（links 同 sendMessage）、结构化富文本（text 为纯文本摘要）或 Markdown（原消息须是富文本）。 */
 export type EditableContent =
   | { text: string; links?: boolean }
-  | { blocks: RichBlock[]; text: string };
+  | { blocks: RichBlock[]; text: string }
+  | { markdown: string };
 
 /** 编辑消息用的 richText 与消息类型（文本 4、富文本 2）；与发送时的写法一致。 */
 export function richTextOf(content: EditableContent): { type: 2 | 4; richText: RichTextInit } {
+  if ('markdown' in content) return { type: 2, richText: fillMarkdown(content.markdown) };
   if ('blocks' in content)
     return { type: 2, richText: fillRichBlocks(content.blocks, content.text) };
   return { type: 4, richText: fillRichText(content.text, content.links ?? false) };

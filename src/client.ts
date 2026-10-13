@@ -9,6 +9,7 @@ import {
   buildFileMessagePacket,
   buildGroupInfoPacket,
   buildImageMessagePacket,
+  buildMarkdownMessagePacket,
   buildPostMessagePacket,
   buildRichMessagePacket,
   buildSearchPacket,
@@ -57,13 +58,14 @@ export interface SendOptions {
 }
 
 /**
- * sendMessage 的内容：纯文本、结构化富文本（text 为纯文本摘要）、HTML 富文本、图片或文件。
+ * sendMessage 的内容：纯文本、结构化富文本（text 为纯文本摘要）、HTML 富文本、Markdown（客户端按 Markdown 渲染）、图片或文件。
  * 图片与文件传原始字节，发送前自动上传；name 是文件名（文件消息里显示它，图片只用来标注格式）。
  */
 export type MessageContent =
   | { text: string; links?: boolean }
   | { blocks: RichBlock[]; text: string }
   | { html: string; title?: string }
+  | { markdown: string; title?: string }
   | { image: Uint8Array; name?: string }
   | { file: Uint8Array; name: string };
 
@@ -399,6 +401,8 @@ export class LarkClient {
         target,
         cid,
       );
+    else if ('markdown' in content)
+      pkt = buildMarkdownMessagePacket(content.markdown, target, cid, content.title ?? '');
     else if ('blocks' in content)
       pkt = buildRichMessagePacket(content.blocks, content.text, target, cid);
     else if ('html' in content)
@@ -622,7 +626,7 @@ export class LarkClient {
 
   /**
    * 编辑自己发的文本或富文本消息，内容整条替换；对方看到"已编辑"。
-   * 纯文本消息只能改成纯文本（content 用 text），富文本消息用 blocks；超过可编辑时限等由服务端拒绝（HttpError.reason 说明原因）。
+   * 纯文本消息只能改成纯文本（content 用 text），富文本消息用 blocks 或 markdown；超过可编辑时限等由服务端拒绝（HttpError.reason 说明原因）。
    */
   async editMessage(msgId: string, content: EditableContent): Promise<void> {
     const { type, richText } = richTextOf(content);

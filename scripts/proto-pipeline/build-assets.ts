@@ -28,7 +28,10 @@ const CORE_REQUESTS = [
   'messages.PullMessagesByPositionsRequest',
   'chats.PullChatsByIdsRequest',
 ];
-const CORE_TYPES = ['entities.RichTextElement.AnchorProperty'];
+const CORE_TYPES = [
+  'entities.RichTextElement.AnchorProperty',
+  'entities.RichTextElement.MarkdownProperty',
+];
 
 const BUF = join(import.meta.dir, '..', '..', 'node_modules', '.bin', 'buf');
 

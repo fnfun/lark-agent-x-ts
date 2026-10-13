@@ -475,6 +475,7 @@ message RichText {
     repeated string interactiveIds = 11;
     repeated string mentionIds = 12;
     int32 version = 13;
+    repeated string markdownIds = 15;
 }
 
 
