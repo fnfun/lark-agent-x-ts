@@ -307,3 +307,66 @@ describe('Pin 与会话置顶', () => {
     ]);
   });
 });
+
+describe('定时消息', () => {
+  test('定时发送把发送包装进 putRequest，时间按秒；列出、改时间、取消', async () => {
+    const c = newClient();
+    c.isThreadChat = async () => false;
+    let scheduleReq: Dict = {};
+    c.gatewayPost = async (pkt) => {
+      const p = pkt as unknown as { cmd: number; payload: Uint8Array };
+      expect(p.cmd).toBe(900030);
+      const T = larkType('messages.PutScheduleMessageRequest');
+      scheduleReq = toDict(T, fromBinary(T, p.payload));
+      const R = larkType('messages.PutScheduleMessageResponse');
+      return toBinary(
+        protoType('Packet'),
+        create(protoType('Packet'), {
+          payload: toBinary(R, create(R, { message: { messageId: '7000000000000000201' } })),
+        } as Record<string, unknown>),
+      );
+    };
+    expect(
+      await c.scheduleMessage('c1', { markdown: '**周报**' }, 1_790_000_600_500, { rootId: 'r1' }),
+    ).toBe('7000000000000000201');
+    expect([scheduleReq.scheduleTime, scheduleReq.chatId, scheduleReq.entityId]).toEqual([
+      1_790_000_600n,
+      'c1',
+      'r1',
+    ]);
+    const put = scheduleReq.putRequest as Dict;
+    expect([put.type, put.chatId, put.rootId]).toEqual([2, 'c1', 'r1']);
+
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      return type === 'messages.PullChatScheduleMessagesRequest'
+        ? {
+            messages: [
+              { messageId: 'm2', scheduleTime: 300n, status: 2 },
+              {
+                messageId: 'm1',
+                scheduleTime: 200n,
+                status: 1,
+                scheduleMessage: { id: 'm1', type: 4, fromId: 'u1' },
+              },
+            ],
+          }
+        : {};
+    };
+    const list = await c.scheduledMessages('c1');
+    expect(list.map((m) => [m.messageId, m.at, m.status, m.message?.chat_id ?? null])).toEqual([
+      ['m1', 200_000, 'pending', 'c1'],
+      ['m2', 300_000, 'suspended', null],
+    ]);
+    await c.rescheduleMessage('c1', 'm1', 400_900);
+    await c.cancelScheduledMessage('c1', 'm1');
+    expect(reqs.slice(1)).toEqual([
+      [
+        'messages.PatchScheduleMessageRequest',
+        { patchType: 1, messageId: 'm1', chatId: 'c1', scheduleTime: '400' },
+      ],
+      ['messages.PatchScheduleMessageRequest', { patchType: 3, messageId: 'm1', chatId: 'c1' }],
+    ]);
+  });
+});

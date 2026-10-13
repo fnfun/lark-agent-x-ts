@@ -37,7 +37,7 @@ import {
   toLarkMessage,
 } from './proto/decoders.js';
 import { type Dict, fromDict, toDict } from './proto/dict.js';
-import { protoType, resolveCmd } from './proto/registry.js';
+import { larkType, protoType, resolveCmd } from './proto/registry.js';
 import { urls, webOrigin } from './region.js';
 
 const logger = getLogger('larkx.client');
@@ -171,6 +171,21 @@ export interface PinnedMessage {
   pinnedAt: number;
   message: LarkMessage | null;
 }
+
+/** 一条还没发出的定时消息。at 为计划发送时间（毫秒）。 */
+export interface ScheduledMessage {
+  messageId: string;
+  at: number;
+  status: 'pending' | 'suspended';
+  message: LarkMessage | null;
+}
+
+// ScheduleMessage.Status、PullChatScheduleMessagesRequest.EntityType、PatchScheduleMessageRequest.PatchType
+const SCHEDULE_PENDING = 1;
+const SCHEDULE_SUSPEND = 2;
+const SCHEDULE_CHAT_ONLY = 1;
+const SCHEDULE_PATCH_UPDATE = 1;
+const SCHEDULE_PATCH_DELETE = 3;
 
 /** 会话列表里的一个标签（分组）。keyword 是按关键词自动归类的标签。 */
 export interface FeedGroup {
@@ -485,6 +500,30 @@ export class LarkClient {
    * 图片与文件先上传再发送，上传失败同样抛 NetworkError / HttpError。
    */
   async sendMessage(chatId: string, content: MessageContent, o: SendOptions = {}): Promise<string> {
+    const { pkt, cid } = await this.messagePacket(chatId, content, o);
+    // 服务端按消息 cid 去重，重试同一个包不会发重
+    const retries = o.retries ?? 2;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.postMessage(pkt, cid);
+      } catch (err) {
+        const retryable =
+          err instanceof NetworkError ||
+          err instanceof SendUnconfirmed ||
+          (err instanceof HttpError && err.status >= 500);
+        if (!retryable || attempt >= retries) throw err;
+        logger.warning(`发送失败,重试(${attempt + 1}/${retries}): ${(err as Error).message}`);
+        await new Promise((r) => setTimeout(r, this.sendRetryDelayMs * (attempt + 1)));
+      }
+    }
+  }
+
+  /** 发送包（PutMessageRequest，cmd 5）与消息 cid；图片、文件在这里先上传。 */
+  private async messagePacket(
+    chatId: string,
+    content: MessageContent,
+    o: SendOptions,
+  ): Promise<{ pkt: Packet; cid: string }> {
     const target = await this.threadTarget(chatId, o);
     const requestId = longRequestId();
     let pkt: Packet;
@@ -507,21 +546,73 @@ export class LarkClient {
     else if ('html' in content)
       pkt = buildPostMessagePacket(content.html, target, requestId, content.title ?? '');
     else pkt = buildSendMessagePacket(content.text, target, requestId, content.links ?? false);
-    // 服务端按消息 cid 去重，重试同一个包不会发重
-    const retries = o.retries ?? 2;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await this.postMessage(pkt, target.cid);
-      } catch (err) {
-        const retryable =
-          err instanceof NetworkError ||
-          err instanceof SendUnconfirmed ||
-          (err instanceof HttpError && err.status >= 500);
-        if (!retryable || attempt >= retries) throw err;
-        logger.warning(`发送失败,重试(${attempt + 1}/${retries}): ${(err as Error).message}`);
-        await new Promise((r) => setTimeout(r, this.sendRetryDelayMs * (attempt + 1)));
-      }
-    }
+    return { pkt, cid: target.cid };
+  }
+
+  /**
+   * 定时发送：到 at（毫秒）时由服务端发出，返回定时消息 id（发出后就是这条消息的 id）。内容与回复选项同 sendMessage。
+   * 话题里的回复（o.rootId）挂在该话题下。
+   */
+  async scheduleMessage(
+    chatId: string,
+    content: MessageContent,
+    at: number,
+    o: SendOptions = {},
+  ): Promise<string> {
+    const { pkt } = await this.messagePacket(chatId, content, o);
+    const put = fromBinary(
+      larkType('messages.PutMessageRequest'),
+      (pkt as unknown as { payload: Uint8Array }).payload,
+    );
+    const resp = await this.call('messages.PutScheduleMessageRequest', {
+      putRequest: put,
+      scheduleTime: BigInt(Math.floor(at / 1000)),
+      chatId,
+      entityId: o.rootId || chatId,
+    });
+    const id = (resp.message as Dict | undefined)?.messageId;
+    if (!id) throw new Error('定时发送失败: 响应里没有消息 id');
+    return String(id);
+  }
+
+  /** 会话里还没发出的定时消息（等待中、已暂停），按发送时间升序。 */
+  async scheduledMessages(chatId: string): Promise<ScheduledMessage[]> {
+    const resp = await this.api('messages.PullChatScheduleMessagesRequest', {
+      chatId,
+      entityType: SCHEDULE_CHAT_ONLY,
+      entityId: chatId,
+      status: [SCHEDULE_PENDING, SCHEDULE_SUSPEND],
+    });
+    return ((resp.messages ?? []) as Dict[])
+      .map((m) => ({
+        messageId: String(m.messageId),
+        at: int(m.scheduleTime, 0) * 1000,
+        status:
+          int(m.status, 0) === SCHEDULE_SUSPEND ? ('suspended' as const) : ('pending' as const),
+        message: m.scheduleMessage
+          ? toLarkMessage(m.scheduleMessage as Dict, { fallbackChatId: chatId })
+          : null,
+      }))
+      .sort((a, b) => a.at - b.at);
+  }
+
+  /** 改定时消息的发送时间（毫秒）。 */
+  async rescheduleMessage(chatId: string, messageId: string, at: number): Promise<void> {
+    await this.api('messages.PatchScheduleMessageRequest', {
+      patchType: SCHEDULE_PATCH_UPDATE,
+      messageId,
+      chatId,
+      scheduleTime: String(Math.floor(at / 1000)),
+    });
+  }
+
+  /** 取消定时消息（不再发出）。 */
+  async cancelScheduledMessage(chatId: string, messageId: string): Promise<void> {
+    await this.api('messages.PatchScheduleMessageRequest', {
+      patchType: SCHEDULE_PATCH_DELETE,
+      messageId,
+      chatId,
+    });
   }
 
   private async postMessage(pkt: Packet, cid: string): Promise<string> {
