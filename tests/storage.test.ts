@@ -144,6 +144,23 @@ for (const [name, setup] of backends) {
       expect(ids(await st.findMessages('m3'))).toEqual(['m3']);
     });
 
+    test('补收用的本地进度：会话最大 position（没有记录为 -1）与最近活跃的话题', async () => {
+      expect(await st.lastPosition('7200000000000000001')).toBe(-1);
+      await st.saveMessage(msg({ msg_id: 'm1', position: 7 }));
+      await st.saveMessage(
+        msg({ msg_id: 'm2', scope: 'topic', anchor: 'r1', position: -3, create_time: 1003 }),
+      );
+      await st.saveMessage(
+        msg({ msg_id: 'm3', scope: 'topic', anchor: 'r2', position: -3, create_time: 1005 }),
+      );
+      await st.saveMessage(
+        msg({ msg_id: 'm4', scope: 'topic', anchor: 'r1', position: -3, create_time: 1001 }),
+      );
+      expect(await st.lastPosition('7200000000000000001')).toBe(7);
+      expect(await st.recentAnchors('7200000000000000001')).toEqual(['r2', 'r1']);
+      expect(await st.recentAnchors('7200000000000000001', 1)).toEqual(['r2']);
+    });
+
     test('会话名与 agent 会话', async () => {
       await st.updateChatName('c1', '群一', 2);
       await st.updateChatName('c1', '群一改名', 2);

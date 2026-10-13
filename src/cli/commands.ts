@@ -16,6 +16,7 @@ import { Storage } from '../storage/index.js';
 import { head, preview } from '../text.js';
 import type { CommandSpec, Parsed } from './args.js';
 import { errorText, printJson, pyDatetime, shortTime } from './format.js';
+import { keepListening } from './listen-loop.js';
 import { qrAscii, saveQrPng } from './qr.js';
 
 const logger = getLogger('larkx.cli');
@@ -567,15 +568,14 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
       await c.markRead(chatId, msg.position, [msg.msg_id]);
     if (dispatcher) await dispatcher.submit(msg, chatName, senderName, la.userId);
   };
-  for (;;) {
-    try {
-      await c.connectWebsocket(onMessage);
-    } catch (e) {
-      if (e instanceof AuthExpired) throw e;
-      logger.warning(`WS 断开,10s 后重连: ${(e as Error).message}`);
-      await Bun.sleep(10_000);
-    }
-  }
+  await keepListening(c, onMessage, {
+    missed: (since) =>
+      c.missedMessages(since, {
+        localPosition: (chatId) => st.lastPosition(chatId),
+        knownThreads: (chatId) => st.recentAnchors(chatId),
+      }),
+  });
+  throw new Error('长连接循环意外退出');
 }
 
 const listen: Command = {
