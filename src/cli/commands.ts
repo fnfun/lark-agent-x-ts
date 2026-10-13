@@ -142,7 +142,12 @@ const send: Command = {
       kind: 'flag',
       help: '按富文本发送:text 是 HTML 片段(<p><b><a href><ul><li><blockquote><at user_id>)',
     },
-    { name: 'title', kind: 'string', help: '富文本标题(配合 --post)' },
+    {
+      name: 'md',
+      kind: 'flag',
+      help: '按 Markdown 发送(标题、列表、代码块、引用、加粗斜体、链接),客户端按 Markdown 渲染',
+    },
+    { name: 'title', kind: 'string', help: '富文本标题(配合 --post / --md)' },
     {
       name: 'rich',
       kind: 'string',
@@ -162,12 +167,19 @@ const send: Command = {
         blocks?: RichBlock[];
       };
       msgId = await c.sendRich(spec.blocks ?? [], text, chatId, o);
+    } else if (a.md) {
+      try {
+        msgId = await c.sendMessage(chatId, { markdown: text, title: s(a.title) ?? '' }, o);
+      } catch (e) {
+        logger.error(`发送 Markdown 失败: ${errorText(e)}`);
+        msgId = null;
+      }
     } else if (a.post) {
       msgId = await c.sendPost(text, chatId, s(a.title) ?? '', o);
     } else {
       msgId = await c.sendMsg(text, chatId, o, Boolean(a.links));
     }
-    const rich = Boolean(a.post || a.rich);
+    const rich = Boolean(a.post || a.rich || a.md);
     return finishSend(st, c, chatId, msgId, o, rich ? 2 : 4, text);
   },
 };
@@ -291,6 +303,7 @@ const edit: Command = {
   positionals: [{ name: 'msg_id' }, { name: 'text', nargs: '+' }],
   options: [
     { name: 'links', kind: 'flag', help: '把文本里的 [文字](url) 发成带文字的超链接' },
+    { name: 'md', kind: 'flag', help: '按 Markdown 改写;原消息须是富文本' },
     {
       name: 'rich',
       kind: 'string',
@@ -308,7 +321,8 @@ const edit: Command = {
           blocks?: RichBlock[];
         };
         await c.editMessage(id, { blocks: spec.blocks ?? [], text });
-      } else await c.editMessage(id, { text, links: Boolean(a.links) });
+      } else if (a.md) await c.editMessage(id, { markdown: text });
+      else await c.editMessage(id, { text, links: Boolean(a.links) });
     } catch (e) {
       err(`编辑失败: ${errorText(e)}`);
       return 1;

@@ -143,7 +143,8 @@ export function extractRichText(richText: Dict | undefined): string {
       const tag = (v.tag as number | undefined) ?? 1;
       const prop = v.property as Uint8Array | undefined;
       if (!prop?.length) continue;
-      if ([1, 3, 7, 8, 9, 17].includes(tag)) {
+      // 49 是 MARKDOWN 元素（机器人与 Markdown 消息常用），属性与 TextProperty 同为 content=1，按原文取
+      if ([1, 3, 7, 8, 9, 17, 49].includes(tag)) {
         try {
           text += str(
             toDict(protoType('TextProperty'), fromBinary(protoType('TextProperty'), prop)).content,

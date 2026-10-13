@@ -94,3 +94,30 @@ describe('撤回、编辑与表情', () => {
     ]);
   });
 });
+
+describe('Markdown 消息', () => {
+  test('整段放进一个 MARKDOWN 元素并登记 markdownIds；解码时按原文取回', async () => {
+    const { buildMarkdownMessagePacket } = await import('../src/proto/builders.js');
+    const { decodeMessageContent } = await import('../src/proto/decoders.js');
+    const md = '## 结论\n\n- 周五上线\n\n```ts\nconst a = 1;\n```';
+    const pkt = buildMarkdownMessagePacket(md, { chatId: 'c1' }, 'r1', '周报') as unknown as {
+      cmd: number;
+      payload: Uint8Array;
+    };
+    const req = toDict(
+      protoType('PutMessageRequest'),
+      fromBinary(protoType('PutMessageRequest'), pkt.payload),
+    );
+    expect([pkt.cmd, req.type, (req.content as Dict).title]).toEqual([5, 2, '周报']);
+    const rt = (req.content as Dict).richText as Dict;
+    expect([rt.elementIds, rt.markdownIds, rt.innerText]).toEqual([['1'], ['1'], md]);
+    const el = ((rt.elements as Dict).dictionary as Record<string, Dict>)['1'] as Dict;
+    expect(el.tag).toBe(49);
+    expect(extractRichText(rt)).toBe(md);
+    const content = toBinary(
+      protoType('PostContent'),
+      create(protoType('PostContent'), { title: '周报', richText: rt } as Record<string, unknown>),
+    );
+    expect(decodeMessageContent(2, content)[0]).toBe(`[富文本] 周报\n${md}`);
+  });
+});
