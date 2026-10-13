@@ -245,3 +245,29 @@ describe('按 id 取消息与话题', () => {
     expect(await c.threadMessages('r1')).toEqual([]);
   });
 });
+
+describe('推送里的撤回与编辑', () => {
+  test('同一条消息以撤回 / 编辑状态重推时带上标记，普通消息不带', async () => {
+    const { decodePushMessages } = await import('../src/proto/decoders.js');
+    const got = decodePushMessages(
+      pushFrame([
+        entity('7000000000000000001', { status: 1 }),
+        entity('7000000000000000002', { status: 2, content: new Uint8Array() }),
+        entity('7000000000000000003', { status: 3 }),
+        entity('7000000000000000004', { status: 1, editVersion: 2 }),
+        entity('7000000000000000005', { isRemoved: true }),
+      ]),
+    );
+    const flags = Object.fromEntries(
+      got.map((m) => [m.msg_id.slice(-1), [m.recalled ?? false, m.edited ?? false]]),
+    );
+    expect(flags).toEqual({
+      '1': [false, false],
+      '2': [true, false],
+      '3': [false, true],
+      '4': [false, true],
+      '5': [true, false],
+    });
+    expect('recalled' in (got.find((m) => m.msg_id.endsWith('1')) as object)).toBe(false);
+  });
+});

@@ -391,6 +391,8 @@ message entities {
         optional bool isSpecialFocus = 56;
         optional bool isIncludeDocUrl = 58;
         optional int64 cipherId = 59;
+        optional int32 editVersion = 66;
+        optional int64 editTimeMs = 67;
         enum Type {
             UNKNOWN = 0;
             POST = 2;

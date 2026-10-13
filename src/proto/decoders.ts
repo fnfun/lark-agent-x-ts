@@ -60,7 +60,15 @@ export interface LarkMessage {
   create_time: number | null;
   content: string;
   content_data: Dict | null;
+  /** 已被撤回（推送里同一条消息以撤回状态重推）；只在为 true 时出现。 */
+  recalled?: true;
+  /** 被编辑过（content 是编辑后的内容）；只在为 true 时出现。 */
+  edited?: true;
 }
+
+// entities.Message.Status
+const STATUS_DELETED = 2;
+const STATUS_MODIFIED = 3;
 
 export function enumToInt(value: unknown): number {
   if (typeof value === 'number') return value;
@@ -348,6 +356,9 @@ export function toLarkMessage(
     o.threadChat ?? false,
   );
   const position = num(v.position);
+  const status = enumToInt(v.status ?? 0);
+  const recalled = status === STATUS_DELETED || v.isRemoved === true;
+  const edited = !recalled && (status === STATUS_MODIFIED || Number(v.editVersion ?? 0) > 0);
   return {
     msg_id: str(v.id),
     msg_type: msgType,
@@ -366,6 +377,8 @@ export function toLarkMessage(
     create_time: num(v.createTime),
     content: summary,
     content_data: data,
+    ...(recalled ? { recalled: true as const } : {}),
+    ...(edited ? { edited: true as const } : {}),
   };
 }
 

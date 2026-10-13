@@ -57,7 +57,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark read <chat_id> <msg_id...>` | 把消息标为已读（同客户端看过；话题回复按话题标记） |
 | `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
 | `lark self-chat` | 打印与自己的会话 chat_id |
-| `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复） |
+| `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库 |
 | `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
 | `lark history <chat_id>` | 拉历史消息（`--save` 入库） |

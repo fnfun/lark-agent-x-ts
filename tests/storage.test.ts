@@ -161,6 +161,31 @@ for (const [name, setup] of backends) {
       expect(await st.recentAnchors('7200000000000000001', 1)).toEqual(['r2']);
     });
 
+    test('撤回与编辑：只更新本地已有的消息', async () => {
+      await st.saveMessage(msg({ msg_id: 'm1' }));
+      await st.saveMessage(msg({ msg_id: 'm2' }));
+      expect(await st.markRecalled('m1', '7200000000000000001')).toBe(true);
+      expect(await st.markRecalled('m1', '7200000000000000001')).toBe(false);
+      expect(await st.markRecalled('m9', '7200000000000000001')).toBe(false);
+      const edited = msg({
+        msg_id: 'm2',
+        content: '月报导出能按部门和月份筛选吗',
+        content_data: { text: 'y' },
+      });
+      expect(await st.reviseMessage(edited)).toBe(true);
+      expect(await st.reviseMessage(edited)).toBe(false);
+      expect(await st.reviseMessage(msg({ msg_id: 'm9' }))).toBe(false);
+      const rows = await st.getMessages('7200000000000000001');
+      expect(
+        rows
+          .map((r) => [r.msg_id, r.content, r.content_data])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      ).toEqual([
+        ['m1', '[已撤回]', ''],
+        ['m2', '月报导出能按部门和月份筛选吗', '{"text": "y"}'],
+      ]);
+    });
+
     test('会话名与 agent 会话', async () => {
       await st.updateChatName('c1', '群一', 2);
       await st.updateChatName('c1', '群一改名', 2);

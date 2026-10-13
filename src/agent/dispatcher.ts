@@ -23,6 +23,8 @@ export interface AgentMessage extends LarkMessage {
   _chat_name?: string;
   _sender_name?: string;
   _quote?: QuotedMessage;
+  /** 对方编辑了一条已经交给 agent 处理过的消息，这是编辑后的内容。 */
+  _edited?: boolean;
 }
 
 export type ReplyFn = (chatId: string, text: string, rootId?: string) => Promise<unknown>;
@@ -58,6 +60,7 @@ export function buildXmlMessage(m: AgentMessage): string {
     `  <sender id=${quoteAttr(String(m.from_id))} name=${quoteAttr(m._sender_name || '')}/>`,
   );
   if (m.at_me) lines.push('  <at_me>true</at_me>');
+  if (m._edited) lines.push('  <edited>true</edited>');
   if (m._quote)
     lines.push(
       `  <quote id=${quoteAttr(m._quote.id)} sender_id=${quoteAttr(m._quote.sender_id)} sender_name=${quoteAttr(m._quote.sender_name)}>${xmlEscape(m._quote.content)}</quote>`,
@@ -174,6 +177,38 @@ export class AgentDispatcher {
       this.workers.set(key, worker);
     }
     worker.push(item);
+  }
+
+  /** 对方撤回了消息：还在排队的那条不再交给 agent。返回撤下的条数。 */
+  withdraw(msgId: string): number {
+    let n = 0;
+    for (const w of this.workers.values())
+      for (let i = w.queue.length - 1; i >= 0; i--)
+        if (w.queue[i]?.msg_id === msgId) {
+          w.queue.splice(i, 1);
+          n++;
+        }
+    return n;
+  }
+
+  /**
+   * 对方编辑了消息：还在排队的直接换成新内容；已经处理过的作为一条新消息再交给 agent，并标明是编辑后的内容。
+   * 同样经过触发规则筛选。
+   */
+  async revise(msg: LarkMessage, chatName = '', senderName = '', myUserId = ''): Promise<void> {
+    if (!this.shouldHandle(msg, myUserId)) return;
+    for (const w of this.workers.values()) {
+      const queued = w.queue.find((m) => m.msg_id === msg.msg_id);
+      if (queued) {
+        queued.content = msg.content;
+        queued.content_data = msg.content_data;
+        return;
+      }
+    }
+    const worker =
+      this.workers.get(this.sessionKeyOf(msg)) ?? new SessionWorker(this, this.sessionKeyOf(msg));
+    this.workers.set(this.sessionKeyOf(msg), worker);
+    worker.push({ ...msg, _chat_name: chatName, _sender_name: senderName, _edited: true });
   }
 
   /** `/clear`、`/stop`（可跟在触发前缀之后）；返回 [命令, 余下内容]，不是命令为 [null, null]。 */
