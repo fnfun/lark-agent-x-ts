@@ -1,7 +1,25 @@
+# 依赖与构建产物
 node_modules/
 dist/
-.env
-*.log
+lib/
+*.tsbuildinfo
+coverage/
+
+# 协议资产管线的中间产物
 scripts/proto-pipeline/work/
 scripts/proto-pipeline/out/
-lib/
+
+# 本地数据：LARKX_HOME 指到仓库内时，凭证、登录二维码与消息库不能进版本库
+credentials.json
+login_qr.png
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# 环境变量与本机文件
+.env
+.env.*
+*.log
+.DS_Store
+.claude/settings.local.json
