@@ -2,9 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { SQL } from 'bun';
 import { loadConfig } from '../config.js';
-import type { LarkMessage } from '../proto/decoders.js';
-import { pyDumps } from '../pyjson.js';
-import { head } from '../text.js';
+import { contentDataJson, type LarkMessage } from '../proto/decoders.js';
 
 /**
  * 本地存储（与原项目 SQLAlchemy 模型同表同列，Python 版写下的库可以直接沿用）：
@@ -91,10 +89,6 @@ function normalizeRow<T>(row: T): T {
 }
 
 const rows = <T>(result: unknown): T[] => (result as T[]).map(normalizeRow);
-
-/** 入库时 content_data 里的原始字节（内联缩略图等）换成占位，避免撑爆长度、截出非法 JSON。 */
-const jsonDefault = (o: unknown): unknown =>
-  o instanceof Uint8Array ? `<${o.length} bytes>` : String(o);
 
 const SCHEMA: Record<Dialect, string[]> = {
   sqlite: [
@@ -247,10 +241,7 @@ export class Storage {
       msg_type: msg.msg_type ?? 0,
       msg_type_name: msg.msg_type_name ?? '',
       content: msg.content || '',
-      content_data:
-        msg.content_data === null || msg.content_data === undefined
-          ? ''
-          : head(pyDumps(msg.content_data, { fallback: jsonDefault }), 20000),
+      content_data: contentDataJson(msg.content_data),
       position: msg.position || 0,
       create_time: msg.create_time || 0,
       direction: o.direction ?? 'in',

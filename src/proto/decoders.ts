@@ -1,5 +1,5 @@
 import { fromBinary } from '@bufbuild/protobuf';
-import { floatRepr, PyFloat } from '../pyjson.js';
+import { floatRepr, PyFloat, pyDumps } from '../pyjson.js';
 import { head } from '../text.js';
 import { type Dict, toDict } from './dict.js';
 import { protoEnum, protoType } from './registry.js';
@@ -378,4 +378,15 @@ export function decodePushMessages(raw: Uint8Array): LarkMessage[] {
   return Object.entries((pmr.messages as Record<string, Dict> | undefined) ?? {}).map(([k, v]) =>
     toLarkMessage(v, { atMe: Boolean(atMe[str(v.id)] || atMe[k]) }),
   );
+}
+
+/**
+ * content_data 的入库格式（messages.db 的 content_data 列）：Python `json.dumps(ensure_ascii=False)` 的写法，
+ * 原始字节（内联缩略图等）换成 `<n bytes>` 占位，截断到 2 万个字符；无内容时为空串。
+ */
+export function contentDataJson(data: Dict | null | undefined): string {
+  if (data === null || data === undefined) return '';
+  const fallback = (o: unknown): unknown =>
+    o instanceof Uint8Array ? `<${o.length} bytes>` : String(o);
+  return head(pyDumps(data, { fallback }), 20000);
 }
