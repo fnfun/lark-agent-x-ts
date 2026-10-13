@@ -694,6 +694,22 @@ export class LarkClient {
     return [...members.values()].slice(0, max);
   }
 
+  /**
+   * 把一条消息转发到这些会话（原样转发，接收方看到"转发自"），返回会话 id → 新消息 id；转发失败的会话不在结果里。
+   * 每个目标带一个消息 cid，服务端据此去重，同一次调用里的重试不会发重。
+   */
+  async forwardMessage(messageId: string, chatIds: string[]): Promise<Map<string, string>> {
+    const resp = await this.api('messages.PutTransmitMessageRequest', {
+      chatIds,
+      messageId,
+      cids: Object.fromEntries(chatIds.map((id) => [id, requestCid()])),
+    });
+    const out = new Map<string, string>();
+    for (const [chatId, m] of Object.entries((resp.messages ?? {}) as Record<string, Dict>))
+      if (m.id) out.set(chatId, String(m.id));
+    return out;
+  }
+
   /** 撤回一条消息（自己发的；群管理员也可撤回群里别人的）。服务端没有确认时抛错。 */
   async recallMessage(msgId: string): Promise<void> {
     const resp = await this.api('messages.DeleteMessageRequest', { id: msgId });
