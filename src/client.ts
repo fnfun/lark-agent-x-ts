@@ -161,6 +161,20 @@ export interface FlagItem {
   message: LarkMessage | null;
 }
 
+/** 会话里被 Pin 的一条消息。 */
+export interface PinnedMessage {
+  pinId: string;
+  messageId: string;
+  /** Pin 的人。 */
+  pinnedBy: string;
+  /** Pin 的时间（毫秒）。 */
+  pinnedAt: number;
+  message: LarkMessage | null;
+}
+
+// feed.Shortcut.Type.CHAT
+const SHORTCUT_CHAT = 1;
+
 // feed.FlagItem.FlagType 与 FeedCard.Type.CHAT
 const FLAG_FEED = 1;
 const FLAG_MESSAGE = 2;
@@ -754,6 +768,79 @@ export class LarkClient {
       ...(o.name !== undefined ? { name: o.name } : {}),
       ...(o.description !== undefined ? { description: o.description } : {}),
       updateFields: fields,
+    });
+  }
+
+  /** Pin 一条消息到会话（会话成员都看得到），返回 pin id。 */
+  async pinMessage(chatId: string, messageId: string): Promise<string> {
+    const resp = await this.api('pin.PutPinRequest', { chatId, messageId });
+    const id = (resp.pin as Dict | undefined)?.id;
+    if (id === undefined) throw new Error('Pin 失败: 响应里没有 pin id');
+    return String(id);
+  }
+
+  /** 取消 Pin；消息没被 Pin 时返回 false。 */
+  async unpinMessage(chatId: string, messageId: string): Promise<boolean> {
+    const resp = await this.api('pin.PullPinsByMessageIDsRequest', { messageIds: [messageId] });
+    const pin = Object.values((resp.pins ?? {}) as Record<string, Dict>).find(
+      (p) => String(p.messageId) === messageId && !int(p.deletedTime, 0),
+    );
+    if (!pin) return false;
+    await this.api('pin.DeletePinRequest', { id: String(pin.id), chatId });
+    return true;
+  }
+
+  /** 会话里被 Pin 的消息（最多 max 条），带上消息本身，按 Pin 时间从新到旧。 */
+  async chatPins(chatId: string, max = 100): Promise<PinnedMessage[]> {
+    const out: PinnedMessage[] = [];
+    let cursor: bigint | undefined;
+    while (out.length < max) {
+      const resp = await this.api('pin.PullChatPinsRequest', {
+        chatId,
+        count: Math.min(50, max - out.length),
+        withMessages: true,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      const msgs = (resp.pinedMessages ?? {}) as Record<string, Dict>;
+      for (const p of (resp.pins ?? []) as Dict[]) {
+        const v = msgs[String(p.messageId)];
+        out.push({
+          pinId: String(p.id),
+          messageId: String(p.messageId),
+          pinnedBy: String(p.chatterId ?? ''),
+          pinnedAt: int(p.createTime, 0),
+          message: v
+            ? toLarkMessage(v, { selfId: this.auth.userId, fallbackChatId: chatId })
+            : null,
+        });
+      }
+      const next = resp.nextCursor as bigint | undefined;
+      if (!resp.hasMore || !next || next === cursor) break;
+      cursor = next;
+    }
+    return out.sort((a, b) => b.pinnedAt - a.pinnedAt).slice(0, max);
+  }
+
+  /** 会话列表里置顶的会话（chat_id），按置顶顺序。 */
+  async shortcuts(): Promise<string[]> {
+    const resp = await this.api('feed.PullShortcutsRequest', { position: 0, count: 200 });
+    return ((resp.shortcuts ?? []) as Dict[])
+      .filter((x) => int(x.type, 0) === SHORTCUT_CHAT)
+      .sort((a, b) => int(a.position, 0) - int(b.position, 0))
+      .map((x) => String(x.id));
+  }
+
+  /** 在会话列表里置顶这些会话（排在已置顶的之后）。只影响自己的会话列表。 */
+  async addShortcuts(chatIds: string[]): Promise<void> {
+    await this.api('feed.PutShortcutsRequest', {
+      shortcuts: chatIds.map((id, i) => ({ id, type: SHORTCUT_CHAT, position: i })),
+    });
+  }
+
+  /** 取消置顶。 */
+  async removeShortcuts(chatIds: string[]): Promise<void> {
+    await this.api('feed.DeleteShortcutsRequest', {
+      shortcuts: chatIds.map((id) => ({ id, type: SHORTCUT_CHAT })),
     });
   }
 

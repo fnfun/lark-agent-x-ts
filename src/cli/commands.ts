@@ -368,6 +368,79 @@ const group: Command = {
   },
 };
 
+const pin: Command = {
+  name: 'pin',
+  help: 'Pin 一条消息到会话(会话成员都看得到);--remove 取消 Pin',
+  positionals: [{ name: 'chat_id' }, { name: 'msg_id' }],
+  options: [{ name: 'remove', kind: 'flag', help: '取消 Pin' }],
+  async run(a) {
+    const c = await client();
+    const chatId = String(a.chat_id);
+    const msgId = String(a.msg_id);
+    try {
+      if (a.remove) {
+        if (!(await c.unpinMessage(chatId, msgId))) {
+          err(`消息 ${msgId} 没有被 Pin`);
+          return 1;
+        }
+        out(`已取消 Pin msg_id=${msgId}`);
+      } else out(`已 Pin msg_id=${msgId} pin_id=${await c.pinMessage(chatId, msgId)}`);
+      return 0;
+    } catch (e) {
+      err(`Pin 操作失败: ${errorText(e)}`);
+      return 1;
+    }
+  },
+};
+
+const pins: Command = {
+  name: 'pins',
+  help: '列出会话里被 Pin 的消息',
+  positionals: [{ name: 'chat_id' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const list = await (await client()).chatPins(String(a.chat_id));
+    if (a.json)
+      printJson(
+        list.map(({ message, ...p }) => {
+          if (!message) return { ...p, message: null };
+          const { content_data: _, ...rest } = message;
+          return { ...p, message: rest };
+        }),
+      );
+    else
+      for (const p of list)
+        out(
+          `${p.messageId} [${shortTime(Math.floor(p.pinnedAt / 1000))}] ${p.message ? `${p.message.from_id}: ${preview(p.message.content || '', 100)}` : ''}`,
+        );
+    return 0;
+  },
+};
+
+const shortcut: Command = {
+  name: 'shortcut',
+  help: '在会话列表里置顶会话(只影响自己);--remove 取消置顶;不带参数列出已置顶的',
+  positionals: [{ name: 'chat_ids', nargs: '?', help: '会话 id(逗号分隔)' }],
+  options: [{ name: 'remove', kind: 'flag', help: '取消置顶' }],
+  async run(a) {
+    const c = await client();
+    const ids = list(a.chat_ids);
+    if (!ids?.length) {
+      for (const id of await c.shortcuts()) out(id);
+      return 0;
+    }
+    try {
+      if (a.remove) await c.removeShortcuts(ids);
+      else await c.addShortcuts(ids);
+    } catch (e) {
+      err(`置顶操作失败: ${errorText(e)}`);
+      return 1;
+    }
+    out(`已${a.remove ? '取消置顶' : '置顶'} ${ids.length} 个会话`);
+    return 0;
+  },
+};
+
 const flag: Command = {
   name: 'flag',
   help: '标记消息(留给自己稍后处理);--chat 标记会话,--remove 取消标记',
@@ -1280,6 +1353,9 @@ export const COMMANDS: Command[] = [
   mediaCommand('file'),
   forward,
   group,
+  pin,
+  pins,
+  shortcut,
   flag,
   flags,
   recall,

@@ -226,3 +226,84 @@ describe('标记', () => {
     ]);
   });
 });
+
+describe('Pin 与会话置顶', () => {
+  test('Pin、按消息找到 pin id 后取消、列出 Pin（带消息）', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      switch (type) {
+        case 'pin.PutPinRequest':
+          return { pin: { id: 9n } };
+        case 'pin.PullPinsByMessageIDsRequest':
+          return {
+            pins: {
+              '1': { id: 8n, messageId: 1n, deletedTime: 5n },
+              '2': { id: 9n, messageId: 7000000000000000001n },
+            },
+          };
+        case 'pin.PullChatPinsRequest':
+          return {
+            pins: [
+              { id: 9n, messageId: 7000000000000000001n, chatterId: 71n, createTime: 100n },
+              { id: 10n, messageId: 7000000000000000002n, chatterId: 72n, createTime: 200n },
+            ],
+            pinedMessages: {
+              '7000000000000000001': {
+                id: '7000000000000000001',
+                type: 4,
+                fromId: 'u1',
+                chatId: 'g1',
+              },
+            },
+            hasMore: false,
+          };
+      }
+      return {};
+    };
+    expect(await c.pinMessage('g1', '7000000000000000001')).toBe('9');
+    expect(await c.unpinMessage('g1', '7000000000000000001')).toBe(true);
+    expect(reqs.at(-1)).toEqual(['pin.DeletePinRequest', { id: '9', chatId: 'g1' }]);
+    expect(await c.unpinMessage('g1', '7000000000000000003')).toBe(false);
+    const pins = await c.chatPins('g1');
+    expect(
+      pins.map((p) => [p.messageId, p.pinnedBy, p.pinnedAt, p.message?.msg_id ?? null]),
+    ).toEqual([
+      ['7000000000000000002', '72', 200, null],
+      ['7000000000000000001', '71', 100, '7000000000000000001'],
+    ]);
+  });
+
+  test('会话置顶：只取会话类型，按位置排序；增删带上类型', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      return type === 'feed.PullShortcutsRequest'
+        ? {
+            shortcuts: [
+              { id: 'g2', type: 1, position: 2 },
+              { id: 'd1', type: 3, position: 0 },
+              { id: 'g1', type: 1, position: 1 },
+            ],
+          }
+        : {};
+    };
+    expect(await c.shortcuts()).toEqual(['g1', 'g2']);
+    await c.addShortcuts(['g3', 'g4']);
+    await c.removeShortcuts(['g3']);
+    expect(reqs.slice(1)).toEqual([
+      [
+        'feed.PutShortcutsRequest',
+        {
+          shortcuts: [
+            { id: 'g3', type: 1, position: 0 },
+            { id: 'g4', type: 1, position: 1 },
+          ],
+        },
+      ],
+      ['feed.DeleteShortcutsRequest', { shortcuts: [{ id: 'g3', type: 1 }] }],
+    ]);
+  });
+});

@@ -11,6 +11,7 @@ export {
   type MessageHit,
   type MessageReactions,
   type MessageSearchOptions,
+  type PinnedMessage,
   type ReactionHandler,
   type ReadState,
   type RecentChat,
