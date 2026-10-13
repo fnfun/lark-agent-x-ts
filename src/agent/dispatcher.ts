@@ -25,6 +25,8 @@ export interface AgentMessage extends LarkMessage {
   _quote?: QuotedMessage;
   /** 对方编辑了一条已经交给 agent 处理过的消息，这是编辑后的内容。 */
   _edited?: boolean;
+  /** 这不是一条消息，而是对方对 _quote 那条（我发的）消息加了 / 取消了表情。 */
+  _reaction?: { type: string; cancelled: boolean };
 }
 
 export type ReplyFn = (chatId: string, text: string, rootId?: string) => Promise<unknown>;
@@ -61,6 +63,10 @@ export function buildXmlMessage(m: AgentMessage): string {
   );
   if (m.at_me) lines.push('  <at_me>true</at_me>');
   if (m._edited) lines.push('  <edited>true</edited>');
+  if (m._reaction)
+    lines.push(
+      `  <reaction type=${quoteAttr(m._reaction.type)} cancelled=${quoteAttr(String(m._reaction.cancelled))}/>`,
+    );
   if (m._quote)
     lines.push(
       `  <quote id=${quoteAttr(m._quote.id)} sender_id=${quoteAttr(m._quote.sender_id)} sender_name=${quoteAttr(m._quote.sender_name)}>${xmlEscape(m._quote.content)}</quote>`,
@@ -104,12 +110,12 @@ class SessionWorker {
 
 /** 数字人分发：按触发规则筛消息、按会话边界排队，支持 /clear（开新会话）与 /stop（清空排队）。 */
 export class AgentDispatcher {
-  readonly cfg: Config = loadConfig();
   private readonly workers = new Map<string, SessionWorker>();
 
   constructor(
     private readonly backend: AgentBackend,
     private readonly replyFn: ReplyFn,
+    readonly cfg: Config = loadConfig(),
   ) {}
 
   sessionKeyOf(msg: LarkMessage): string {
@@ -171,12 +177,7 @@ export class AgentDispatcher {
       ...(quote ? { _quote: quote } : {}),
     };
     if (cmd) item.content = remainder ?? '';
-    let worker = this.workers.get(key);
-    if (!worker) {
-      worker = new SessionWorker(this, key);
-      this.workers.set(key, worker);
-    }
-    worker.push(item);
+    this.enqueue(item);
   }
 
   /** 对方撤回了消息：还在排队的那条不再交给 agent。返回撤下的条数。 */
@@ -205,10 +206,55 @@ export class AgentDispatcher {
         return;
       }
     }
-    const worker =
-      this.workers.get(this.sessionKeyOf(msg)) ?? new SessionWorker(this, this.sessionKeyOf(msg));
-    this.workers.set(this.sessionKeyOf(msg), worker);
-    worker.push({ ...msg, _chat_name: chatName, _sender_name: senderName, _edited: true });
+    this.enqueue({ ...msg, _chat_name: chatName, _sender_name: senderName, _edited: true });
+  }
+
+  /**
+   * 对方对我发的消息加 / 取消了表情：作为一条事件交给 agent（被加表情的消息放在 quote 里）。
+   * 会话、发送人的筛选照常生效；前缀、关键词、群里只认 @我 这几条针对消息内容，表情事件不受它们限制。
+   */
+  async submitReaction(
+    ev: { message_id: string; reaction_type: string; user_id: string; cancelled: boolean },
+    target: LarkMessage,
+    quote: QuotedMessage,
+    chatName = '',
+    senderName = '',
+    myUserId = '',
+  ): Promise<void> {
+    const msg: LarkMessage = {
+      ...target,
+      msg_id: `reaction:${ev.message_id}:${ev.reaction_type}:${ev.user_id}`,
+      from_id: ev.user_id,
+      at_me: true,
+      content: '',
+      content_data: null,
+      parent_id: ev.message_id,
+    };
+    const t = { ...this.cfg.triggers, prefix: '', keywords: [], group_at_only: false };
+    if (
+      !new AgentDispatcher(this.backend, this.replyFn, { ...this.cfg, triggers: t }).shouldHandle(
+        msg,
+        myUserId,
+      )
+    )
+      return;
+    this.enqueue({
+      ...msg,
+      _chat_name: chatName,
+      _sender_name: senderName,
+      _quote: quote,
+      _reaction: { type: ev.reaction_type, cancelled: ev.cancelled },
+    });
+  }
+
+  private enqueue(item: AgentMessage): void {
+    const key = this.sessionKeyOf(item);
+    let worker = this.workers.get(key);
+    if (!worker) {
+      worker = new SessionWorker(this, key);
+      this.workers.set(key, worker);
+    }
+    worker.push(item);
   }
 
   /** `/clear`、`/stop`（可跟在触发前缀之后）；返回 [命令, 余下内容]，不是命令为 [null, null]。 */

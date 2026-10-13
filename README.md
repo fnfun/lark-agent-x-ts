@@ -58,7 +58,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark read <chat_id> <msg_id...>` | 把消息标为已读（同客户端看过；话题回复按话题标记） |
 | `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
 | `lark self-chat` | 打印与自己的会话 chat_id |
-| `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库 |
+| `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库；表情变化记日志 |
 | `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
 | `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`） |
@@ -85,6 +85,7 @@ LARKX_CONTEXT_SCOPE=anchor   # agent 上下文边界: anchor(会话+话题) | ch
 LARKX_AGENT_BACKEND=claude   # claude | none
 LARKX_SYSTEM_PROMPT=         # 数字人系统提示词，留空用内置默认
 LARKX_MARK_READ=true         # 收到消息自动标已读；false 时由调用方在需要时 `lark read`
+LARKX_AGENT_REACTIONS=false  # 别人对我的消息加/取消表情时交给数字人（如把点赞当作同意执行）
 LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _KEYWORDS / _GROUP_AT_ONLY
 ```
 
@@ -103,7 +104,7 @@ await client.sendMsg('你好', '<chat_id>');
 await client.sendMessage('<chat_id>', { markdown: '## 结论\n- 周五上线' }); // Markdown 富文本
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
-await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
+await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content), undefined, undefined, async (ev) => console.log(ev.message_id, ev.reaction_type)); // 第 4 个参数收表情变化
 await client.readStates('<chat_id>', ['<msg_id>']); // 谁读了、谁没读；myReadStates 看自己是否读过
 await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMessage、removeReaction、reactions
 const names = await client.userNames(['<user_id>']); // id → 名字（批量、缓存）；chatMembers(chatId) 列群成员

@@ -9,7 +9,12 @@ import { dataDir, loadConfig } from '../config.js';
 import { getLogger } from '../log.js';
 import { download, extractResourceKey, messageResourceUrl } from '../media.js';
 import type { RichBlock } from '../proto/builders.js';
-import { type LarkMessage, MSG_TYPE_NAMES } from '../proto/decoders.js';
+import {
+  CHAT_TYPE_NAMES,
+  type LarkMessage,
+  MSG_TYPE_NAMES,
+  type ReactionEvent,
+} from '../proto/decoders.js';
 import { type Dict, parseJsonKeepingBigInts } from '../proto/dict.js';
 import { getRegion, REGIONS, type Region, urls } from '../region.js';
 import { Storage } from '../storage/index.js';
@@ -1054,7 +1059,59 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
       await dispatcher.submit(msg, chatName, senderName, la.userId, quote);
     }
   };
+  /** 表情变化：记日志；开了 LARKX_AGENT_REACTIONS 时，别人对我的消息加 / 取消表情交给数字人。 */
+  const onReaction = async (ev: ReactionEvent) => {
+    if (ev.user_id === la.userId) return;
+    const row = await st.findMessages(ev.message_id);
+    let target: LarkMessage | undefined;
+    if (row[0]) {
+      const r = row[0];
+      target = {
+        msg_id: r.msg_id,
+        msg_type: r.msg_type,
+        msg_type_name: r.msg_type_name,
+        from_id: r.sender_id,
+        chat_id: r.chat_id,
+        chat_type: r.chat_type,
+        chat_type_name: CHAT_TYPE_NAMES[r.chat_type] ?? '',
+        scope: r.scope as 'chat' | 'topic',
+        anchor: r.anchor,
+        at_me: false,
+        root_id: r.root_id,
+        parent_id: r.parent_id,
+        cid: '',
+        position: r.position,
+        create_time: r.create_time,
+        content: r.content,
+        content_data: null,
+      };
+    } else [target] = await c.getMessages([ev.message_id]).catch(() => []);
+    if (!target) return;
+    const chatId = target.chat_id;
+    const key = `${ev.user_id}\u0000${chatId}`;
+    if (!names.has(key)) names.set(key, await c.getUserName(ev.user_id, chatId));
+    const senderName = names.get(key) || '';
+    const chatName = names.get(chatId) || (await st.getChatName(chatId));
+    logger.info(
+      `[${chatName || chatId}] ${senderName || ev.user_id} ${ev.cancelled ? '取消了' : '加了'}表情 ${ev.reaction_type}: ${preview(target.content || '', 40)}`,
+    );
+    if (dispatcher && cfg.agent_reactions && target.from_id === la.userId)
+      await dispatcher.submitReaction(
+        ev,
+        target,
+        {
+          id: target.msg_id,
+          sender_id: target.from_id,
+          sender_name: '我',
+          content: target.content,
+        },
+        chatName,
+        senderName,
+        la.userId,
+      );
+  };
   await keepListening(c, onMessage, {
+    onReaction,
     missed: (since) =>
       c.missedMessages(since, {
         localPosition: (chatId) => st.lastPosition(chatId),
