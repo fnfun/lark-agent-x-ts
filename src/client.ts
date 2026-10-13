@@ -21,6 +21,7 @@ import {
 } from './proto/builders.js';
 import {
   decodePushMessages,
+  enumToInt,
   isThreadChat,
   type LarkMessage,
   parseWsFrame,
@@ -69,6 +70,23 @@ export interface RecentChat {
   /** 会话信息（与 getChatInfo 同为 entities.Chat）；服务端没带时为 null。 */
   chat: Dict | null;
 }
+
+/** 补收断线期间的消息时，本地已有记录的查询方式（都可省略，省略时按本地什么都没有处理）。 */
+export interface MissedOptions {
+  /** 本地已有的该会话最大 position，没有记录时为 -1（会话 position 从 0 起）；只从它之后拉，减少重复。 */
+  localPosition?: (chatId: string) => Promise<number>;
+  /** 本地见过的该会话话题 id：普通群的话题回复不占会话 position，只能按话题去查。 */
+  knownThreads?: (chatId: string) => Promise<string[]>;
+  /** 每个会话（或话题）最多往回看多少条，默认 200。 */
+  maxPerChat?: number;
+}
+
+const CHANNEL_CHAT = 1;
+/** 话题群一次往回看的话题数。 */
+const RECENT_THREADS = 20;
+
+const int = (v: unknown, dflt = -1): number =>
+  v === undefined || v === null ? dflt : Number(v as number | bigint);
 
 /** 网关出错时响应体仍是 Packet，错误文本放在 sid 字段里；解不出来时为空串。 */
 async function gatewayReason(res: Response): Promise<string> {
@@ -541,6 +559,93 @@ export class LarkClient {
       cursor = next;
     }
     return out;
+  }
+
+  /**
+   * 一个话题里的消息（根消息之后的回复），按话题内顺序；只看最近 limit 条，话题不存在时为空。
+   * 话题内 position 从 0 起（第一条回复）；请求 -1 会返回根消息，但响应按根消息未设置的 threadPosition 记在 0 上，与第一条回复冲突，所以不请求它。
+   */
+  async threadReplies(threadId: string, limit = 200): Promise<LarkMessage[]> {
+    const info = await this.api('thread.PullThreadsByIDsRequest', { threadIds: [threadId] });
+    const thread = ((info.threads ?? {}) as Record<string, Dict>)[threadId];
+    const last = int(thread?.lastMessagePosition);
+    if (last < 0) return [];
+    const first = Math.max(0, last - limit + 1);
+    const positions = Array.from({ length: last - first + 1 }, (_, i) => first + i);
+    const resp = await this.api('thread.PullThreadMessagesByPositionsRequest', {
+      threadId,
+      positions,
+    });
+    return Object.entries((resp.messages ?? {}) as Record<string, Dict>)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([, v]) => toLarkMessage(v, {}));
+  }
+
+  /**
+   * since（毫秒）之后到达、但没经过长连接收到的消息：用于断线重连后补收。按创建时间升序，可能与已收到的重复（调用方按 msg_id 去重）。
+   * 只看收件箱里 since 之后有变动的会话：普通会话拉本地 position 之后的会话消息，再查本地见过的和新消息里带回复的话题；
+   * 话题群按话题位置看最近的话题，取 since 之后更新过的话题里的根消息与回复。
+   */
+  async missedMessages(since: number, o: MissedOptions = {}): Promise<LarkMessage[]> {
+    const max = o.maxPerChat ?? 200;
+    const sinceSec = Math.floor(since / 1000);
+    const fresh = (m: LarkMessage) => Boolean(m.from_id) && (m.create_time ?? 0) >= sinceSec;
+    const out = new Map<string, LarkMessage>();
+    const add = (msgs: LarkMessage[]) => {
+      for (const m of msgs) if (fresh(m)) out.set(m.msg_id, m);
+    };
+    const addThreads = async (ids: Iterable<string>) => {
+      const unique = [...new Set(ids)].filter(Boolean);
+      if (!unique.length) return;
+      const resp = await this.api('thread.PullThreadsByIDsRequest', { threadIds: unique });
+      for (const [id, t] of Object.entries((resp.threads ?? {}) as Record<string, Dict>))
+        if (int(t.updateTime, 0) >= sinceSec) add(await this.threadReplies(id, max));
+    };
+    for (const rc of await this.recentChats(since)) {
+      const chat = rc.chat ?? (await this.getChatInfo(rc.chatId));
+      if (!chat) continue;
+      if (isThreadChat(chat)) {
+        const lastThread = int(chat.lastThreadPosition);
+        if (lastThread < 0) continue;
+        const first = Math.max(0, lastThread - RECENT_THREADS + 1);
+        const resp = await this.api('thread.PullThreadsByPositionsRequest', {
+          channelId: rc.chatId,
+          type: CHANNEL_CHAT,
+          positions: Array.from({ length: lastThread - first + 1 }, (_, i) => first + i),
+        });
+        const roots = (resp.rootMessages ?? {}) as Record<string, Dict>;
+        add(
+          Object.values(roots).map((v) =>
+            toLarkMessage(v, { threadChat: true, fallbackChatId: rc.chatId }),
+          ),
+        );
+        const updated = Object.values((resp.threads ?? {}) as Record<string, Dict>)
+          .filter((t) => int(t.updateTime, 0) >= sinceSec && int(t.lastMessagePosition) >= 0)
+          .map((t) => String(t.id));
+        for (const id of updated) add(await this.threadReplies(id, max));
+        continue;
+      }
+      const last = int(chat.lastMessagePosition);
+      const local = (await o.localPosition?.(rc.chatId)) ?? -1;
+      const first = Math.max(0, local + 1, last - max + 1);
+      const threads: string[] = [];
+      if (last >= first) {
+        const resp = await this.api('messages.PullMessagesByPositionsRequest', {
+          chatId: rc.chatId,
+          positions: Array.from({ length: last - first + 1 }, (_, i) => first + i),
+        });
+        for (const [pos, v] of Object.entries((resp.messages ?? {}) as Record<string, Dict>)) {
+          if (Number(v.replyCount ?? 0) > 0) threads.push(String(v.id));
+          add([toLarkMessage(v, { fallbackChatId: rc.chatId, fallbackPosition: Number(pos) })]);
+        }
+      }
+      if (enumToInt(chat.type ?? 0) !== 1)
+        await addThreads([...threads, ...((await o.knownThreads?.(rc.chatId)) ?? [])]);
+    }
+    return [...out.values()].sort(
+      (a, b) =>
+        (a.create_time ?? 0) - (b.create_time ?? 0) || (a.position ?? 0) - (b.position ?? 0),
+    );
   }
 
   /** 按 position 拉历史消息并解码；save 时逐条入库（单条失败忽略）。 */

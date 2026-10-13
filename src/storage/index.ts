@@ -338,6 +338,26 @@ export class Storage {
     return rows<MessageRow>(await this.sql`SELECT * FROM messages WHERE msg_id = ${msgId}`);
   }
 
+  /** 本地已有的该会话最大 position（chats.last_position）；没有记录时为 -1（会话 position 从 0 起，0 也是一条消息）。 */
+  async lastPosition(chatId: string): Promise<number> {
+    await this.init();
+    const [chat] = (await this
+      .sql`SELECT last_position FROM chats WHERE chat_id = ${chatId}`) as Pick<
+      ChatRow,
+      'last_position'
+    >[];
+    return chat?.last_position ? Number(chat.last_position) : -1;
+  }
+
+  /** 该会话里最近有消息的话题（anchor），按最近消息时间从新到旧。 */
+  async recentAnchors(chatId: string, limit = 20): Promise<string[]> {
+    await this.init();
+    const found = (await this.sql`SELECT anchor, MAX(create_time) AS t FROM messages
+      WHERE chat_id = ${chatId} AND scope = 'topic' AND anchor <> ''
+      GROUP BY anchor ORDER BY t DESC LIMIT ${limit}`) as { anchor: string }[];
+    return found.map((r) => r.anchor);
+  }
+
   async getChatName(chatId: string): Promise<string> {
     await this.init();
     const [chat] = (await this.sql`SELECT name FROM chats WHERE chat_id = ${chatId}`) as Pick<

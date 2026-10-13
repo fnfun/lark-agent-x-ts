@@ -1,0 +1,207 @@
+import { describe, expect, test } from 'bun:test';
+import { keepListening } from '../src/cli/listen-loop.js';
+import type { LarkMessage } from '../src/proto/decoders.js';
+import type { Dict } from '../src/proto/dict.js';
+import { Storage } from '../src/storage/index.js';
+import { entity, newClient, pushFrame } from './helpers.js';
+
+const T = 1_790_000_000; // 断线时刻（秒）
+const at = (dt: number) => BigInt(T + dt);
+
+describe('补收断线期间的消息', () => {
+  test('话题回复：按话题内 position 拉最近 limit 条，不请求根消息', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      if (type === 'thread.PullThreadsByIDsRequest')
+        return { threads: { r1: { id: 'r1', lastMessagePosition: 4 } } };
+      return {
+        messages: {
+          '4': entity('7000000000000000014', { rootId: 'r1', threadId: 'r1' }),
+          '3': entity('7000000000000000013', { rootId: 'r1', threadId: 'r1' }),
+        },
+      };
+    };
+    const got = await c.threadReplies('r1', 2);
+    expect(got.map((m) => [m.msg_id, m.scope, m.anchor])).toEqual([
+      ['7000000000000000013', 'topic', 'r1'],
+      ['7000000000000000014', 'topic', 'r1'],
+    ]);
+    expect(reqs[1]).toEqual([
+      'thread.PullThreadMessagesByPositionsRequest',
+      { threadId: 'r1', positions: [3, 4] },
+    ]);
+    c.api = async () => ({ threads: {} });
+    expect(await c.threadReplies('nope')).toEqual([]);
+  });
+
+  test('普通会话从本地 position 之后拉，话题群按话题拉，只留断线之后的消息', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    const card = (id: string) => ({ id, type: 1, updateTimeMs: at(30) * 1000n, rankTime: at(30) });
+    c.api = async (type, data) => {
+      const d = data as Dict;
+      reqs.push([String(type), d]);
+      switch (type) {
+        case 'feed.PullFeedCardsRequest':
+          return {
+            cards: [card('g1'), card('p1'), card('t1')],
+            chats: {
+              g1: { id: 'g1', type: 2, chatMode: 1, lastMessagePosition: 12 },
+              p1: { id: 'p1', type: 1, lastMessagePosition: 3 },
+              t1: { id: 't1', type: 2, chatMode: 3, lastThreadPosition: 1 },
+            },
+          };
+        case 'messages.PullMessagesByPositionsRequest':
+          if (d.chatId === 'g1')
+            return {
+              messages: {
+                '10': entity('7000000000000000010', { chatId: 'g1', createTime: at(-60) }),
+                '11': entity('7000000000000000011', {
+                  chatId: 'g1',
+                  createTime: at(3),
+                  replyCount: '1',
+                }),
+                '12': entity('7000000000000000012', { chatId: 'g1', createTime: at(9) }),
+              },
+            };
+          return {
+            messages: {
+              '3': entity('7000000000000000030', { chatId: 'p1', chatType: 1, createTime: at(1) }),
+            },
+          };
+        case 'thread.PullThreadsByIDsRequest': {
+          const all: Record<string, Dict> = {
+            '7000000000000000011': {
+              id: '7000000000000000011',
+              updateTime: at(4),
+              lastMessagePosition: 0,
+            },
+            r5: { id: 'r5', updateTime: at(5), lastMessagePosition: 0 },
+            r6: { id: 'r6', updateTime: at(-5), lastMessagePosition: 0 },
+            ta: { id: 'ta', updateTime: at(7), lastMessagePosition: 0 },
+          };
+          const ids = d.threadIds as string[];
+          return { threads: Object.fromEntries(ids.filter((i) => all[i]).map((i) => [i, all[i]])) };
+        }
+        case 'thread.PullThreadMessagesByPositionsRequest': {
+          const tid = String(d.threadId);
+          const ct = { '7000000000000000011': 4, r5: 5, ta: 7 }[tid] ?? -100;
+          const chatId = tid === 'ta' ? 't1' : 'g1';
+          return {
+            messages: {
+              '0': entity(`70000000000000001${ct}`, {
+                chatId,
+                rootId: tid,
+                threadId: tid,
+                createTime: at(ct),
+              }),
+            },
+          };
+        }
+        case 'thread.PullThreadsByPositionsRequest':
+          return {
+            threads: {
+              '0': { id: 'tb', updateTime: at(-30), lastMessagePosition: 0 },
+              '1': { id: 'ta', updateTime: at(7), lastMessagePosition: 0 },
+            },
+            rootMessages: {
+              ta: entity('7000000000000000020', { chatId: 't1', createTime: at(2) }),
+              tb: entity('7000000000000000021', { chatId: 't1', createTime: at(-30) }),
+            },
+          };
+      }
+      throw new Error(`未预期的请求 ${String(type)}`);
+    };
+    const known: string[] = [];
+    const got = await c.missedMessages(T * 1000, {
+      localPosition: async (chatId) => (chatId === 'g1' ? 9 : -1),
+      knownThreads: async (chatId) => {
+        known.push(chatId);
+        return ['r5', 'r6'];
+      },
+    });
+    expect(got.map((m) => [m.msg_id, m.chat_id, m.scope, m.anchor])).toEqual([
+      ['7000000000000000030', 'p1', 'chat', ''],
+      ['7000000000000000020', 't1', 'topic', '7000000000000000020'],
+      ['7000000000000000011', 'g1', 'chat', ''],
+      ['700000000000000014', 'g1', 'topic', '7000000000000000011'],
+      ['700000000000000015', 'g1', 'topic', 'r5'],
+      ['700000000000000017', 't1', 'topic', 'ta'],
+      ['7000000000000000012', 'g1', 'chat', ''],
+    ]);
+    const positions = reqs
+      .filter(([t]) => t === 'messages.PullMessagesByPositionsRequest')
+      .map(([, d]) => [d.chatId, d.positions]);
+    expect(positions).toEqual([
+      ['g1', [10, 11, 12]],
+      ['p1', [0, 1, 2, 3]],
+    ]);
+    // 单聊没有话题，不查本地话题
+    expect(known).toEqual(['g1']);
+    expect(reqs.find(([t]) => t === 'thread.PullThreadsByPositionsRequest')?.[1]).toEqual({
+      channelId: 't1',
+      type: 1,
+      positions: [0, 1],
+    });
+  });
+
+  test('断线重连后补收，已经收到的消息不会再交给 agent', async () => {
+    let conns = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return srv.upgrade(req) ? undefined : new Response('no', { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          conns++;
+          if (conns === 1) {
+            ws.send(pushFrame([entity('7000000000000000001', { position: 1 })]));
+            setTimeout(() => ws.close(4001, 'bye'), 50);
+          }
+        },
+        message() {},
+      },
+    });
+    const st = new Storage('sqlite:///:memory:');
+    try {
+      const c = newClient();
+      c.wsTiming = { openTimeoutMs: 500, heartbeatMs: 1000, idleTimeoutMs: 2000 };
+      c.buildWsUrl = async () => `ws://localhost:${server.port}`;
+      c.isThreadChat = async () => false;
+      const handled: string[] = [];
+      const sinces: number[] = [];
+      const abort = new AbortController();
+      const before = Date.now();
+      await keepListening(
+        c,
+        async (m: LarkMessage) => {
+          if (await st.saveMessage(m)) handled.push(m.msg_id);
+          if (handled.length === 2) abort.abort();
+        },
+        {
+          retryMs: 20,
+          signal: abort.signal,
+          missed: async (since) => {
+            sinces.push(since);
+            const { toLarkMessage } = await import('../src/proto/decoders.js');
+            return [
+              toLarkMessage(entity('7000000000000000001', { position: 1 }), {}),
+              toLarkMessage(entity('7000000000000000002', { position: 2 }), {}),
+            ];
+          },
+        },
+      );
+      expect(handled).toEqual(['7000000000000000001', '7000000000000000002']);
+      expect(conns).toBe(2);
+      expect(sinces).toHaveLength(1);
+      expect(sinces[0]).toBeLessThanOrEqual(Date.now() - 2000);
+      expect(sinces[0]).toBeGreaterThanOrEqual(before - 2000);
+    } finally {
+      await st.close();
+      server.stop(true);
+    }
+  });
+});
