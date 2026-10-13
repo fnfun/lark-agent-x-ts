@@ -111,31 +111,64 @@ export class LarkClient {
   }
 
   /**
-   * 连上消息长连接并持续接收，直到连接关闭（正常关闭时返回，异常时抛错）。
-   * 每个带 sid 的帧都回 ACK，每 30 秒一次应用层心跳；推送（cmd=6）里的消息按到达顺序串行交给 onMessage。
+   * 长连接计时：握手超时、心跳间隔、多久收不到任何帧视为断线。
+   * 服务端对每次心跳都回一帧（cmd=200），所以两个心跳周期都没收到东西就是连接已死。
+   */
+  wsTiming = { openTimeoutMs: 15_000, heartbeatMs: 30_000, idleTimeoutMs: 65_000 };
+
+  /**
+   * 连上消息长连接并持续接收，直到连接关闭（正常关闭或 signal 中止时返回，异常时抛错）。
+   * 每个带 sid 的帧都回 ACK，按 wsTiming 发应用层心跳；推送（cmd=6）里的消息按到达顺序串行交给 onMessage。
+   * 握手超时、心跳无回应都按异常断开处理，由调用方重连。
    */
   async connectWebsocket(onMessage: MessageHandler, signal?: AbortSignal): Promise<void> {
     const url = await this.buildWsUrl();
+    const { openTimeoutMs, heartbeatMs, idleTimeoutMs } = this.wsTiming;
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     let chain = Promise.resolve();
     await new Promise<void>((resolve, reject) => {
       let heartbeat: ReturnType<typeof setInterval> | undefined;
-      const onAbort = () => ws.close(1000, 'stopped');
+      let lastFrameAt = Date.now();
+      let settled = false;
+      // Node 的 WebSocket 握手失败时可能既不触发 error 也不触发 close，收尾不能只靠 close 事件
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(openTimer);
+        clearInterval(heartbeat);
+        signal?.removeEventListener('abort', onAbort);
+        if (ws.readyState !== WebSocket.CLOSED) {
+          if (err) ws.close();
+          else ws.close(1000, 'stopped');
+        }
+        if (err) reject(err);
+        else resolve();
+      };
+      const onAbort = () => finish();
+      const openTimer = setTimeout(
+        () => finish(new Error(`WS 握手超时(${openTimeoutMs}ms)`)),
+        openTimeoutMs,
+      );
+      if (signal?.aborted) return finish();
       signal?.addEventListener('abort', onAbort, { once: true });
       ws.addEventListener('open', () => {
+        clearTimeout(openTimer);
+        lastFrameAt = Date.now();
         logger.info('WS 已连接');
         heartbeat = setInterval(() => {
+          if (Date.now() - lastFrameAt > idleTimeoutMs)
+            return finish(new Error(`WS 心跳无回应: ${idleTimeoutMs}ms 内没有收到任何帧`));
           try {
             ws.send(LarkClient.wrapFrame(LarkClient.packet({ cmd: 4 })));
           } catch (err) {
-            logger.warning(`心跳停止: ${(err as Error).message}`);
-            clearInterval(heartbeat);
+            finish(new Error(`WS 心跳发送失败: ${(err as Error).message}`));
           }
-        }, 30_000);
+        }, heartbeatMs);
       });
       ws.addEventListener('message', (ev) => {
-        if (!(ev.data instanceof ArrayBuffer)) return;
+        if (settled || !(ev.data instanceof ArrayBuffer)) return;
+        lastFrameAt = Date.now();
         const raw = new Uint8Array(ev.data);
         try {
           const [, packet] = parseWsFrame(raw);
@@ -159,10 +192,8 @@ export class LarkClient {
         // 具体原因在随后的 close 事件里
       });
       ws.addEventListener('close', (ev) => {
-        clearInterval(heartbeat);
-        signal?.removeEventListener('abort', onAbort);
-        if (ev.code === 1000 || signal?.aborted) resolve();
-        else reject(new Error(`WS 连接关闭: code=${ev.code}${ev.reason ? ` ${ev.reason}` : ''}`));
+        if (ev.code === 1000 || signal?.aborted) finish();
+        else finish(new Error(`WS 连接关闭: code=${ev.code}${ev.reason ? ` ${ev.reason}` : ''}`));
       });
     });
     await chain;

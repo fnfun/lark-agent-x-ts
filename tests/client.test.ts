@@ -124,6 +124,69 @@ describe('网关客户端', () => {
   });
 });
 
+describe('长连接保活', () => {
+  const fast = { openTimeoutMs: 200, heartbeatMs: 50, idleTimeoutMs: 120 };
+
+  test('握手无响应时按超时失败，不会一直卡在连接中', async () => {
+    // 只接受 TCP 连接、从不回应握手
+    const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
+    try {
+      const c = newClient();
+      c.wsTiming = fast;
+      c.buildWsUrl = async () => `ws://127.0.0.1:${server.port}`;
+      await expect(c.connectWebsocket(async () => undefined)).rejects.toThrow('WS 握手超时(200ms)');
+      // 握手中途中止：立即返回
+      const abort = new AbortController();
+      const pending = c.connectWebsocket(async () => undefined, abort.signal);
+      setTimeout(() => abort.abort(), 20);
+      await expect(pending).resolves.toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test('心跳收不到任何回帧时判定断线；有回帧则保持连接', async () => {
+    let heartbeats = 0;
+    let reply = false;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return srv.upgrade(req) ? undefined : new Response('no', { status: 400 });
+      },
+      websocket: {
+        message(ws, data) {
+          const frame = fromBinary(protoType('Frame'), data as Uint8Array) as unknown as {
+            payload: Uint8Array;
+          };
+          const pkt = fromBinary(protoType('Packet'), frame.payload) as unknown as Dict;
+          if (pkt.cmd !== 4) return;
+          heartbeats++;
+          // 模拟服务端回帧（cmd=200，不带 sid）
+          if (reply) ws.send(data as Uint8Array);
+        },
+      },
+    });
+    try {
+      const c = newClient();
+      c.wsTiming = fast;
+      c.buildWsUrl = async () => `ws://localhost:${server.port}`;
+      await expect(c.connectWebsocket(async () => undefined)).rejects.toThrow(
+        'WS 心跳无回应: 120ms 内没有收到任何帧',
+      );
+      expect(heartbeats).toBeGreaterThanOrEqual(2);
+
+      reply = true;
+      const abort = new AbortController();
+      setTimeout(() => abort.abort(), 400);
+      await expect(
+        c.connectWebsocket(async () => undefined, abort.signal),
+      ).resolves.toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
 describe('HTTP', () => {
   test('cookie 罐跟随重定向、收下途中的 Set-Cookie 并带到后续请求；过期的删除', async () => {
     const seen: string[] = [];

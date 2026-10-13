@@ -1,8 +1,9 @@
 // 库构建产物（lib/）在 Node 下的冒烟测试：`bun run test:node`（先构建 lib/ 再用 node --test 运行）。
 // 文件名不叫 *.test.*，免得被 bun test 收进主测试集。
-// 主测试集跑在 bun test 上；这里只确认协议资产、protobuf 编解码、凭证读写在 Node 运行时同样可用。
+// 主测试集跑在 bun test 上；这里只确认协议资产、protobuf 编解码、凭证读写、长连接握手超时在 Node 运行时同样可用。
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -84,4 +85,22 @@ test('日志可接到宿主的 sink', () => {
     [['INFO', 'larkx.auth']],
   );
   assert.match(got[0]?.[2] ?? '', /凭证已保存/);
+});
+
+test('长连接握手无响应时按超时失败（Node 的 WebSocket 此时可能不触发 close）', async () => {
+  const sockets = [];
+  const server = createServer((s) => sockets.push(s));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const c = new lib.LarkClient({ userId: 'me' });
+    c.wsTiming = { openTimeoutMs: 200, heartbeatMs: 50, idleTimeoutMs: 120 };
+    c.buildWsUrl = async () => `ws://127.0.0.1:${server.address().port}`;
+    await assert.rejects(
+      c.connectWebsocket(async () => undefined),
+      /WS 握手超时\(200ms\)/,
+    );
+  } finally {
+    for (const s of sockets) s.destroy();
+    server.close();
+  }
 });
