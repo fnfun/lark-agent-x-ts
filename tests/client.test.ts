@@ -50,6 +50,42 @@ describe('网关客户端', () => {
     await expect(c.readMessages('c1', ['x1'])).rejects.toThrow('消息 x1 不在会话 c1 里');
   });
 
+  test('recentChats：从新到旧翻页，只取 since 之后变动的会话卡片，翻到更旧的就停', async () => {
+    const c = newClient();
+    const sec = 1_791_900_000;
+    const card = (id: string, type: number, t: number) => ({
+      id,
+      type,
+      updateTimeMs: BigInt(t * 1000),
+      rankTime: BigInt(t),
+    });
+    const pages: Dict[] = [
+      {
+        cards: [card('c1', 1, sec + 50), card('t1', 4, sec + 40), card('c2', 1, sec + 30)],
+        chats: { c1: { id: 'c1', lastMessagePosition: 9 } },
+        nextCursor: BigInt(sec + 30),
+      },
+      { cards: [card('c3', 1, sec + 10), card('c4', 1, sec - 10)], nextCursor: BigInt(sec - 10) },
+      { cards: [card('c5', 1, sec - 20)], nextCursor: 0n },
+    ];
+    const reqs: Dict[] = [];
+    c.api = async (type, data) => {
+      expect(type).toBe('feed.PullFeedCardsRequest');
+      reqs.push(data as Dict);
+      return pages[reqs.length - 1] ?? {};
+    };
+    const got = await c.recentChats(sec * 1000);
+    expect(got).toEqual([
+      { chatId: 'c1', updatedAt: (sec + 50) * 1000, chat: { id: 'c1', lastMessagePosition: 9 } },
+      { chatId: 'c2', updatedAt: (sec + 30) * 1000, chat: null },
+      { chatId: 'c3', updatedAt: (sec + 10) * 1000, chat: null },
+    ]);
+    expect(reqs.map((r) => [r.pullType, r.cursor])).toEqual([
+      [1, undefined],
+      [2, BigInt(sec + 30)],
+    ]);
+  });
+
   test('发送失败（网络或响应里没有消息 id）返回 null，不抛错', async () => {
     const c = newClient();
     c.isThreadChat = async () => false;
@@ -178,9 +214,15 @@ describe('长连接保活', () => {
       reply = true;
       const abort = new AbortController();
       setTimeout(() => abort.abort(), 400);
+      let opened = 0;
       await expect(
-        c.connectWebsocket(async () => undefined, abort.signal),
+        c.connectWebsocket(
+          async () => undefined,
+          abort.signal,
+          () => opened++,
+        ),
       ).resolves.toBeUndefined();
+      expect(opened).toBe(1);
     } finally {
       server.stop(true);
     }

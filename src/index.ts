@@ -5,6 +5,7 @@ export {
   LarkClient,
   type MessageContent,
   type MessageHandler,
+  type RecentChat,
   type SendOptions,
   SendUnconfirmed,
 } from './client.js';

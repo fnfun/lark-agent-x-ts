@@ -35,6 +35,14 @@ const logger = getLogger('larkx.client');
 
 type Packet = Message;
 
+// feed.PullFeedCardsRequest 的枚举取值（FeedType.INBOX、PullType、PullFeedType.INBOX、BusinessType.LARK）与 FeedCard.Type.CHAT
+const FEED_INBOX = 1;
+const PULL_REFRESH = 1;
+const PULL_LOAD_MORE = 2;
+const PULL_FEED_INBOX = 2;
+const BUSINESS_LARK = 1;
+const CARD_CHAT = 1;
+
 export interface SendOptions {
   /** 回复进话题（根消息 id）。 */
   rootId?: string | undefined;
@@ -52,6 +60,15 @@ export type MessageContent =
 export class SendUnconfirmed extends Error {}
 
 export type MessageHandler = (msg: LarkMessage) => Promise<void>;
+
+/** 收件箱里的一个会话：feed 卡片的更新时间 + 会话信息。 */
+export interface RecentChat {
+  chatId: string;
+  /** 会话最近一次变动的时间（毫秒）。 */
+  updatedAt: number;
+  /** 会话信息（与 getChatInfo 同为 entities.Chat）；服务端没带时为 null。 */
+  chat: Dict | null;
+}
 
 /** 网页协议客户端：网关请求（HTTP + protobuf）与消息长连接。 */
 export class LarkClient {
@@ -120,8 +137,13 @@ export class LarkClient {
    * 连上消息长连接并持续接收，直到连接关闭（正常关闭或 signal 中止时返回，异常时抛错）。
    * 每个带 sid 的帧都回 ACK，按 wsTiming 发应用层心跳；推送（cmd=6）里的消息按到达顺序串行交给 onMessage。
    * 握手超时、心跳无回应都按异常断开处理，由调用方重连。
+   * onOpen 在连上后调用一次：此后的消息都会推送过来，适合在这里补拉断线期间的消息。
    */
-  async connectWebsocket(onMessage: MessageHandler, signal?: AbortSignal): Promise<void> {
+  async connectWebsocket(
+    onMessage: MessageHandler,
+    signal?: AbortSignal,
+    onOpen?: () => void,
+  ): Promise<void> {
     const url = await this.buildWsUrl();
     const { openTimeoutMs, heartbeatMs, idleTimeoutMs } = this.wsTiming;
     const ws = new WebSocket(url);
@@ -156,6 +178,7 @@ export class LarkClient {
         clearTimeout(openTimer);
         lastFrameAt = Date.now();
         logger.info('WS 已连接');
+        onOpen?.();
         heartbeat = setInterval(() => {
           if (Date.now() - lastFrameAt > idleTimeoutMs)
             return finish(new Error(`WS 心跳无回应: ${idleTimeoutMs}ms 内没有收到任何帧`));
@@ -475,6 +498,39 @@ export class LarkClient {
     const thread = isThreadChat(info);
     this.threadChats.set(chatId, thread);
     return thread;
+  }
+
+  /**
+   * 收件箱里 since（毫秒）之后有变动的会话，按变动时间从新到旧。
+   * 只含会话卡片（单聊、群聊）；话题、文档、邮件等其他卡片跳过。
+   */
+  async recentChats(since: number, maxPages = 20): Promise<RecentChat[]> {
+    const out: RecentChat[] = [];
+    let cursor: bigint | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const resp = await this.api('feed.PullFeedCardsRequest', {
+        type: FEED_INBOX,
+        pullFeedType: PULL_FEED_INBOX,
+        businessType: BUSINESS_LARK,
+        pullType: cursor === undefined ? PULL_REFRESH : PULL_LOAD_MORE,
+        count: 50,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      const cards = (resp.cards ?? []) as Dict[];
+      const chats = (resp.chats ?? {}) as Record<string, Dict>;
+      for (const card of cards) {
+        const updatedAt = Number(card.updateTimeMs ?? 0) || Number(card.updateTime ?? 0) * 1000;
+        if (card.type !== CARD_CHAT || updatedAt < since) continue;
+        const chatId = String(card.id);
+        out.push({ chatId, updatedAt, chat: chats[chatId] ?? null });
+      }
+      // 卡片按 rankTime（秒）从新到旧排列，翻到比 since 还旧的就不用再往后翻
+      const oldest = Number(cards.at(-1)?.rankTime ?? 0) * 1000;
+      const next = resp.nextCursor as bigint | undefined;
+      if (!cards.length || !next || oldest < since) break;
+      cursor = next;
+    }
+    return out;
   }
 
   /** 按 position 拉历史消息并解码；save 时逐条入库（单条失败忽略）。 */
