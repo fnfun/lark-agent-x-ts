@@ -125,6 +125,12 @@ const auth: Command = {
   },
 };
 
+const NAMES_OPTION: Option = {
+  name: 'names',
+  kind: 'flag',
+  help: '发送者显示为名字(--json 时多一个 from_name)',
+};
+
 const REPLY_OPTIONS: Option[] = [
   { name: 'root', kind: 'string', help: '话题/线程根消息 id,回复进话题' },
   { name: 'reply', kind: 'string', help: '引用回复某条消息 id(被引用消息在话题里时自动进话题)' },
@@ -374,6 +380,40 @@ const reactions: Command = {
   },
 };
 
+const readStatus: Command = {
+  name: 'read-status',
+  help: '消息的已读情况:谁读了、谁没读(发送方视角);--me 看我自己是否读过',
+  positionals: [{ name: 'chat_id' }, { name: 'message_ids', nargs: '+' }],
+  options: [
+    { name: 'me', kind: 'flag', help: '看我自己是否读过这些消息' },
+    NAMES_OPTION,
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const c = await client();
+    const ids = a.message_ids as string[];
+    if (a.me) {
+      const mine = await c.myReadStates(ids);
+      if (a.json) printJson(Object.fromEntries(mine));
+      else
+        for (const [id, t] of mine) out(`${id}\t${t === null ? '未读' : `已读 ${shortTime(t)}`}`);
+      return 0;
+    }
+    const states = await c.readStates(String(a.chat_id), ids);
+    const names = a.names
+      ? await c.userNames(states.flatMap((st) => [...st.readUserIds, ...st.unreadUserIds]))
+      : undefined;
+    const who = (ids2: string[]) => ids2.map((id) => names?.get(id) || id).join(',');
+    if (a.json) printJson(states);
+    else
+      for (const st of states)
+        out(
+          `${st.messageId}\t已读 ${st.readCount}\t未读 ${st.unreadCount}${st.unreadUserIds.length ? `\t未读: ${who(st.unreadUserIds)}` : ''}`,
+        );
+    return 0;
+  },
+};
+
 const messageLink: Command = {
   name: 'message-link',
   help: '生成消息链接(applink client/message/link/open?token=...);多个消息 id 生成一个合并链接',
@@ -553,12 +593,6 @@ function printMessages(msgs: LarkMessage[], json: boolean, names?: Map<string, s
     );
   }
 }
-
-const NAMES_OPTION: Option = {
-  name: 'names',
-  kind: 'flag',
-  help: '发送者显示为名字(--json 时多一个 from_name)',
-};
 
 /** --names 时查发送者名字；查不到的照旧显示 id。 */
 async function senderNames(
@@ -1063,6 +1097,7 @@ export const COMMANDS: Command[] = [
   edit,
   react,
   reactions,
+  readStatus,
   messageLink,
   selfChat,
   read,

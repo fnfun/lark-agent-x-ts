@@ -121,3 +121,48 @@ describe('Markdown 消息', () => {
     expect(decodeMessageContent(2, content)[0]).toBe(`[富文本] 周报\n${md}`);
   });
 });
+
+describe('已读情况', () => {
+  test('发送方视角的已读/未读名单，与我自己是否读过', async () => {
+    const c = newClient();
+    const reqs: [string, Dict][] = [];
+    c.api = async (type, data) => {
+      reqs.push([String(type), data as Dict]);
+      if (type === 'messages.PullMessageReadStateRequest')
+        return {
+          readStates: {
+            m1: {
+              readUserIds: ['u1'],
+              unreadUserIds: ['u2', 'u3'],
+              readCount: 1,
+              unreadCount: 2,
+              lastUserReadInfo: { userId: 'u1', readTime: 1_790_000_100n },
+            },
+          },
+        };
+      return { readStatus: { m1: true, m2: false }, readTimes: { m1: 1_790_000_200n } };
+    };
+    expect(await c.readStates('g1', ['m1', 'nope'])).toEqual([
+      {
+        messageId: 'm1',
+        readCount: 1,
+        unreadCount: 2,
+        readUserIds: ['u1'],
+        unreadUserIds: ['u2', 'u3'],
+        lastRead: { userId: 'u1', time: 1_790_000_100 },
+      },
+    ]);
+    expect(reqs[0]?.[1]).toEqual({
+      pairs: [
+        { chatId: 'g1', messageId: 'm1' },
+        { chatId: 'g1', messageId: 'nope' },
+      ],
+    });
+    expect(await c.myReadStates(['m1', 'm2', 'm3'])).toEqual(
+      new Map<string, number | null>([
+        ['m1', 1_790_000_200],
+        ['m2', null],
+      ]),
+    );
+  });
+});

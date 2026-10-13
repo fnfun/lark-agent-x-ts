@@ -138,6 +138,17 @@ export interface MessageHit {
 const SEARCH_ENTITY_MESSAGE = 5;
 const unhighlight = (s: unknown) => String(s ?? '').replace(/<\/?h>/g, '');
 
+/** 一条消息的已读情况（发送方视角）：谁读了、谁还没读。 */
+export interface ReadState {
+  messageId: string;
+  readCount: number;
+  unreadCount: number;
+  readUserIds: string[];
+  unreadUserIds: string[];
+  /** 最近一个读的人与时间（秒）。 */
+  lastRead: { userId: string; time: number } | null;
+}
+
 /** 一条消息上的表情回复。 */
 export interface MessageReactions {
   messageId: string;
@@ -717,6 +728,44 @@ export class LarkClient {
           ],
         })),
     }));
+  }
+
+  /** 消息的已读情况（谁读了、谁没读），消息须在 chatId 会话里；查不到的消息不在结果里。 */
+  async readStates(chatId: string, messageIds: string[]): Promise<ReadState[]> {
+    const resp = await this.api('messages.PullMessageReadStateRequest', {
+      pairs: messageIds.map((messageId) => ({ chatId, messageId })),
+    });
+    const states = (resp.readStates ?? {}) as Record<string, Dict>;
+    return messageIds
+      .filter((id) => states[id])
+      .map((id) => {
+        const r = states[id] as Dict;
+        const last = r.lastUserReadInfo as Dict | undefined;
+        return {
+          messageId: id,
+          readCount: Number(r.readCount ?? 0),
+          unreadCount: Number(r.unreadCount ?? 0),
+          readUserIds: ((r.readUserIds as string[] | undefined) ?? []).map(String),
+          unreadUserIds: ((r.unreadUserIds as string[] | undefined) ?? []).map(String),
+          lastRead: last?.userId
+            ? { userId: String(last.userId), time: Number(last.readTime ?? 0) }
+            : null,
+        };
+      });
+  }
+
+  /** 我自己是否读过这些消息：id → 读过的时间（秒），没读过为 null。 */
+  async myReadStates(messageIds: string[]): Promise<Map<string, number | null>> {
+    const resp = await this.api('messages.PullMessageMeReadStateRequest', {
+      messageIds,
+      needReadTime: true,
+    });
+    const status = (resp.readStatus ?? {}) as Record<string, boolean>;
+    const times = (resp.readTimes ?? {}) as Record<string, bigint | number>;
+    const out = new Map<string, number | null>();
+    for (const id of messageIds)
+      if (id in status) out.set(id, status[id] ? Number(times[id] ?? 0) : null);
+    return out;
   }
 
   /** 收到消息即标已读（listen 的 LARKX_MARK_READ）；失败只记 debug。 */

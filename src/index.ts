@@ -10,6 +10,7 @@ export {
   type MessageHit,
   type MessageReactions,
   type MessageSearchOptions,
+  type ReadState,
   type RecentChat,
   type SendOptions,
   SendUnconfirmed,
