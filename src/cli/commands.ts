@@ -15,7 +15,7 @@ import { getRegion, REGIONS, type Region, urls } from '../region.js';
 import { Storage } from '../storage/index.js';
 import { head, preview } from '../text.js';
 import type { CommandSpec, Parsed } from './args.js';
-import { printJson, pyDatetime, shortTime } from './format.js';
+import { errorText, printJson, pyDatetime, shortTime } from './format.js';
 import { qrAscii, saveQrPng } from './qr.js';
 
 const logger = getLogger('larkx.cli');
@@ -354,7 +354,7 @@ const api: Command = {
     try {
       resp = await c.api(String(a.type), data);
     } catch (e) {
-      err((e as Error).message);
+      err(errorText(e));
       return 1;
     }
     printJson(resp);

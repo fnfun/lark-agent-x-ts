@@ -1,3 +1,4 @@
+import { HttpError } from '../http.js';
 import { PyFloat, pyBytesRepr, pyDumps } from '../pyjson.js';
 
 /** 对应原项目 `_print_json`：缩进 2、不转义中文，无法序列化的值按 Python `str()` 输出（字节为 b'...'）。 */
@@ -23,3 +24,9 @@ export function shortTime(ts: number | null | undefined): string {
 /** 库里的 DateTime 字符串按 Python `str(datetime)` 输出：微秒为 0 时不带小数部分。 */
 export const pyDatetime = (s: string | null | undefined): string =>
   s ? String(s).replace(/\.0{6}$/, '') : 'None';
+
+/** 报错文案：网关给了出错原因时附在后面（括号内），便于判断是参数、权限还是会话类型的问题。 */
+export function errorText(e: unknown): string {
+  const msg = (e as Error).message;
+  return e instanceof HttpError && e.reason ? `${msg} (${e.reason})` : msg;
+}
