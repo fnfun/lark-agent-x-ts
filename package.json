@@ -5,15 +5,19 @@
   "description": "飞书 / Lark 网页版消息通道（迁移自 cv-cat/LarkAgentX）",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
-  },
-  "bin": {
-    "lark": "./src/cli/main.ts"
+    ".": {
+      "types": "./lib/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./lib/index.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:node": "bun run build:lib && node --test tests/node/lib.smoke.mjs",
     "lint": "biome check .",
+    "build:lib": "rm -rf lib && tsc -p tsconfig.lib.json",
+    "prepare": "tsc -p tsconfig.lib.json",
     "build": "bun build ./src/cli/main.ts --compile --minify --define BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --outfile dist/lark",
     "proto:fetch": "bun scripts/proto-pipeline/chunkmap.ts && bun scripts/proto-pipeline/download.ts",
     "proto:build": "bun scripts/proto-pipeline/extract.ts && bun scripts/proto-pipeline/gen-protos.ts && bun scripts/proto-pipeline/gen-cmd-table.ts && bun scripts/proto-pipeline/build-assets.ts",
@@ -28,7 +32,13 @@
     "@biomejs/biome": "^2.5.15",
     "@bufbuild/buf": "^1.73.0",
     "@types/bun": "^1.4.3",
+    "@types/node": "^22.19.0",
     "@types/qrcode": "^1.5.6",
     "typescript": "^7.0.2"
-  }
+  },
+  "files": [
+    "lib",
+    "assets/*.binpb",
+    "assets/cmd_map.json"
+  ]
 }

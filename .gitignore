@@ -4,3 +4,4 @@ dist/
 *.log
 scripts/proto-pipeline/work/
 scripts/proto-pipeline/out/
+lib/

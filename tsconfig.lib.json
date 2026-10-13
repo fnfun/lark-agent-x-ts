@@ -1,0 +1,15 @@
+{
+  // 库构建（Node 可用）：只编译 src/index.ts 可达的模块；types 只给 node，误用 Bun 专有 API 会在这里编译失败
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "noEmit": false,
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "lib"
+  },
+  "include": [],
+  "files": ["src/index.ts"]
+}

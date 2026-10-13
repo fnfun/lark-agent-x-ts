@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
-import { LarkClient } from '../src/client.js';
+import { LarkClient, SendUnconfirmed } from '../src/client.js';
 import { CookieJar, HttpError, NetworkError, raiseForStatus, request } from '../src/http.js';
 import type { Dict } from '../src/proto/dict.js';
 import { protoType } from '../src/proto/registry.js';
@@ -62,6 +62,24 @@ describe('网关客户端', () => {
     const ok = Buffer.from(fixtures.responses.put_message.bytes, 'base64');
     c.gatewayPost = async () => Uint8Array.from(ok);
     expect(await c.sendMsg('收到', 'c1', { rootId: 'r1' })).toBe('7000000000000000009');
+  });
+
+  test('sendMessage 失败时抛错：网络错误原样抛出，拿不到消息 id 抛 SendUnconfirmed', async () => {
+    const c = newClient();
+    c.isThreadChat = async () => false;
+    c.gatewayPost = async () => {
+      throw new NetworkError('网络请求失败(x): Read timed out');
+    };
+    await expect(c.sendMessage('c1', { text: '收到' })).rejects.toBeInstanceOf(NetworkError);
+    c.gatewayPost = async () => toBinary(protoType('Packet'), create(protoType('Packet')));
+    await expect(
+      c.sendMessage('c1', { blocks: [{ type: 'p', runs: [{ text: '收到' }] }], text: '收到' }),
+    ).rejects.toBeInstanceOf(SendUnconfirmed);
+    const ok = Buffer.from(fixtures.responses.put_message.bytes, 'base64');
+    c.gatewayPost = async () => Uint8Array.from(ok);
+    expect(await c.sendMessage('c1', { html: '<p>收到</p>', title: '' })).toBe(
+      '7000000000000000009',
+    );
   });
 
   test('长连接：带 sid 的帧回 ACK，推送消息按顺序交给回调，话题群根消息归到自己的话题；服务端异常关闭时抛错', async () => {

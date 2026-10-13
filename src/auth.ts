@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { credentialsPath, dataDir, loadConfig } from './config.js';
+import { dirname } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { credentialsPath, loadConfig } from './config.js';
 import { CookieJar, request, USER_AGENT } from './http.js';
 import { getLogger } from './log.js';
 import { PyFloat, pyDumps } from './pyjson.js';
@@ -50,7 +52,7 @@ export class LarkAuth {
   }
 
   save(): void {
-    mkdirSync(dataDir(), { recursive: true });
+    mkdirSync(dirname(this.path), { recursive: true });
     const data = {
       region: this.region.name,
       cookies: this.cookies,
@@ -279,7 +281,7 @@ export class QrLogin {
       if (step !== 'qr_login_polling' || this.jar.cookies.session || status === 0)
         return [true, data];
       if (status === 3 || status === 4 || status === 5) return [false, data];
-      await Bun.sleep(intervalS * 1000);
+      await sleep(intervalS * 1000);
     }
     return [false, null];
   }

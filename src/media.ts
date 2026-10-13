@@ -1,5 +1,7 @@
-import { mkdirSync } from 'node:fs';
+import { createWriteStream, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { LarkAuth } from './auth.js';
 import { loadConfig } from './config.js';
 import { raiseForStatus, request } from './http.js';
@@ -45,17 +47,19 @@ export async function download(
   const contentType = res.headers.get('content-type') ?? '';
   const path = resolve(outPath);
   mkdirSync(dirname(path), { recursive: true });
-  const writer = Bun.file(path).writer();
   let n = 0;
-  try {
-    for await (const chunk of res.body ?? []) {
-      n += chunk.length;
-      if (n > MAX_BYTES) throw new Error('文件过大');
-      writer.write(chunk);
-    }
-  } finally {
-    await writer.end();
-  }
+  const body = res.body ? Readable.fromWeb(res.body) : Readable.from([]);
+  await pipeline(
+    body,
+    async function* (chunks: AsyncIterable<Uint8Array>) {
+      for await (const chunk of chunks) {
+        n += chunk.length;
+        if (n > MAX_BYTES) throw new Error('文件过大');
+        yield chunk;
+      }
+    },
+    createWriteStream(path),
+  );
   return [outPath, contentType, n];
 }
 

@@ -41,7 +41,7 @@ bun src/cli/main.ts <命令>    # 或直接从源码运行
 
 x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转译环境也能跑）。为什么选 Bun 见 [docs/adr/0001-bun-single-binary.md](docs/adr/0001-bun-single-binary.md)。
 
-把 `dist/lark` 放进 PATH，或在调用方（如 niuma 的 `larkx.bin`）里写它的绝对路径。`lark --version` 打印版本与构建 commit。
+把 `dist/lark` 放进 PATH 即可。`lark --version` 打印版本与构建 commit。
 
 ## 命令
 
@@ -83,10 +83,13 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 
 ## 作为库使用
 
-```ts
-import { LarkAuth, LarkClient } from 'lark-agent-x-ts';
+库入口在 Node（≥ 22.19）与 Bun 下都能用，导出登录凭证、网关客户端、消息长连接与资源下载；消息库（`Bun.SQL`）与本地 agent（`Bun.spawn`）依赖 Bun，只在命令行里用。作为 git 依赖安装时，`prepare` 会把库编译到 `lib/`（Node 加载它，Bun 直接加载 `src/`）。
 
-const client = await LarkClient.create(new LarkAuth()); // 读取 ~/.larkx/credentials.json 并联网校验
+```ts
+import { LarkAuth, LarkClient, setLogSink } from 'lark-agent-x-ts';
+
+setLogSink((level, module, msg) => myLogger.log(level, `${module} - ${msg}`)); // 可选：接到宿主日志，默认写 stderr
+const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // 默认 ~/.larkx/credentials.json；联网校验
 await client.sendMsg('你好', '<chat_id>');
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
@@ -96,6 +99,7 @@ await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_i
 
 ```bash
 bun test                    # 单测 + 与原版的对照测试
+bun run test:node           # 编译库到 lib/，在 Node 下跑冒烟测试（协议资产、编解码、凭证读写）
 bun run typecheck && bun run lint
 LARKX_TEST_MYSQL_URL=mysql+pymysql://root:test@127.0.0.1:33306/larkx bun test   # 存储测试同时跑 MySQL
 ```

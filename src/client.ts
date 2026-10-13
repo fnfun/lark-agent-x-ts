@@ -42,6 +42,15 @@ export interface SendOptions {
   replyTo?: string | undefined;
 }
 
+/** sendMessage 的内容：纯文本、结构化富文本（text 为纯文本摘要）或 HTML 富文本。 */
+export type MessageContent =
+  | { text: string; links?: boolean }
+  | { blocks: RichBlock[]; text: string }
+  | { html: string; title?: string };
+
+/** 服务端已受理发送请求，但拿不到消息 id，无法确认是否发出。 */
+export class SendUnconfirmed extends Error {}
+
 export type MessageHandler = (msg: LarkMessage) => Promise<void>;
 
 /** 网页协议客户端：网关请求（HTTP + protobuf）与消息长连接。 */
@@ -207,42 +216,47 @@ export class LarkClient {
   }
 
   /**
-   * 发文本消息，返回服务端分配的消息 id；未能确认发送成功（请求失败，或响应里拿不到 id）时返回 null。
-   * richLinks 时把 `[文字](url)` 渲染成带文字的超链接。
+   * 发送一条消息并确认送达，返回服务端分配的消息 id；失败时抛错而不是返回 null：
+   * 请求失败抛 NetworkError / HttpError，服务端已受理但拿不到消息 id 时抛 SendUnconfirmed（可能已发出，不宜直接重试）。
+   * 内容三选一：纯文本（links 时把 `[文字](url)` 渲染成带文字的超链接）、结构化富文本（text 是纯文本摘要）、HTML 富文本。
    */
+  async sendMessage(chatId: string, content: MessageContent, o: SendOptions = {}): Promise<string> {
+    const target = await this.threadTarget(chatId, o);
+    const cid = longRequestId();
+    const pkt =
+      'blocks' in content
+        ? buildRichMessagePacket(content.blocks, content.text, target, cid)
+        : 'html' in content
+          ? buildPostMessagePacket(content.html, target, cid, content.title ?? '')
+          : buildSendMessagePacket(content.text, target, cid, content.links ?? false);
+    const resp = await this.gatewayPost(pkt);
+    let msgId: string;
+    try {
+      msgId = decodePutMessageResponse(resp);
+    } catch (err) {
+      throw new SendUnconfirmed(
+        `服务端已接受发送请求,但响应解析失败,无法确认是否发出: ${(err as Error).message}`,
+      );
+    }
+    if (!msgId)
+      throw new SendUnconfirmed('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出');
+    return msgId;
+  }
+
+  /** 发文本消息，返回消息 id；未能确认发送成功时记错误日志并返回 null。richLinks 同 sendMessage 的 links。 */
   async sendMsg(
     text: string,
     chatId: string,
     o: SendOptions = {},
     richLinks = false,
   ): Promise<string | null> {
-    const pkt = buildSendMessagePacket(
-      text,
-      await this.threadTarget(chatId, o),
-      longRequestId(),
-      richLinks,
-    );
-    let content: Uint8Array;
     try {
-      content = await this.gatewayPost(pkt);
+      return await this.sendMessage(chatId, { text, links: richLinks }, o);
     } catch (err) {
-      logger.error(`发送消息失败: ${(err as Error).message}`);
+      const msg = (err as Error).message;
+      logger.error(err instanceof SendUnconfirmed ? msg : `发送消息失败: ${msg}`);
       return null;
     }
-    let msgId: string;
-    try {
-      msgId = decodePutMessageResponse(content);
-    } catch (err) {
-      logger.error(
-        `服务端已接受发送请求,但响应解析失败,无法确认是否发出: ${(err as Error).message}`,
-      );
-      return null;
-    }
-    if (!msgId) {
-      logger.error('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出');
-      return null;
-    }
-    return msgId;
   }
 
   /** 结构化富文本（POST）消息；innerText 是纯文本摘要。返回消息 id，失败 null。 */
@@ -253,13 +267,7 @@ export class LarkClient {
     o: SendOptions = {},
   ): Promise<string | null> {
     try {
-      const pkt = buildRichMessagePacket(
-        blocks,
-        innerText,
-        await this.threadTarget(chatId, o),
-        longRequestId(),
-      );
-      return decodePutMessageResponse(await this.gatewayPost(pkt)) || null;
+      return await this.sendMessage(chatId, { blocks, text: innerText }, o);
     } catch (err) {
       logger.error(`发送富文本失败: ${(err as Error).message}`);
       return null;
@@ -274,13 +282,7 @@ export class LarkClient {
     o: SendOptions = {},
   ): Promise<string | null> {
     try {
-      const pkt = buildPostMessagePacket(
-        html,
-        await this.threadTarget(chatId, o),
-        longRequestId(),
-        title,
-      );
-      return decodePutMessageResponse(await this.gatewayPost(pkt)) || null;
+      return await this.sendMessage(chatId, { html, title }, o);
     } catch (err) {
       logger.error(`发送富文本失败: ${(err as Error).message}`);
       return null;

@@ -1,12 +1,11 @@
-import { dirname } from 'node:path';
-import pkg from '../package.json';
+import pkg from '../../package.json';
 
 declare const BUILD_COMMIT: string | undefined;
 
 /** 构建时由 `--define BUILD_COMMIT=...` 写入；从源码运行时现场读 git，读不到为 unknown。 */
 function commit(): string {
   if (typeof BUILD_COMMIT === 'string' && BUILD_COMMIT) return BUILD_COMMIT;
-  const r = Bun.spawnSync(['git', '-C', dirname(import.meta.dir), 'rev-parse', 'HEAD'], {
+  const r = Bun.spawnSync(['git', '-C', import.meta.dir, 'rev-parse', 'HEAD'], {
     stdout: 'pipe',
     stderr: 'ignore',
   });

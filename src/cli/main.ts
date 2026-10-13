@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
+import './embedded-assets.js';
 import { AuthExpired } from '../auth.js';
-import { versionLine } from '../version.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
+import { versionLine } from './version.js';
 
 const PROG = 'lark';
 
