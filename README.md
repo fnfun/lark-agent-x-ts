@@ -51,6 +51,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
 | `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本） |
+| `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark read <chat_id> <msg_id...>` | 把消息标为已读（同客户端看过；话题回复按话题标记） |
 | `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
 | `lark self-chat` | 打印与自己的会话 chat_id |
@@ -91,6 +92,7 @@ import { LarkAuth, LarkClient, setLogSink } from 'lark-agent-x-ts';
 setLogSink((level, module, msg) => myLogger.log(level, `${module} - ${msg}`)); // 可选：接到宿主日志，默认写 stderr
 const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // 默认 ~/.larkx/credentials.json；联网校验
 await client.sendMsg('你好', '<chat_id>');
+await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件
 await client.api('chats.PullChatsByIdsRequest', { chatIds: ['<chat_id>'] });
 await client.connectWebsocket(async (msg) => console.log(msg.chat_id, msg.from_id, msg.content));
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）

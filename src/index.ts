@@ -11,7 +11,13 @@ export {
 } from './client.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
-export { downloadMessageResource, extractResourceKey } from './media.js';
+export {
+  downloadMessageResource,
+  extractResourceKey,
+  type UploadedFile,
+  uploadFile,
+  uploadImage,
+} from './media.js';
 export type { RichBlock, RichRun, SearchHit } from './proto/builders.js';
 export { contentDataJson, type LarkMessage } from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
