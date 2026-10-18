@@ -48,6 +48,6 @@ bun src/cli/main.ts <命令>     # 从源码运行
 
 - TypeScript strict / ESM，Biome 格式化与 lint；文件名 kebab-case 或与原项目模块同名。
 - 注释、日志、错误信息、测试描述用简体中文；注释写意图与约束，不复述代码。
-- 错误类型：`AuthExpired`（凭证失效，需要重新登录）、`NetworkError`（联网失败，不一定是凭证问题）、`HttpError`（非 2xx）、`SendUnconfirmed`（服务端受理但拿不到消息 id）。调用方据此区分处理，不要把它们混成普通 `Error`。
+- 错误类型：`AuthExpired`（凭证失效，需要重新登录）、`NetworkError`（联网失败，不一定是凭证问题）、`HttpError`（非 2xx）、`SendUnconfirmed`（服务端受理但拿不到消息 id）、`PermissionDenied`（权限规则不允许，见 `src/permissions.ts`）。调用方据此区分处理，不要把它们混成普通 `Error`。
 - 日志经 `src/log.ts` 的 logger，不直接 `console.*`（命令行的标准输出除外）。
 - commit message 用简短英文 Conventional Commits。

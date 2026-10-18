@@ -8,6 +8,16 @@ import { LarkClient, type SendOptions } from '../client.js';
 import { dataDir, loadConfig } from '../config.js';
 import { getLogger } from '../log.js';
 import { download, extractResourceKey, messageResourceUrl } from '../media.js';
+import {
+  decide,
+  GROUPS,
+  type Group,
+  loadRules,
+  PERMISSIONS,
+  type Permission,
+  permissionsPath,
+  saveAccountRules,
+} from '../permissions.js';
 import type { RichBlock } from '../proto/builders.js';
 import {
   CHAT_TYPE_NAMES,
@@ -22,6 +32,7 @@ import { head, preview } from '../text.js';
 import type { CommandSpec, Option, Parsed } from './args.js';
 import { errorText, printJson, pyDatetime, shortTime } from './format.js';
 import { keepListening } from './listen-loop.js';
+import { editInTerminal, PermissionEditor } from './permissions-editor.js';
 import { qrAscii, saveQrPng } from './qr.js';
 import { parseTimeArg } from './time.js';
 
@@ -32,6 +43,8 @@ const err = (s: string) => process.stderr.write(`${s}\n`);
 const s = (v: Parsed[string]) => (v === undefined ? undefined : String(v));
 
 export interface Command extends CommandSpec {
+  /** 对应的权限项（见 src/permissions.ts）；读写混用的命令按参数取 `命令.动作`。 */
+  access: Permission | ((args: Parsed) => Permission);
   run(args: Parsed): Promise<number>;
 }
 
@@ -84,6 +97,7 @@ async function qrLogin(auth: LarkAuth, region: Region): Promise<number> {
 const auth: Command = {
   name: 'auth',
   help: '凭证管理',
+  access: (a) => `auth.${a.action as 'status' | 'import' | 'check' | 'qr'}`,
   positionals: [{ name: 'action', choices: ['status', 'import', 'check', 'qr'] }],
   options: [
     { name: 'cookie', kind: 'string', help: '直接传 cookie 串' },
@@ -149,6 +163,7 @@ const REPLY_OPTIONS: Option[] = [
 const send: Command = {
   name: 'send',
   help: '发送文本消息',
+  access: 'send',
   positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
   options: [
     ...REPLY_OPTIONS,
@@ -261,6 +276,7 @@ function mediaCommand(kind: 'image' | 'file'): Command {
   return {
     name: `send-${kind}`,
     help: `发送${label}(本地文件,自动上传)`,
+    access: `send-${kind}`,
     positionals: [{ name: 'chat_id' }, { name: 'path' }],
     options: REPLY_OPTIONS,
     async run(a) {
@@ -296,6 +312,7 @@ function mediaCommand(kind: 'image' | 'file'): Command {
 const schedule: Command = {
   name: 'schedule',
   help: '定时发送消息(到点由服务端发出)',
+  access: 'schedule',
   positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
   options: [
     {
@@ -339,6 +356,8 @@ const schedule: Command = {
 const scheduled: Command = {
   name: 'scheduled',
   help: '会话里还没发出的定时消息;--cancel 取消,--reschedule 配合 --at 改时间',
+  access: (a) =>
+    a.cancel ? 'scheduled.cancel' : a.reschedule ? 'scheduled.reschedule' : 'scheduled.list',
   positionals: [{ name: 'chat_id' }],
   options: [
     { name: 'cancel', kind: 'string', metavar: 'MSG_ID', help: '取消这条定时消息' },
@@ -384,6 +403,7 @@ const scheduled: Command = {
 const translate: Command = {
   name: 'translate',
   help: '翻译文本;--msg 时参数是消息 id,翻译这些消息',
+  access: 'translate',
   positionals: [{ name: 'args', nargs: '+', help: '要翻译的文本(--msg 时为消息 id)' }],
   options: [
     { name: 'to', kind: 'string', default: 'zh', help: '目标语言(zh、en、ja 等,默认 zh)' },
@@ -416,6 +436,7 @@ const translate: Command = {
 const forward: Command = {
   name: 'forward',
   help: '把一条消息转发到一个或多个会话',
+  access: 'forward',
   positionals: [{ name: 'msg_id' }, { name: 'chat_ids', nargs: '+' }],
   async run(a) {
     const targets = a.chat_ids as string[];
@@ -436,6 +457,7 @@ const forward: Command = {
 const group: Command = {
   name: 'group',
   help: '群管理:create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>',
+  access: (a) => `group.${a.action as 'create' | 'add' | 'remove' | 'rename'}`,
   positionals: [
     { name: 'action', choices: ['create', 'add', 'remove', 'rename'] },
     { name: 'args', nargs: '+' },
@@ -491,6 +513,7 @@ const group: Command = {
 const pin: Command = {
   name: 'pin',
   help: 'Pin 一条消息到会话(会话成员都看得到);--remove 取消 Pin',
+  access: 'pin',
   positionals: [{ name: 'chat_id' }, { name: 'msg_id' }],
   options: [{ name: 'remove', kind: 'flag', help: '取消 Pin' }],
   async run(a) {
@@ -516,6 +539,7 @@ const pin: Command = {
 const pins: Command = {
   name: 'pins',
   help: '列出会话里被 Pin 的消息',
+  access: 'pins',
   positionals: [{ name: 'chat_id' }],
   options: [{ name: 'json', kind: 'flag' }],
   async run(a) {
@@ -540,6 +564,8 @@ const pins: Command = {
 const shortcut: Command = {
   name: 'shortcut',
   help: '在会话列表里置顶会话(只影响自己);--remove 取消置顶;不带参数列出已置顶的',
+  access: (a) =>
+    !list(a.chat_ids)?.length ? 'shortcut.list' : a.remove ? 'shortcut.remove' : 'shortcut.add',
   positionals: [{ name: 'chat_ids', nargs: '?', help: '会话 id(逗号分隔)' }],
   options: [{ name: 'remove', kind: 'flag', help: '取消置顶' }],
   async run(a) {
@@ -564,6 +590,7 @@ const shortcut: Command = {
 const flag: Command = {
   name: 'flag',
   help: '标记消息(留给自己稍后处理);--chat 标记会话,--remove 取消标记',
+  access: 'flag',
   positionals: [{ name: 'ids', nargs: '+', help: '消息 id(--chat 时为 chat_id)' }],
   options: [
     { name: 'chat', kind: 'flag', help: '标记的是会话' },
@@ -587,6 +614,7 @@ const flag: Command = {
 const flags: Command = {
   name: 'flags',
   help: '列出我的标记(消息与会话)',
+  access: 'flags',
   options: [
     { name: 'limit', kind: 'int', default: 50 },
     { name: 'json', kind: 'flag' },
@@ -617,6 +645,7 @@ const flags: Command = {
 const recall: Command = {
   name: 'recall',
   help: '撤回消息(自己发的;群管理员可撤回群里别人的)',
+  access: 'recall',
   positionals: [{ name: 'message_ids', nargs: '+' }],
   async run(a) {
     const c = await client();
@@ -637,6 +666,7 @@ const recall: Command = {
 const edit: Command = {
   name: 'edit',
   help: '编辑自己发的文本/富文本消息(整条替换,对方看到"已编辑")',
+  access: 'edit',
   positionals: [{ name: 'msg_id' }, { name: 'text', nargs: '+' }],
   options: [
     { name: 'links', kind: 'flag', help: '把文本里的 [文字](url) 发成带文字的超链接' },
@@ -672,6 +702,7 @@ const edit: Command = {
 const react: Command = {
   name: 'react',
   help: '给消息加表情回复(如 THUMBSUP、OK、DONE、SMILE);--remove 去掉',
+  access: 'react',
   positionals: [{ name: 'msg_id' }, { name: 'reaction_type' }],
   options: [{ name: 'remove', kind: 'flag', help: '去掉自己加的这个表情' }],
   async run(a) {
@@ -693,6 +724,7 @@ const react: Command = {
 const reactions: Command = {
   name: 'reactions',
   help: '查看消息上的表情回复',
+  access: 'reactions',
   positionals: [{ name: 'message_ids', nargs: '+' }],
   options: [{ name: 'json', kind: 'flag' }],
   async run(a) {
@@ -709,6 +741,7 @@ const reactions: Command = {
 const readStatus: Command = {
   name: 'read-status',
   help: '消息的已读情况:谁读了、谁没读(发送方视角);--me 看我自己是否读过',
+  access: 'read-status',
   positionals: [{ name: 'chat_id' }, { name: 'message_ids', nargs: '+' }],
   options: [
     { name: 'me', kind: 'flag', help: '看我自己是否读过这些消息' },
@@ -743,6 +776,7 @@ const readStatus: Command = {
 const messageLink: Command = {
   name: 'message-link',
   help: '生成消息链接(applink client/message/link/open?token=...);多个消息 id 生成一个合并链接',
+  access: 'message-link',
   positionals: [{ name: 'chat_id' }, { name: 'message_ids', nargs: '+' }],
   async run(a) {
     const url = await (await client()).messageLink(String(a.chat_id), a.message_ids as string[]);
@@ -758,6 +792,7 @@ const messageLink: Command = {
 const selfChat: Command = {
   name: 'self-chat',
   help: '打印当前账号与自己的会话 chat_id(可用于 lark send 给自己留言)',
+  access: 'self-chat',
   async run() {
     const cid = await (await client()).selfChat();
     if (!cid) {
@@ -772,6 +807,7 @@ const selfChat: Command = {
 const read: Command = {
   name: 'read',
   help: '把消息标为已读(同客户端看过:未读推进到其中最新一条,发送方看到已读;话题回复按话题标记)',
+  access: 'read',
   positionals: [{ name: 'chat_id' }, { name: 'message_ids', nargs: '+' }],
   async run(a) {
     const c = await client();
@@ -788,6 +824,7 @@ const read: Command = {
 const config: Command = {
   name: 'config',
   help: '查看生效中的配置(配置项写在 .env 里)',
+  access: 'config',
   async run() {
     printJson(loadConfig());
     return 0;
@@ -799,6 +836,7 @@ const CHAT_TYPE_LABELS: Record<number, string> = { 1: '私聊', 2: '群聊', 3: 
 const chats: Command = {
   name: 'chats',
   help: '列出本地会话',
+  access: 'chats',
   options: [{ name: 'limit', kind: 'int', default: 50 }],
   async run(a) {
     const st = new Storage();
@@ -814,6 +852,7 @@ const chats: Command = {
 const sessions: Command = {
   name: 'sessions',
   help: '列出 agent 会话(session 表)',
+  access: 'sessions',
   options: [{ name: 'limit', kind: 'int', default: 50 }],
   async run(a) {
     const st = new Storage();
@@ -831,6 +870,7 @@ const sessions: Command = {
 const messages: Command = {
   name: 'messages',
   help: '读本地消息记录',
+  access: 'messages',
   positionals: [{ name: 'chat_id' }],
   options: [
     { name: 'anchor', kind: 'string', help: '话题 id;空字符串=仅主会话流' },
@@ -861,6 +901,7 @@ const messages: Command = {
 const search: Command = {
   name: 'search',
   help: '搜索用户/群',
+  access: 'search',
   positionals: [{ name: 'query', nargs: '+' }],
   async run(a) {
     printJson(await (await client()).search((a.query as string[]).join(' ')));
@@ -871,6 +912,7 @@ const search: Command = {
 const api: Command = {
   name: 'api',
   help: '调任意网关接口(类型名见 docs/cmd_table.md)',
+  access: 'api',
   positionals: [
     { name: 'type', help: 'proto 请求类型名(如 chats.PullChatsByIdsRequest)或 cmd 数字' },
     { name: 'json_body', nargs: '?', help: '请求字段 JSON' },
@@ -946,6 +988,7 @@ const list = (v: Parsed[string]) =>
 const searchMessages: Command = {
   name: 'search-messages',
   help: '跨会话搜消息(同客户端搜索框的"消息")',
+  access: 'search-messages',
   positionals: [{ name: 'query', nargs: '+' }],
   options: [
     { name: 'chat', kind: 'string', help: '只搜这些会话(chat_id,逗号分隔)' },
@@ -989,6 +1032,7 @@ const searchMessages: Command = {
 const unread: Command = {
   name: 'unread',
   help: '未读:默认列出有未读的会话;--chat 看某会话的未读消息;--at 只看 @我 的未读消息',
+  access: 'unread',
   options: [
     { name: 'chat', kind: 'string', help: '只看这个会话的未读消息' },
     { name: 'at', kind: 'flag', help: '各会话里 @我(或 @所有人)的未读消息' },
@@ -1028,6 +1072,7 @@ const unread: Command = {
 const members: Command = {
   name: 'members',
   help: '列出会话成员(id、名字、类型 user/bot)',
+  access: 'members',
   positionals: [{ name: 'chat_id' }],
   options: [{ name: 'json', kind: 'flag' }],
   async run(a) {
@@ -1041,6 +1086,7 @@ const members: Command = {
 const users: Command = {
   name: 'users',
   help: '按用户 id 查名字(批量)',
+  access: 'users',
   positionals: [{ name: 'user_ids', nargs: '+' }],
   options: [{ name: 'json', kind: 'flag' }],
   async run(a) {
@@ -1057,6 +1103,7 @@ const users: Command = {
 const getCmd: Command = {
   name: 'get',
   help: '按消息 id 取消息(可跨会话;引用回复的原文、链接里的消息都能取)',
+  access: 'get',
   positionals: [{ name: 'message_ids', nargs: '+' }],
   options: [
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
@@ -1078,6 +1125,7 @@ const getCmd: Command = {
 const thread: Command = {
   name: 'thread',
   help: '拉取一个话题:根消息加最近的回复',
+  access: 'thread',
   positionals: [{ name: 'root_id', help: '话题根消息 id(即消息的 anchor)' }],
   options: [
     { name: 'count', kind: 'int', default: 50, help: '最多取多少条回复' },
@@ -1108,6 +1156,7 @@ async function saveAll(msgs: LarkMessage[], save: boolean): Promise<void> {
 const history: Command = {
   name: 'history',
   help: '拉取会话历史消息',
+  access: 'history',
   positionals: [{ name: 'chat_id' }],
   options: [
     { name: 'start', kind: 'int', help: '起始 position(默认从最新往前)' },
@@ -1184,6 +1233,7 @@ const history: Command = {
 const downloadCmd: Command = {
   name: 'download',
   help: '下载消息里的图片/文件等资源',
+  access: 'download',
   positionals: [{ name: 'msg_id', nargs: '?', help: '消息 id(从本地库查资源 key)' }],
   options: [
     { name: 'key', kind: 'string', help: '直接指定资源 key(img_v3_*/file_v3_*),需配合 --chat' },
@@ -1295,6 +1345,7 @@ async function tagChats(c: LarkClient, wanted: string[]): Promise<Set<string>> {
 const tags: Command = {
   name: 'tags',
   help: '会话标签(分组):不带参数列出标签;带标签名或 id 列出其中的会话',
+  access: 'tags',
   positionals: [{ name: 'tag', nargs: '?' }],
   options: [{ name: 'json', kind: 'flag' }],
   async run(a) {
@@ -1500,6 +1551,7 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
 const listen: Command = {
   name: 'listen',
   help: '常驻接收消息',
+  access: 'listen',
   options: [{ name: 'agent', kind: 'flag', help: '接本地 coding agent 自动回复' }],
   async run(a) {
     process.on('SIGINT', () => {
@@ -1518,6 +1570,75 @@ const listen: Command = {
         out(`运行中凭证失效: ${e.message}`);
       }
     }
+  },
+};
+
+const permissions: Command = {
+  name: 'permissions',
+  help: '命令权限:不带参数列出每个命令能否执行;edit 在终端里交互编辑当前账号的规则(替代全局规则),clear 清除',
+  access: (a) => `permissions.${(a.action ?? 'show') as 'show' | 'edit' | 'clear'}`,
+  positionals: [{ name: 'action', nargs: '?', choices: ['show', 'edit', 'clear'] }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    const action = String(a.action ?? 'show');
+    const auth = new LarkAuth();
+    if (action === 'show') {
+      const { rules, source } = loadRules(auth);
+      const items = (Object.keys(PERMISSIONS) as Permission[]).map((p) => ({
+        name: p,
+        group: PERMISSIONS[p],
+        ...decide(rules, p),
+      }));
+      if (a.json) {
+        printJson({ source, ...rules, commands: items });
+        return 0;
+      }
+      out(`生效规则: ${source}`);
+      out(`allow: ${rules.allow.join(', ') || '-'}`);
+      out(`deny: ${rules.deny.join(', ') || '-'}`);
+      const width = Math.max(...items.map((i) => i.name.length)) + 2;
+      for (const [group, desc] of Object.entries(GROUPS) as [Group, string][]) {
+        out(`\n[${group}] ${desc}`);
+        for (const i of items.filter((x) => x.group === group))
+          out(
+            `  ${i.name.padEnd(width)}${i.allowed ? '允许' : '拒绝'}${i.rule ? `  ${i.rule}` : ''}`,
+          );
+      }
+      return 0;
+    }
+    if (!auth.userId) {
+      err('没有已登录的账号,跟随账号的规则需要先登录(lark auth qr)');
+      return 1;
+    }
+    if (action === 'clear') {
+      saveAccountRules(auth, null);
+      out(`已清除账号 ${auth.userId} 的规则,改用全局规则(LARKX_ALLOW / LARKX_DENY)`);
+      return 0;
+    }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      err(
+        'permissions edit 需要在终端里运行;脚本里可改 LARKX_ALLOW / LARKX_DENY 或数据目录的 permissions.json',
+      );
+      return 2;
+    }
+    const current = loadRules(auth);
+    const editor = new PermissionEditor(
+      current.rules,
+      `命令权限 · 账号 ${auth.userId}`,
+      current.own
+        ? '编辑这个账号自己的规则'
+        : '这个账号还没有自己的规则,下面从全局规则复制;保存后整体替代全局规则',
+    );
+    const rules = await editInTerminal(editor);
+    if (!rules || !editor.dirty) {
+      out('未保存,规则没有变化');
+      return 0;
+    }
+    saveAccountRules(auth, rules);
+    out(`已保存账号 ${auth.userId} 的规则(${permissionsPath(auth)})`);
+    out(`allow: ${rules.allow.join(', ') || '-'}`);
+    out(`deny: ${rules.deny.join(', ') || '-'}`);
+    return 0;
   },
 };
 
@@ -1560,4 +1681,5 @@ export const COMMANDS: Command[] = [
   thread,
   downloadCmd,
   listen,
+  permissions,
 ];

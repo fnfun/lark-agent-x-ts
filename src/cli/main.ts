@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import '../bun-assets.js';
-import { AuthExpired } from '../auth.js';
+import { AuthExpired, LarkAuth } from '../auth.js';
+import { authorize, PermissionDenied } from '../permissions.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
 import { errorText } from './format.js';
@@ -40,7 +41,9 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
   try {
-    return await cmd.run(parse(PROG, cmd, rest));
+    const args = parse(PROG, cmd, rest);
+    authorize(new LarkAuth(), true, typeof cmd.access === 'string' ? cmd.access : cmd.access(args));
+    return await cmd.run(args);
   } catch (e) {
     if (e instanceof HelpRequested) {
       process.stdout.write(`${e.message}\n`);
@@ -49,6 +52,10 @@ async function main(argv: string[]): Promise<number> {
     if (e instanceof UsageError) {
       process.stderr.write(`${e.message}\n`);
       return 2;
+    }
+    if (e instanceof PermissionDenied) {
+      process.stderr.write(`${PROG} ${cmd.name}: ${e.message}\n`);
+      return 126; // 同 shell 里"找到了命令但无权执行"
     }
     // 凭证失效、网络错误等：只打印原因（对应原项目未捕获异常的最后一行），不打印调用栈
     const name = e instanceof AuthExpired ? 'AuthExpired' : (e as Error).name || 'Error';

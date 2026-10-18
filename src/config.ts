@@ -52,7 +52,7 @@ const TRIGGER_ENV: Record<keyof Triggers, string> = {
 };
 
 /** 逗号分隔或 JSON 数组。 */
-function asList(v: string): string[] {
+export function asList(v: string): string[] {
   const s = v.trim();
   if (s.startsWith('[')) {
     try {

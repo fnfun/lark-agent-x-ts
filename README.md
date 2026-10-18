@@ -80,6 +80,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark unread` | 有未读的会话；`--chat <id>` 看某会话的未读消息，`--at` 只看各会话里 @我 的未读消息（`--since`、`--names`、`--json`） |
 | `lark members <chat_id>` / `lark users <user_id...>` | 会话成员（id、名字、user/bot） / 批量查用户名字；`history`、`get`、`thread` 加 `--names` 时发送者显示为名字 |
 | `lark config` | 查看生效配置 |
+| `lark permissions` | 每个命令归哪个权限分组、现在能否执行（`--json`）；`edit` 在终端里交互编辑当前账号的规则，`clear` 清除，见[命令权限](#命令权限) |
 
 ## 配置
 
@@ -87,24 +88,61 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 
 ```bash
 LARKX_REGION=feishu          # feishu(飞书国内版) | lark(Lark 国际版)；只影响还没有凭证时的首次登录
-LARKX_HOME=~/.larkx          # 数据目录：credentials.json、messages.db、login_qr.png
+LARKX_HOME=~/.larkx          # 数据目录：credentials.json、messages.db、permissions.json、login_qr.png
 LARKX_STORAGE_URL=           # 留空=SQLite(LARKX_HOME/messages.db)；MySQL 填 mysql+pymysql://<user>:<password>@<host>:3306/<db>
 LARKX_CONTEXT_SCOPE=anchor   # agent 上下文边界: anchor(会话+话题) | chat(会话) | global(全部共享)
 LARKX_AGENT_BACKEND=claude   # claude | none
 LARKX_SYSTEM_PROMPT=         # 数字人系统提示词，留空用内置默认
 LARKX_MARK_READ=true         # 收到消息自动标已读；false 时由调用方在需要时 `lark read`
 LARKX_AGENT_REACTIONS=false  # 别人对我的消息加/取消表情时交给数字人（如把点赞当作同意执行）
+LARKX_DENY=                  # 拒绝执行的命令与分组，LARKX_ALLOW 为允许的，见下面的命令权限
 LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _INCLUDE_TAGS（会话标签名或 id）/ _KEYWORDS / _GROUP_AT_ONLY
 ```
 
 凭证不放 `.env`，用 `lark auth qr` / `lark auth import` 管理。
+
+### 命令权限
+
+每个命令都可以单独或按分组允许 / 拒绝执行，用来限定数字人能做什么（`listen --agent` 起的 agent 调的也是 `lark`，与你共用同一份规则）。不配置时全部允许。作为库使用时同一套规则也能开启，见[作为库使用](#作为库使用)。
+
+| 分组 | 包含 |
+|---|---|
+| `local` | 只读本机数据：`auth status`、`config`、`chats`、`sessions`、`messages`、`permissions`（查看） |
+| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`unread`、`members`、`users`、`reactions`、`read-status`、`pins`、`flags`、`tags`、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
+| `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`schedule`、`forward`，以及 `scheduled` 的取消与改时间 |
+| `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read` |
+| `organize` | 只影响自己的整理：`flag`，以及 `shortcut` 的置顶与取消 |
+| `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` |
+| `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`permissions` 的 `edit` / `clear` |
+
+读写混用的命令按动作细分，名字写作 `命令.动作`（如 `group.add`、`scheduled.cancel`、`auth.qr`）；`lark permissions` 列出全部名字与归属。
+
+规则是允许和拒绝两个名字列表（逗号分隔或 JSON 数组），名字可以是 `*`、分组、命令或 `命令.动作`。判定时从具体到宽泛逐级找（`命令.动作` → 命令 → 分组 → `*`），第一级命中的规则生效，同一级上拒绝优先；都没命中则允许。
+
+```bash
+# 只读，再加发文本消息；其余一律拒绝
+LARKX_DENY='*'
+LARKX_ALLOW=local,query,send
+
+# 只禁群管理和撤回
+LARKX_DENY=manage,recall
+
+# 禁群管理，但允许改群名（更具体的规则优先）
+LARKX_DENY=manage
+LARKX_ALLOW=group.rename
+```
+
+- **跟随账号**：`lark permissions edit` 在终端里打开分组树，给当前登录的账号设置规则：方向键移动、左右折叠展开，每一项在继承 / 允许 / 拒绝之间切换（空格轮换，或 `a` / `d` / `i`），每行实时显示最终能否执行、由哪条规则决定，`s` 保存、`q` 退出（有未保存的修改时先确认）。规则存在凭证旁边（即数据目录）的 `permissions.json`（以 user_id 为键），这个账号登录时整体替代上面的全局规则；账号还没有自己的规则时，编辑从全局规则的副本开始。`lark permissions clear` 清除，回到全局规则。脚本里改规则就直接写环境变量或 `permissions.json`。
+- **被拒绝时**：退出码 126，stderr 说明是哪条规则拒绝的；`-h` 不受限制。规则里有不认识的名字、或 `permissions.json` 损坏时，所有命令都报错退出（退出码 1），不会放行。
+- 规则拒绝了 `system` 时 `lark permissions edit` / `clear` 也会被拒，要改回请直接编辑 `permissions.json` 或环境变量。
+- 这是防误操作的护栏，不是安全边界：agent 以 `--dangerously-skip-permissions` 运行，能改环境变量或数据目录就能绕过。
 
 ## 作为库使用
 
 库入口在 Node（≥ 22.19）与 Bun 下都能用，导出登录凭证、网关客户端、消息长连接与资源下载；消息库（`Bun.SQL`）与本地 agent（`Bun.spawn`）依赖 Bun，只在命令行里用。作为 git 依赖安装时，Node 加载 `prepare` 编译出的 `lib/`，Bun 直接加载 `src/`（TypeScript 项目在 tsconfig 里设 `customConditions: ["bun"]` 即可直接用源码做类型检查，不依赖 `lib/`）。把本库打进自己的 Bun 单文件可执行时，在入口处 `import 'lark-agent-x-ts/bun-assets'`，协议资产随之嵌入。
 
 ```ts
-import { LarkAuth, LarkClient, setLogSink } from 'lark-agent-x-ts';
+import { LarkAuth, LarkClient, PermissionDenied, setLogSink } from 'lark-agent-x-ts';
 
 setLogSink((level, module, msg) => myLogger.log(level, `${module} - ${msg}`)); // 可选：接到宿主日志，默认写 stderr
 const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // 默认 ~/.larkx/credentials.json；联网校验
@@ -125,7 +163,19 @@ const mentions = await client.unreadMentions(); // 未读的 @我；unreadChats(
 const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000 }); // 跨会话搜消息
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
+
+// 权限：默认不检查（全部允许）。permissions: true 按与命令行相同的规则，也可以直接给一份规则
+const guarded = await LarkClient.create(new LarkAuth(), { permissions: { allow: ['query', 'send'], deny: ['*'] } });
+await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDenied && e.permission); // 'recall'
 ```
+
+**权限**：`LarkClient.create` 的 `permissions` 选项开启与命令行同一套[命令权限](#命令权限)，不传时不检查，与以前一致。
+
+- `true`：用凭证旁 `permissions.json` 里这个账号的规则，没有则用 `LARKX_ALLOW` / `LARKX_DENY`；每次调用时重新读取，改了规则不用重启。也可以直接传 `{ allow, deny }`。
+- 每个公开方法归到一个同名的权限项上（按最接近的命令归类，如 `addMembers` → `group.add`、`sendMessage` 按内容归到 `send` / `send-image` / `send-file`、`api` 与 `gatewayPost` → `api`），不允许时抛 `PermissionDenied`（带 `permission`、`group`、`rule`）。
+- 只检查调用方直接调的那一层：方法内部再调其他方法（如发送时内部调网关）不再检查；传给方法的回调（如长连接的 `onMessage`）不算在内，回调里的调用照常检查。
+- 独立函数 `uploadImage`、`uploadFile`、`downloadMessageResource` 不经过客户端，不受权限控制。
+- `PERMISSIONS`、`GROUPS`、`decide`、`loadRules`、`saveAccountRules` 也一并导出，可用来做自己的权限界面。
 
 ## 开发
 

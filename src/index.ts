@@ -3,6 +3,7 @@
 export { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from './auth.js';
 export {
   type ChatMember,
+  type ClientOptions,
   chatterName,
   type FeedGroup,
   type FlagItem,
@@ -30,6 +31,21 @@ export {
   uploadFile,
   uploadImage,
 } from './media.js';
+export {
+  decide,
+  type EffectiveRules,
+  GROUPS,
+  type Group,
+  loadRules,
+  PERMISSIONS,
+  type Permission,
+  PermissionDenied,
+  type PermissionSource,
+  permissionsPath,
+  type Rules,
+  saveAccountRules,
+  type Verdict,
+} from './permissions.js';
 export type { EditableContent, RichBlock, RichRun, SearchHit } from './proto/builders.js';
 export { contentDataJson, type LarkMessage, type ReactionEvent } from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
