@@ -1,32 +1,6 @@
 # lark-agent-x-ts
 
-飞书 / Lark 网页版消息通道的 TypeScript 实现：以个人账号扫码登录，长连接接收全部消息并入库，以本人身份发消息、标已读、生成消息链接、调任意网关接口，可选接入本地 Claude Code 做"数字人"自动回复。用 Bun 打包成**单文件可执行**，不需要 Python 环境。
-
-> [!IMPORTANT]
-> **本项目迁移自 [cv-cat/LarkAgentX](https://github.com/cv-cat/LarkAgentX)（作者 CVCat）。**
->
-> - 协议逆向、消息编解码、登录流程与 protobuf 定义均来自原项目，本仓库只是把它们用 TypeScript 重写，功能与思路的原创归原作者所有。
-> - 迁移基线是 fork [Thxzzzzz/LarkAgentX](https://github.com/Thxzzzzz/LarkAgentX) 的 `feat/message-link` 分支，commit [`3e406cd`](https://github.com/Thxzzzzz/LarkAgentX/commit/3e406cd57aed7c94b058b25676522a07b2eb9818)（2026-10-13）。该 fork 在上游 `97ad48e` 之上增加了引用回复、结构化富文本、消息链接、自聊会话、标记已读等命令。
-> - 原项目未附带开源许可证，版权归原作者。本仓库公开源码仅供学习与交流，**不附带许可证、不发布到 npm**；原作者如有异议，本仓库会随即下线。
-
-## 状态
-
-fork 版的全部功能已迁移，命令行用法、数据目录、`credentials.json` 与 `messages.db` 格式都与 fork 版一致，可直接替换 `lark` 命令（Python 版写下的凭证和消息库原样沿用）。
-
-| 模块 | 原文件（fork 版） | 本仓库 | 验证 |
-|---|---|---|---|
-| 协议资产：网关包、长连接帧、全量网关定义、接口映射 | `larkx/proto/*.proto`、`lark_all_pb2.py`、`cmd_map.json` | `assets/`、`proto/proto.proto` | 由下面的管线重建；全量定义与接口映射与原版逐字节一致，`proto.proto` 在原版基础上补了编辑版本与 Markdown 字段（见 docs/compat.md） |
-| 登录与凭证：扫码、cookie 导入、凭证校验 | `larkx/auth.py`、`region.py` | `src/auth.ts`、`src/region.ts` | 实测导入/校验/扫码初始化，凭证字段与原版一致 |
-| 网关客户端与消息长连接 | `larkx/client.py` | `src/client.ts` | 实测发送 5 种消息、标已读、消息链接、搜索、拉历史、长连接收回显 |
-| 消息解码（25 种类型）/ 请求构造 | `larkx/proto/decoders.py`、`builders.py` | `src/proto/` | 用原版 Python 生成的对照样本逐项比对 |
-| 本地存储（SQLite / MySQL） | `larkx/storage/` | `src/storage/` | 同一套测试跑 SQLite 与 MySQL 8.4；读 Python 版的库输出逐字节一致 |
-| 数字人（触发规则、会话队列、Claude Code 后端） | `larkx/agent/` | `src/agent/` | 单测（假的 claude 命令）；未用真实 Claude 端到端跑 |
-| 命令行（14 个子命令） | `larkx/cli.py`、`main.py` | `src/cli/` | 只读命令与原版输出逐字节对比 |
-| 资源下载 | `larkx/media.py` | `src/media.ts` | 实测下载的图片与原版逐字节一致 |
-| 协议资产再生成管线 | `dev/proto_pipeline/` | `scripts/proto-pipeline/` | 同一批输入，全部中间产物与资产与原版逐字节一致 |
-| 数字人链路演示 | `dev/demo_*.py` | `scripts/demo-agent.ts` | 默认只打印提示词，`--live` 才调真实后端 |
-
-与原版的少量有意差异（map 字段的遍历顺序、网络错误文案等）见 [docs/compat.md](docs/compat.md)。
+飞书 / Lark 网页版消息通道的 TypeScript 实现：以个人账号扫码登录，长连接接收全部消息并入库，以本人身份发消息、标已读、生成消息链接、调任意网关接口，可选接入本地 Claude Code 做"数字人"自动回复。用 Bun 打包成**单文件可执行**；库入口可在 Node 进程内嵌入。
 
 ## 安装与构建
 
@@ -67,7 +41,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark message-link <chat_id> <msg_id...>` | 生成官方消息链接（单条定位到该消息；多条为合并链接） |
 | `lark self-chat` | 打印与自己的会话 chat_id |
 | `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库；表情变化记日志 |
-| `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复（对应原项目的 `python main.py`） |
+| `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复 |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
 | `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`） |
 | `lark get <msg_id...>` | 按 id 取消息（可跨会话；`--save` 入库，`--json`） |
@@ -180,7 +154,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 ## 开发
 
 ```bash
-bun test                    # 单测 + 与原版的对照测试
+bun test                    # 单测 + 与 Python 版的对照测试
 bun run test:node           # 编译库到 lib/，在 Node 下跑冒烟测试（协议资产、编解码、凭证读写）
 bun run typecheck && bun run lint
 LARKX_TEST_MYSQL_URL=mysql+pymysql://root:test@127.0.0.1:33306/larkx bun test   # 存储测试同时跑 MySQL
@@ -198,6 +172,10 @@ LARKX_TEST_MYSQL_URL=mysql+pymysql://root:test@127.0.0.1:33306/larkx bun test   
 - 凭证（cookie）等同于账号登录态，只保存在本机数据目录，请勿提交或分享。
 - 权利人如认为本仓库的内容侵犯其权益，请提 issue 联系，本仓库会随即处理或下线。
 
-## 致谢
+## 来源与致谢
+
+- 本项目是 [cv-cat/LarkAgentX](https://github.com/cv-cat/LarkAgentX)（作者 CVCat）的 TypeScript 重写：协议逆向、消息编解码、登录流程与 protobuf 定义来自原项目，功能与思路的原创归原作者所有。
+- 重写基线是 fork [Thxzzzzz/LarkAgentX](https://github.com/Thxzzzzz/LarkAgentX) 的 `feat/message-link` 分支，commit [`3e406cd`](https://github.com/Thxzzzzz/LarkAgentX/commit/3e406cd57aed7c94b058b25676522a07b2eb9818)（2026-10-13）。命令行用法、数据目录、`credentials.json` 与 `messages.db` 格式与它一致，可直接替换 `lark` 命令，Python 版写下的凭证和消息库原样沿用；逐模块对照与有意差异见 [docs/compat.md](docs/compat.md)。
+- 原项目未附带开源许可证，版权归原作者。本仓库公开源码仅供学习与交流，**不附带许可证、不发布到 npm**；原作者如有异议，本仓库会随即下线。
 
 感谢 [CVCat](https://github.com/cv-cat) 的 [LarkAgentX](https://github.com/cv-cat/LarkAgentX) 完成了协议逆向这项最难的工作。

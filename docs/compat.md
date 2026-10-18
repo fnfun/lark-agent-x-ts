@@ -2,6 +2,23 @@
 
 目标是**可直接替换**：命令、参数、标准输出、退出码、数据目录、`credentials.json`、`messages.db` 的表结构与内容格式都与 fork 版一致，调用方（如解析 `已发送 msg_id=…`、`OK …/EXPIRED …`、历史行首 position 的程序）不用改。
 
+## 模块对照
+
+fork 版的全部功能都已重写；新增功能见下面差异表的“新增”一行。
+
+| 模块 | 原文件（fork 版） | 本仓库 | 验证 |
+|---|---|---|---|
+| 协议资产：网关包、长连接帧、全量网关定义、接口映射 | `larkx/proto/*.proto`、`lark_all_pb2.py`、`cmd_map.json` | `assets/`、`proto/proto.proto` | 由下面的管线重建；全量定义与接口映射与原版逐字节一致，`proto.proto` 在原版基础上补了编辑版本与 Markdown 字段（见下面的差异表） |
+| 登录与凭证：扫码、cookie 导入、凭证校验 | `larkx/auth.py`、`region.py` | `src/auth.ts`、`src/region.ts` | 实测导入/校验/扫码初始化，凭证字段与原版一致 |
+| 网关客户端与消息长连接 | `larkx/client.py` | `src/client.ts` | 实测发送 5 种消息、标已读、消息链接、搜索、拉历史、长连接收回显 |
+| 消息解码（25 种类型）/ 请求构造 | `larkx/proto/decoders.py`、`builders.py` | `src/proto/` | 用原版 Python 生成的对照样本逐项比对 |
+| 本地存储（SQLite / MySQL） | `larkx/storage/` | `src/storage/` | 同一套测试跑 SQLite 与 MySQL 8.4；读 Python 版的库输出逐字节一致 |
+| 数字人（触发规则、会话队列、Claude Code 后端） | `larkx/agent/` | `src/agent/` | 单测（假的 claude 命令）；未用真实 Claude 端到端跑 |
+| 命令行（fork 版的 14 个子命令） | `larkx/cli.py`、`main.py` | `src/cli/` | 只读命令与原版输出逐字节对比 |
+| 资源下载 | `larkx/media.py` | `src/media.ts` | 实测下载的图片与原版逐字节一致 |
+| 协议资产再生成管线 | `dev/proto_pipeline/` | `scripts/proto-pipeline/` | 同一批输入，全部中间产物与资产与原版逐字节一致 |
+| 数字人链路演示 | `dev/demo_*.py` | `scripts/demo-agent.ts` | 默认只打印提示词，`--live` 才调真实后端 |
+
 ## 已逐字节核对
 
 - `lark config`、`auth status`、`auth check`、`chats`、`sessions`、`messages`（含 `--json`、`--anchor`）、`history`（含 `--json`）、`api`（含原始字节的 `b'...'` 打印）、`search`、`self-chat`：同一份数据下两版输出相同（2026-10-13，读 Python 版写下的 `~/.larkx`）。
