@@ -104,3 +104,26 @@ test('长连接握手无响应时按超时失败（Node 的 WebSocket 此时可�
     server.close();
   }
 });
+
+test('权限检查在 Node 下可用：只检查最外层调用，被拒绝时抛 PermissionDenied', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'larkx-node-perm-'));
+  const original = lib.LarkClient.prototype.api;
+  lib.LarkClient.prototype.api = async () => ({});
+  try {
+    const auth = {
+      userId: '7000000000000000001',
+      appKey: 'app',
+      path: join(dir, 'credentials.json'),
+      requireValid: async () => {},
+    };
+    const c = await lib.LarkClient.create(auth, { permissions: { allow: [], deny: ['api'] } });
+    assert.deepEqual(await c.scheduledMessages('c1'), []);
+    await assert.rejects(
+      c.api('x'),
+      (e) => e instanceof lib.PermissionDenied && e.permission === 'api',
+    );
+  } finally {
+    lib.LarkClient.prototype.api = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

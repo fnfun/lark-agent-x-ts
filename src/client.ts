@@ -5,6 +5,13 @@ import { accessKey, longRequestId, requestCid, requestId } from './ids.js';
 import { getLogger } from './log.js';
 import { uploadFile, uploadImage } from './media.js';
 import {
+  authorize,
+  checkSource,
+  guardMethods,
+  type Permission,
+  type PermissionSource,
+} from './permissions.js';
+import {
   buildCreateChatPacket,
   buildFileMessagePacket,
   buildGroupInfoPacket,
@@ -277,6 +284,14 @@ async function gatewayReason(res: Response): Promise<string> {
   }
 }
 
+export interface ClientOptions {
+  /**
+   * 权限检查：`true` 按与命令行相同的规则（账号自己的规则，没有则 `LARKX_ALLOW` / `LARKX_DENY`），或给一份固定规则；
+   * 不允许时方法抛 PermissionDenied。不传时不检查，全部允许。
+   */
+  permissions?: PermissionSource;
+}
+
 /** 网页协议客户端：网关请求（HTTP + protobuf）与消息长连接。 */
 export class LarkClient {
   private readonly threadChats = new Map<string, boolean>();
@@ -285,13 +300,19 @@ export class LarkClient {
   private constructor(readonly auth: LarkAuth) {}
 
   /** 校验凭证（失效时抛 AuthExpired），缺 app_key / user_id 时补抓并保存。 */
-  static async create(auth: LarkAuth): Promise<LarkClient> {
+  static async create(auth: LarkAuth, o: ClientOptions = {}): Promise<LarkClient> {
     await auth.requireValid();
     if (!auth.appKey || !auth.userId) {
       await auth.validate(true);
       auth.save();
     }
-    return new LarkClient(auth);
+    const client = new LarkClient(auth);
+    const source = o.permissions;
+    if (source) {
+      checkSource(auth, source);
+      guardMethods(client, METHOD_PERMISSIONS, (p) => authorize(auth, source, p));
+    }
+    return client;
   }
 
   async buildWsUrl(): Promise<string> {
@@ -1614,3 +1635,75 @@ export class LarkClient {
     return out;
   }
 }
+
+/** 库方法 → 权限项（与命令行同名，按最接近的命令归类）；类型要求覆盖全部公开方法，新增方法时必须归类。 */
+type Methods<T> = {
+  [K in keyof T]: T[K] extends (...args: never) => unknown ? K : never;
+}[keyof T];
+
+const METHOD_PERMISSIONS: {
+  [K in Methods<LarkClient>]: Permission | ((...args: Parameters<LarkClient[K]>) => Permission);
+} = {
+  buildWsUrl: 'listen',
+  connectWebsocket: 'listen',
+  gatewayPost: 'api',
+  api: 'api',
+  sendMessage: (_chatId, content) =>
+    'image' in content ? 'send-image' : 'file' in content ? 'send-file' : 'send',
+  sendMsg: 'send',
+  sendRich: 'send',
+  sendPost: 'send',
+  scheduleMessage: 'schedule',
+  scheduledMessages: 'scheduled.list',
+  rescheduleMessage: 'scheduled.reschedule',
+  cancelScheduledMessage: 'scheduled.cancel',
+  forwardMessage: 'forward',
+  search: 'search',
+  createChat: 'search',
+  getGroupName: 'search',
+  getChatInfo: 'search',
+  isThreadChat: 'search',
+  searchMessages: 'search-messages',
+  messageLink: 'message-link',
+  selfChat: 'self-chat',
+  getUserName: 'users',
+  userNames: 'users',
+  chatMembers: 'members',
+  createGroup: 'group.create',
+  addMembers: 'group.add',
+  removeMembers: 'group.remove',
+  updateGroup: 'group.rename',
+  pinMessage: 'pin',
+  unpinMessage: 'pin',
+  chatPins: 'pins',
+  feedGroups: 'tags',
+  feedGroupChats: 'tags',
+  shortcuts: 'shortcut.list',
+  addShortcuts: 'shortcut.add',
+  removeShortcuts: 'shortcut.remove',
+  flagMessages: 'flag',
+  flagChats: 'flag',
+  flags: 'flags',
+  translateText: 'translate',
+  translateMessages: 'translate',
+  recallMessage: 'recall',
+  editMessage: 'edit',
+  addReaction: 'react',
+  removeReaction: 'react',
+  reactions: 'reactions',
+  readStates: 'read-status',
+  myReadStates: 'read-status',
+  markRead: 'read',
+  readMessages: 'read',
+  recentChats: 'unread',
+  unreadChats: 'unread',
+  unreadMessages: 'unread',
+  unreadMentions: 'unread',
+  getMessages: 'get',
+  threadMessages: 'thread',
+  threadReplies: 'thread',
+  missedMessages: 'history',
+  positionAt: 'history',
+  historyRange: 'history',
+  pullHistory: 'history',
+};
