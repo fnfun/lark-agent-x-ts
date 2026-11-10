@@ -216,6 +216,11 @@ const upload: Command = {
   options: [
     { name: 'folder', kind: 'string', help: '放进这个文件夹(节点 token)' },
     { name: 'name', kind: 'string', help: '云端文件名(默认用本地文件名)' },
+    {
+      name: 'replace',
+      kind: 'string',
+      help: '覆盖这个文件(链接或 file_token),作为它的新版本;Markdown 文件就这样改',
+    },
   ],
   run: (a) =>
     guarded(async () => {
@@ -223,9 +228,28 @@ const upload: Command = {
       const f = await docs().upload(
         new Uint8Array(readFileSync(path)),
         a.name ? String(a.name) : basename(path),
-        a.folder ? { folder: String(a.folder) } : {},
+        {
+          ...(a.folder ? { folder: String(a.folder) } : {}),
+          ...(a.replace ? { replace: docRef(String(a.replace), 'file').token } : {}),
+        },
       );
-      out(`已上传 token=${f.token} file_token=${f.objToken}`);
+      out(
+        a.replace
+          ? `已覆盖 file_token=${f.objToken}`
+          : `已上传 token=${f.token} file_token=${f.objToken}`,
+      );
+      return 0;
+    }),
+};
+
+const cat: Command = {
+  name: 'cat',
+  help: '把云空间里的文本文件(如 Markdown 文件)原样输出',
+  access: 'doc.cat',
+  positionals: [{ name: 'file', help: '文件链接或 file_token' }],
+  run: (a) =>
+    guarded(async () => {
+      process.stdout.write((await docs().download(docRef(String(a.file), 'file').token)).data);
       return 0;
     }),
 };
@@ -447,6 +471,7 @@ export const doc: CommandGroup = {
     restore,
     upload,
     download,
+    cat,
     exportCmd,
     comments,
     comment,

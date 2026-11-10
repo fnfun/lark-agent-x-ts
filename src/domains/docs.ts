@@ -30,7 +30,9 @@
  * - Uploading a file: up to 4 MB in one `box/stream/upload/all/` request on the upload host (mount
  *   point `explorer`, the folder's node token as the mount node); larger files `box/upload/prepare/`,
  *   then each block to `box/stream/upload/v3/block/` (Adler-32 per block), then
- *   `box/upload/finish/`. Downloading is `box/stream/download/all/<file token>/`.
+ *   `box/upload/finish/`. Passing an existing `file_token` to either path uploads a new version of
+ *   that file (how Markdown files are overwritten). Downloading is
+ *   `box/stream/download/all/<file token>/`.
  * - Exporting an online document: `POST export/create/` (JSON: token, type, file_extension), poll
  *   `export/result/<ticket>`, then download the result's file token. Sheets export to xlsx only
  *   (csv needs a sub-sheet).
@@ -400,13 +402,18 @@ export class Docs {
     );
   }
 
-  /** Upload a local file into My Space or a folder (node token); returns the new Drive file. */
+  /**
+   * Upload a local file into My Space or a folder (node token); returns the new Drive file. With
+   * replace (a file token) the content becomes a new version of that file instead (its node token
+   * is not returned then).
+   */
   async upload(
     data: Uint8Array,
     fileName: string,
-    o: { folder?: string } = {},
+    o: { folder?: string; replace?: string } = {},
   ): Promise<DriveFile> {
     const folder = o.folder || (await this.rootFolder());
+    const version = o.replace ? { file_token: o.replace } : {};
     const host = uploadHost(await this.web.origin());
     let done: Dict;
     if (data.length <= DIRECT_UPLOAD_MAX) {
@@ -422,6 +429,7 @@ export class Docs {
             checksum: String(adler32(data)),
             mount_point: 'explorer',
             mount_node_token: folder,
+            ...version,
           },
         }),
         '上传',
@@ -434,6 +442,7 @@ export class Docs {
             mount_node_token: folder,
             name: fileName,
             size: data.length,
+            ...version,
           },
         }),
         '上传',
@@ -474,7 +483,7 @@ export class Docs {
     const d = (done.data ?? {}) as Dict;
     return toFile({
       token: (d.extra as Dict | undefined)?.node_token ?? '',
-      obj_token: d.file_token,
+      obj_token: d.file_token ?? o.replace,
       name: fileName,
       type: DOC_TYPES.file,
     });

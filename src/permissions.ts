@@ -73,6 +73,7 @@ export const PERMISSIONS = {
   'doc.fetch': 'query',
   'doc.trash': 'query',
   'doc.download': 'query',
+  'doc.cat': 'query',
   'doc.export': 'query',
   'doc.comments': 'query',
   'doc.sharing': 'query',

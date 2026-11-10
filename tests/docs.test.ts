@@ -244,4 +244,20 @@ describe('云文档', () => {
     expect(dispositionName('attachment; filename="plain.txt"')).toBe('plain.txt');
     expect(dispositionName(null)).toBe('');
   });
+
+  test('覆盖已有文件：小文件在上传请求里、大文件在 prepare 里带上原文件的 file_token', async () => {
+    const { docs, calls } = fake((_m, path) => {
+      if (path.endsWith('my_space/obj/')) return ROOT_LISTING;
+      if (path.endsWith('upload/prepare/'))
+        return { code: 0, data: { upload_id: 'u1', block_size: 4 * 1024 * 1024, num_blocks: 2 } };
+      return { code: 0, data: {} };
+    });
+    const small = await docs.upload(new Uint8Array(3), 'a.md', { replace: 'F1' });
+    await docs.upload(new Uint8Array(4 * 1024 * 1024 + 1), 'b.bin', { replace: 'F2' });
+    expect(small.objToken).toBe('F1');
+    expect(calls.find(([, p]) => p.endsWith('upload/all/'))?.[2].query?.file_token).toBe('F1');
+    expect(calls.find(([, p]) => p.endsWith('upload/prepare/'))?.[2].json).toMatchObject({
+      file_token: 'F2',
+    });
+  });
 });
