@@ -5,7 +5,7 @@
  * Supported: headings (#..######), paragraphs (consecutive lines join with a space), bullet,
  * ordered (with its number as `seq`) and to-do items nested by indentation, quotes (one block per
  * line), fenced code with a language, dividers, and inline bold, italic, strikethrough, code and
- * links. Tables and images are kept as plain text.
+ * links, and tables (each cell a text block). Images are kept as plain text.
  */
 
 /** A run of text with its inline styles. */
@@ -24,6 +24,8 @@ export interface BlockSpec {
   seq?: string;
   done?: boolean;
   language?: string;
+  /** Table cells by row, for tables. */
+  rows?: Run[][][];
   children: BlockSpec[];
 }
 
@@ -80,6 +82,18 @@ const language = (name: string) => {
   return LANGUAGES[n] ?? n[0]?.toUpperCase() + n.slice(1);
 };
 
+/** The separator line under a table's header: `| --- | :-: |`. */
+const TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+
+/** A table row's cells: split on unescaped `|`, outer pipes dropped, `\|` unescaped. */
+function tableCells(line: string): string[] {
+  const inner = line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/(?<!\\)\|$/, '');
+  return inner.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+}
+
 const LIST_ITEM = /^(\s*)(?:([-*+])\s+(?:\[([ xX])\]\s+)?|(\d+)[.)]\s+)(.*)$/;
 
 /** Markdown → top-level blocks (list items carry their nested items as children). */
@@ -134,6 +148,20 @@ export function parseMarkdown(markdown: string): BlockSpec[] {
       continue;
     }
     stack = [];
+    if (/^\s*\|/.test(line) && TABLE_RULE.test(lines[i + 1] ?? '')) {
+      flush();
+      const rows = [tableCells(line)];
+      for (i += 2; i < lines.length && /^\s*\|/.test(lines[i] as string); i++)
+        rows.push(tableCells(lines[i] as string));
+      i--;
+      const width = Math.max(...rows.map((r) => r.length));
+      blocks.push({
+        type: 'table',
+        rows: rows.map((r) => Array.from({ length: width }, (_, c) => parseInline(r[c] ?? ''))),
+        children: [],
+      });
+      continue;
+    }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
       flush();

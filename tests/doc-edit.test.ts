@@ -3,7 +3,6 @@ import { DocEditor, newBlockId, operationId } from '../src/domains/doc-edit.js';
 import { docxToMarkdown } from '../src/domains/docx-markdown.js';
 import {
   attributedText,
-  type BlockSpec,
   parseInline,
   parseMarkdown,
   replaceAttributed,
@@ -12,37 +11,32 @@ import type { WebRequest, WebSession } from '../src/web.js';
 
 type Dict = Record<string, unknown>;
 
-/** Specs → a client_vars-like block map, built the way DocEditor builds block data. */
-function toBlockMap(specs: BlockSpec[]) {
-  const map: Record<string, { data: Dict }> = {};
-  let n = 0;
-  const add = (s: BlockSpec): string => {
-    const id = `b${n++}`;
-    const children = s.children.map(add);
-    map[id] = {
-      data: {
-        type: s.type,
-        children,
-        ...(s.runs ? { text: attributedText(s.runs, 'u1') } : {}),
-        ...(s.seq ? { seq: s.seq } : {}),
-        ...(s.done !== undefined ? { done: s.done } : {}),
-        ...(s.language ? { language: s.language } : {}),
-      },
-    };
-    return id;
-  };
-  map.page = {
-    data: {
-      type: 'page',
-      children: specs.map(add),
-      text: attributedText([{ text: '标题' }], 'u1'),
+/**
+ * Runs DocEditor.append against a fake server and rebuilds the document the server would hold
+ * from the committed change map (new blocks' `oi` data, the root's `li` inserts).
+ */
+async function appendAndRebuild(markdown: string) {
+  let changeMap: Record<string, { payload: { ops: { p: unknown[]; action: Dict }[] } }> = {};
+  const web = {
+    json: async (_m: string, path: string, o: WebRequest = {}) => {
+      if (path.endsWith('client_vars'))
+        return { code: 0, data: { block_map: { D: { version: 1, data: { children: [] } } } } };
+      if (path.endsWith('/user/')) return { code: 0, data: { suid: 'u1' } };
+      changeMap = (o.json as { change_map: typeof changeMap }).change_map;
+      return { code: 0, data: { type: 'ACCEPT_COMMIT' } };
     },
-  };
-  return map;
+  } as unknown as WebSession;
+  await new DocEditor(web).append('D', markdown);
+  const map: Record<string, { data: Dict }> = {};
+  for (const [id, change] of Object.entries(changeMap))
+    if (id !== 'D') map[id] = { data: change.payload.ops[0]?.action.oi as Dict };
+  const children = (changeMap.D?.payload.ops ?? []).map((o) => o.action.li);
+  map.D = { data: { type: 'page', children, text: attributedText([{ text: '标题' }], 'u1') } };
+  return docxToMarkdown(map, 'D').markdown;
 }
 
 describe('Markdown 写入文档', () => {
-  test('Markdown → 块 → Markdown 往返一致（标题、段落、嵌套列表、有序、待办、引用、代码、分割线、行内样式和链接）', () => {
+  test('Markdown 经编辑器写进去再读回来一致（标题、段落、嵌套列表、有序、待办、引用、代码、分割线、表格、行内样式和链接）', async () => {
     const body = [
       '# 一级',
       '',
@@ -64,13 +58,16 @@ describe('Markdown 写入文档', () => {
       '',
       '```python',
       'print(1)',
+      'print(2)',
       '```',
+      '',
+      '| 城市 | 人口 |',
+      '| --- | --- |',
+      '| 北京 \\| 首都 | **2184** |',
       '',
       '---',
     ].join('\n');
-    expect(docxToMarkdown(toBlockMap(parseMarkdown(body)), 'page').markdown).toBe(
-      `# 标题\n\n${body}\n`,
-    );
+    expect(await appendAndRebuild(body)).toBe(`# 标题\n\n${body}\n`);
   });
 
   test('连续的行并成一段；代码块语言按显示名记录，未写语言为 PlainText', () => {

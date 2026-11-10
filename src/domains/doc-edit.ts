@@ -9,6 +9,8 @@
  *   shows for that block type (markdown-docx.ts builds it).
  * - Adding it under a parent: on the parent, at its current version,
  *   `{p: ["children", index], action: {li: <block id>}}`; removing one: `{..., action: {ld: id}}`.
+ * - A table is one block with `rows_id`, `columns_id`, `column_set` (widths) and `cell_set` (row id +
+ *   column id → `{merge_info, block_id}`); each cell is a `table_cell` block holding a text block.
  * - Block ids are "dox" + the document's two-letter operation id + random letters and digits, 27
  *   characters long; the operation id comes from the document token (unscrambled when the token
  *   does not start with "dox").
@@ -22,6 +24,7 @@ import {
   attributedText,
   type BlockSpec,
   parseMarkdown,
+  type Run,
   replaceAttributed,
 } from './markdown-docx.js';
 
@@ -55,17 +58,60 @@ interface Page {
   children: string[];
 }
 
+/** Fields every block carries. */
+const common = (type: string, parent: string, author: string): Dict => ({
+  type,
+  parent_id: parent,
+  comments: null,
+  revisions: null,
+  locked: false,
+  hidden: false,
+  author,
+});
+
+/** Total column width a new table spreads over, as the server lays out imported tables. */
+const TABLE_WIDTH = 730;
+
+/**
+ * A table's record data: row and column ids ("row"/"col" + a UUID), widths, and a cell per row and
+ * column whose block (a table_cell holding one text block) `addCell` creates.
+ */
+function tableData(
+  spec: BlockSpec,
+  parent: string,
+  author: string,
+  addCell: (runs: Run[], cellId: string) => void,
+  newId: () => string,
+): Dict {
+  const rows = spec.rows ?? [];
+  const width = Math.max(1, ...rows.map((r) => r.length));
+  const rowIds = rows.map(() => `row${crypto.randomUUID()}`);
+  const colIds = Array.from({ length: width }, () => `col${crypto.randomUUID()}`);
+  const cellSet: Dict = {};
+  rows.forEach((row, r) => {
+    colIds.forEach((col, c) => {
+      const cellId = newId();
+      addCell(row[c] ?? [], cellId);
+      cellSet[`${rowIds[r]}${col}`] = {
+        merge_info: { row_span: 1, col_span: 1 },
+        block_id: cellId,
+      };
+    });
+  });
+  return {
+    ...common('table', parent, author),
+    rows_id: rowIds,
+    columns_id: colIds,
+    column_set: Object.fromEntries(
+      colIds.map((c) => [c, { column_width: Math.floor(TABLE_WIDTH / width) }]),
+    ),
+    cell_set: cellSet,
+  };
+}
+
 /** One block's record data, as client_vars shows it. */
 function blockData(spec: BlockSpec, parent: string, children: string[], author: string): Dict {
-  const base: Dict = {
-    type: spec.type,
-    parent_id: parent,
-    comments: null,
-    revisions: null,
-    locked: false,
-    hidden: false,
-    author,
-  };
+  const base = common(spec.type, parent, author);
   if (spec.type === 'divider') return base;
   return {
     ...base,
@@ -88,14 +134,33 @@ export class DocEditor {
     if (!specs.length) return 0;
     const author = await this.me();
     const changes: Record<string, Dict> = {};
+    const put = (id: string, data: Dict) => {
+      changes[id] = { id, version: 0, payload: { ops: [{ p: [], action: { oi: data } }] } };
+    };
     const create = (spec: BlockSpec, parent: string): string => {
       const id = newBlockId(docToken);
+      if (spec.type === 'table') {
+        put(
+          id,
+          tableData(
+            spec,
+            parent,
+            author,
+            (cellRuns, cellId) => {
+              const textId = newBlockId(docToken);
+              put(
+                textId,
+                blockData({ type: 'text', runs: cellRuns, children: [] }, cellId, [], author),
+              );
+              put(cellId, { ...common('table_cell', id, author), children: [textId] });
+            },
+            () => newBlockId(docToken),
+          ),
+        );
+        return id;
+      }
       const kids = spec.children.map((c) => create(c, id));
-      changes[id] = {
-        id,
-        version: 0,
-        payload: { ops: [{ p: [], action: { oi: blockData(spec, parent, kids, author) } }] },
-      };
+      put(id, blockData(spec, parent, kids, author));
       return id;
     };
     const ids = specs.map((s) => create(s, docToken));
