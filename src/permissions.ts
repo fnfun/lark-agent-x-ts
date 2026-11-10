@@ -83,6 +83,8 @@ export const PERMISSIONS = {
   'base.tables': 'query',
   'base.fields': 'query',
   'base.records': 'query',
+  'sheet.tabs': 'query',
+  'sheet.read': 'query',
   'cal.calendars': 'query',
   'cal.agenda': 'query',
   unread: 'query',
@@ -127,6 +129,8 @@ export const PERMISSIONS = {
   'base.add': 'modify',
   'base.set': 'modify',
   'base.field-add': 'modify',
+  'sheet.write': 'modify',
+  'sheet.append': 'modify',
   read: 'modify',
 
   flag: 'organize',

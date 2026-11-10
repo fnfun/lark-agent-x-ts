@@ -158,6 +158,9 @@ Scope (picked by how often agents use them; everything else falls back to passth
 
 - Base, done on both accounts: `lark base tables/fields/records/add/set/rm/field-add` and the library's `Base` (text, number, single and multi select with new options created on the fly, date, checkbox and URL cells). Details at the top of `src/domains/base.ts`.
 - Not done for Base: views and filters, record search, attachments, deleting fields and tables, other field types (people, links, lookups, formulas are read as text).
+- Sheets, done on the Lark account (the Feishu account's session was revoked mid-way, see below): `lark sheet tabs/read/write/append` and the library's `Sheets`. Writes go through `v2/sheet/user_changes` (a protobuf of cell actions); reads export .xlsx and parse it, since the page's cell blocks use an undocumented encoding. Details at the top of `src/domains/sheet.ts`.
+- Not done for Sheets: writing formulas (the web app sends a parsed form the server does not recompute), inserting and deleting rows and columns, styles, find and replace, adding tabs.
+- Caution: observing the web apps in a headless browser with the Feishu test account's cookies got that session revoked by the server; the account had to log in again.
 
 ### v0.7: Mail + Approval
 

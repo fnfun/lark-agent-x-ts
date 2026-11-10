@@ -84,6 +84,7 @@ export {
   type TrashedFile,
 } from './domains/docs.js';
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
+export { columnName, Sheets, type SheetTab } from './domains/sheet.js';
 export {
   type NewTask,
   type Task,
@@ -93,6 +94,7 @@ export {
   type TaskUpdate,
 } from './domains/task.js';
 export { Wiki, type WikiNode, type WikiSpace, wikiToken } from './domains/wiki.js';
+export { type CellValue, cellIndex, readXlsx, type XlsxSheet } from './domains/xlsx.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
 export {
