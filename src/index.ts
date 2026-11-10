@@ -61,6 +61,7 @@ export {
   type DocComment,
   DocComments,
 } from './domains/doc-comments.js';
+export { DocEditor } from './domains/doc-edit.js';
 export {
   type Collaborator,
   DocPermissions,
@@ -84,6 +85,7 @@ export {
   type TrashedFile,
 } from './domains/docs.js';
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
+export { type BlockSpec, parseMarkdown } from './domains/markdown-docx.js';
 export { columnName, Sheets, type SheetTab } from './domains/sheet.js';
 export {
   type NewTask,

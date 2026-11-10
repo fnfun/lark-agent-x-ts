@@ -124,6 +124,8 @@ export const PERMISSIONS = {
   'task.update': 'modify',
   'task.complete': 'modify',
   'doc.rename': 'modify',
+  'doc.append': 'modify',
+  'doc.write': 'modify',
   'doc.resolve': 'modify',
   'wiki.rename': 'modify',
   'base.add': 'modify',

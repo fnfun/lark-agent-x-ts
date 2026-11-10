@@ -154,13 +154,14 @@
 - 表格：工作表列表与信息、读写区域、CSV 导入导出、查找替换、增删行列、新建表格。
 - 多维表格：表、字段、记录的增删改查，视图列表与筛选，记录搜索、附件、数据查询。仪表盘、表单、自动化、角色、应用模式这几块面大、使用少，不在本版。
 
-**进展（2026-11-11，多维表格和电子表格完成，文档待做）。** 协同通道走普通 HTTP 就能用：`POST /space/api/rce/messages` 承载的就是网页通过 WebSocket 发的 `USER_CHANGES` 消息，member id 由客户端自定，不需要 ticket，服务端回 `ACCEPT_COMMIT`。消息格式是在无头 Chrome（DevTools 协议）里打开专为测试新建的资源、记录网页自己的流量得到的，再用 HTTP 重放验证。
+**进展（2026-11-11，多维表格、电子表格和文档完成）。** 协同通道走普通 HTTP 就能用：`POST /space/api/rce/messages` 承载的就是网页通过 WebSocket 发的 `USER_CHANGES` 消息，member id 由客户端自定，不需要 ticket，服务端回 `ACCEPT_COMMIT`。消息格式是在无头 Chrome（DevTools 协议）里打开专为测试新建的资源、记录网页自己的流量得到的，再用 HTTP 重放验证。
 
 - 多维表格，两个账号都实测完成：`lark base tables/fields/records/add/set/rm/field-add` 与库的 `Base`（文本、数字、单选和多选（没有的选项自动新建）、日期、复选框、超链接）。细节写在 `src/domains/base.ts` 文件头。
 - 多维表格未做：视图与筛选、记录搜索、附件、删除字段和数据表、其他字段类型（人员、关联、查找引用、公式按文本读出）。
 - 电子表格，在 Lark 账号上实测完成（飞书账号的会话中途被注销，见下）：`lark sheet tabs/read/write/append` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
 - 电子表格未做：写公式（网页发的是解析后的公式结构，服务端不会重算）、插入删除行列、样式、查找替换、新增工作表。
-- 文档（docx 编辑）未做：提交走 `POST /space/api/docx/blocks/user_change`（`{member_id, uuid, page_id, change_map: {块 id: {id, version, payload: {ops}}}}`），但按块的操作格式要在网页里观察；等飞书测试账号重新登录后再做（见下面的注意），不让 Lark 账号冒同样的风险。读 docx 为 Markdown 已经可以（v0.4），也可以用服务端自己的导出（`doc export --format md`）。
+- 文档，在 Lark 账号上实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
+- 文档未做：改已有块里的文字（文本变更集）、图片和附件、表格、划词评论、历史版本。
 - 注意：用飞书测试账号的 cookie 在无头浏览器里观察网页，导致该会话被服务端注销，需要重新登录。
 
 ### v0.7：邮箱 + 审批

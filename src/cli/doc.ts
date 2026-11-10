@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { LarkAuth } from '../auth.js';
 import { DocComments } from '../domains/doc-comments.js';
+import { DocEditor } from '../domains/doc-edit.js';
 import { DocPermissions, LINK_SHARE, type LinkShare } from '../domains/doc-permissions.js';
 import {
   DOC_TYPES,
@@ -440,6 +441,54 @@ const importCmd: Command = {
   },
 };
 
+/** Markdown from --file, the text arguments, or stdin (in that order). */
+async function markdownInput(a: Record<string, unknown>): Promise<string> {
+  if (a.file) return readFileSync(String(a.file), 'utf8');
+  const text = (a.text as string[] | undefined) ?? [];
+  if (text.length) return text.join(' ');
+  return await new Response(Bun.stdin.stream()).text();
+}
+
+const EDIT_INPUT = {
+  positionals: [
+    DOC_ARG,
+    {
+      name: 'text',
+      nargs: '*' as const,
+      help: 'Markdown 文本(以 - 开头时前面加 --);不给时读 --file 或标准输入',
+    },
+  ],
+  options: [{ name: 'file', kind: 'string' as const, help: '从这个 Markdown 文件读' }],
+};
+
+const append: Command = {
+  name: 'append',
+  help: '在 docx 末尾追加 Markdown(标题、段落、列表、待办、引用、代码、分割线、行内样式和链接)',
+  access: 'doc.append',
+  ...EDIT_INPUT,
+  run: (a) =>
+    guarded(async () => {
+      const r = await ref(a);
+      const n = await new DocEditor(web()).append(r.token, await markdownInput(a));
+      out(`已追加 ${n} 块`);
+      return 0;
+    }),
+};
+
+const writeDoc: Command = {
+  name: 'write',
+  help: '用 Markdown 替换 docx 的正文(标题保留)',
+  access: 'doc.write',
+  ...EDIT_INPUT,
+  run: (a) =>
+    guarded(async () => {
+      const r = await ref(a);
+      const n = await new DocEditor(web()).overwrite(r.token, await markdownInput(a));
+      out(`已写入 ${n} 块`);
+      return 0;
+    }),
+};
+
 const fetch: Command = {
   name: 'fetch',
   help: '读文档(docx),输出 Markdown',
@@ -464,6 +513,8 @@ export const doc: CommandGroup = {
     importCmd,
     rm,
     fetch,
+    append,
+    writeDoc,
     rename,
     mv,
     cp,
