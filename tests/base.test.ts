@@ -161,4 +161,27 @@ describe('多维表格', () => {
     expect(parseAssignments(['标题=a=b', '金额='])).toEqual({ 标题: 'a=b', 金额: '' });
     expect(() => parseAssignments(['标题'])).toThrow('字段=值');
   });
+
+  test('按字段筛选：单选等于选项名，多选为含有该选项；分组视图的各组记录按顺序合并；没有的字段报错', async () => {
+    const grouped = {
+      ...TABLE,
+      recordCount: 3,
+      groupList: [{ recordIDList: ['rec1'] }, { recordIDList: ['rec2', 'rec3'] }],
+      recordMap: {
+        rec1: { fldSel: { value: 'optA' }, fldTags: { value: ['optT'] } },
+        rec2: { fldSel: { value: 'optA' } },
+        rec3: { fldTags: { value: ['optT'] } },
+      },
+    };
+    const { base } = fake([grouped]);
+    expect((await base.records('B1')).map((r) => r.id)).toEqual(['rec1', 'rec2', 'rec3']);
+    expect((await base.records('B1', { where: { 状态: '进行中' } })).map((r) => r.id)).toEqual([
+      'rec1',
+      'rec2',
+    ]);
+    expect(
+      (await base.records('B1', { where: { 标签: '紧急', 状态: '进行中' } })).map((r) => r.id),
+    ).toEqual(['rec1']);
+    await expect(base.records('B1', { where: { 不存在: 'x' } })).rejects.toThrow('没有这个字段');
+  });
 });

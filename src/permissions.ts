@@ -82,6 +82,7 @@ export const PERMISSIONS = {
   'wiki.get': 'query',
   'base.tables': 'query',
   'base.fields': 'query',
+  'base.views': 'query',
   'base.records': 'query',
   'sheet.tabs': 'query',
   'sheet.read': 'query',

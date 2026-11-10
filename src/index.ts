@@ -44,6 +44,7 @@ export {
   type BaseField,
   type BaseRecord,
   type BaseTable,
+  type BaseView,
   type CellInput,
   FIELD_TYPES,
   type FieldType,

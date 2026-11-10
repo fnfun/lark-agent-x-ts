@@ -86,18 +86,54 @@ const fields: Command = {
     }),
 };
 
+const views: Command = {
+  name: 'views',
+  help: '列出数据表的视图',
+  access: 'base.views',
+  positionals: [BASE_ARG],
+  options: [TABLE_OPTION, JSON_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      const list = await new Base(web()).views(t.token, t.table);
+      if (a.json) printJson(list);
+      else for (const v of list) out(`${v.id}\t${v.name}`);
+      return 0;
+    }),
+};
+
 const records: Command = {
   name: 'records',
   help: '列出记录(按第一个视图的顺序)',
   access: 'base.records',
   positionals: [BASE_ARG],
-  options: [TABLE_OPTION, { name: 'limit', kind: 'int', default: 100 }, JSON_OPTION],
+  options: [
+    TABLE_OPTION,
+    { name: 'view', kind: 'string', help: '按这个视图的顺序(视图 id,见 views)' },
+    {
+      name: 'where',
+      kind: 'string',
+      help: '只要 字段=值 的记录,多个条件用 ; 分隔(在读到的记录里本地筛选;多选字段为含有该选项)',
+    },
+    { name: 'limit', kind: 'int', default: 100 },
+    JSON_OPTION,
+  ],
   run: (a) =>
     guarded(async () => {
       const t = await target(a);
       const list = await new Base(web()).records(t.token, {
         limit: Number(a.limit),
         ...(t.table ? { table: t.table } : {}),
+        ...(a.view ? { view: String(a.view) } : {}),
+        ...(a.where
+          ? {
+              where: Object.fromEntries(
+                Object.entries(parseAssignments(String(a.where).split(';').filter(Boolean))).map(
+                  ([k, v]) => [k, String(v ?? '')],
+                ),
+              ),
+            }
+          : {}),
       });
       if (a.json) printJson(list);
       else
@@ -198,6 +234,6 @@ const fieldAdd: Command = {
 
 export const baseGroup: CommandGroup = {
   name: 'base',
-  help: '多维表格:列数据表、字段、记录,增删改记录,加字段',
-  subcommands: [tables, fields, records, add, set, rm, fieldAdd],
+  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、按字段筛选),增删改记录,加字段',
+  subcommands: [tables, fields, views, records, add, set, rm, fieldAdd],
 };

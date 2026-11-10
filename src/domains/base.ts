@@ -85,6 +85,13 @@ export interface BaseField {
   options: SelectOption[];
 }
 
+export interface BaseView {
+  id: string;
+  name: string;
+  /** The server's view type (1 is the grid). */
+  type: number;
+}
+
 export interface BaseRecord {
   id: string;
   /** Cell values by field name, readable (option names, dates as text, links as URLs). */
@@ -104,7 +111,12 @@ interface TableState {
   recordCount: number;
   firstIds: string[];
   records: Record<string, Dict>;
+  views: BaseView[];
 }
+
+/** Record ids of a (possibly grouped) view, groups in order. */
+const groupIds = (groups: unknown) =>
+  ((groups ?? []) as Dict[]).flatMap((g) => (g.recordIDList ?? []) as string[]);
 
 /** How long reads wait for a lagging snapshot: up to RETRIES × WAIT_MS. */
 const SNAPSHOT_RETRIES = 12;
@@ -228,13 +240,22 @@ export class Base {
     return (await this.load(baseToken, tableId, 1)).fields;
   }
 
-  /** A table's records in its first view's order, up to limit. */
+  /** A table's views, in order. */
+  async views(baseToken: string, tableId?: string): Promise<BaseView[]> {
+    return (await this.load(baseToken, tableId, 1)).views;
+  }
+
+  /**
+   * A table's records in a view's order (the table's current view by default), up to limit.
+   * `where` keeps records whose readable value equals the given text (for multi select: has that
+   * option); it filters the records read, locally.
+   */
   async records(
     baseToken: string,
-    o: { table?: string; limit?: number } = {},
+    o: { table?: string; view?: string; limit?: number; where?: Record<string, string> } = {},
   ): Promise<BaseRecord[]> {
     const limit = o.limit ?? 500;
-    const t = await this.load(baseToken, o.table, Math.min(limit, 200));
+    const t = await this.load(baseToken, o.table, Math.min(limit, 200), o.view);
     const ids = [...t.firstIds];
     const cells = { ...t.records };
     while (ids.length < Math.min(limit, t.recordCount)) {
@@ -250,7 +271,7 @@ export class Base {
         '读取记录',
       );
       const data = unzip((page.data as Dict).records) as Dict;
-      const more = (((data.groupList ?? []) as Dict[])[0]?.recordIDList ?? []) as string[];
+      const more = groupIds(data.groupList);
       if (!more.length) break;
       ids.push(...more);
       Object.assign(cells, (data.recordMap ?? {}) as Record<string, Dict>);
@@ -262,15 +283,28 @@ export class Base {
       seen.add(f.name);
       return key;
     });
-    return ids.slice(0, limit).map((id) => ({
+    const records = ids.slice(0, limit).map((id) => ({
       id,
       fields: Object.fromEntries(
         t.fields.map((f, i) => [
-          keys[i],
+          keys[i] as string,
           readCell(f, (cells[id]?.[f.id] as Dict | undefined)?.value),
         ]),
       ),
     }));
+    const where = Object.entries(o.where ?? {});
+    for (const [name] of where) if (!keys.includes(name)) throw new Error(`没有这个字段: ${name}`);
+    return records.filter((r) =>
+      where.every(([name, want]) => {
+        const v = r.fields[name];
+        const field = t.fields[keys.indexOf(name)];
+        return field?.type === FIELD_TYPES.multiselect
+          ? String(v ?? '')
+              .split(', ')
+              .includes(want)
+          : String(v ?? '') === want;
+      }),
+    );
   }
 
   /** Add a record with these cell values (by field name or id); returns its id. */
@@ -518,6 +552,7 @@ export class Base {
     baseToken: string,
     tableId: string | undefined,
     recordLimit: number,
+    view?: string,
   ): Promise<TableState> {
     let t: Dict = {};
     let meta: Dict = {};
@@ -525,7 +560,7 @@ export class Base {
     for (let attempt = 0; attempt < SNAPSHOT_RETRIES; attempt++) {
       const body = check(
         await this.web.json('GET', `/space/api/v1/bitable/${baseToken}/clientvars`, {
-          query: { tableID: tableId ?? '', recordLimit },
+          query: { tableID: tableId ?? '', recordLimit, ...(view ? { viewID: view } : {}) },
         }),
         '读取多维表格',
       );
@@ -537,7 +572,9 @@ export class Base {
       await new Promise((r) => setTimeout(r, SNAPSHOT_WAIT_MS));
     }
     const fieldMap = (t.fieldMap ?? {}) as Record<string, Dict>;
-    const viewId = String(t.currentView ?? ((t.views ?? []) as string[])[0] ?? '');
+    const viewMap = (t.viewMap ?? {}) as Record<string, Dict>;
+    const viewId = view ?? String(t.currentView ?? ((t.views ?? []) as string[])[0] ?? '');
+    if (view && !viewMap[view]) throw new Error(`没有这个视图: ${view}`);
     const order = ((
       ((t.viewMap as Dict | undefined)?.[viewId] as Dict | undefined)?.property as Dict | undefined
     )?.fields ?? Object.keys(fieldMap)) as string[];
@@ -552,7 +589,12 @@ export class Base {
         .map((id) => toField(id, fieldMap[id] as Dict, primary)),
       nextRank: String((t.rankInfo as Dict | undefined)?.nextRank ?? 'i00000000'),
       recordCount: Number(t.recordCount ?? 0),
-      firstIds: ((((t.groupList ?? []) as Dict[])[0]?.recordIDList ?? []) as string[]).slice(),
+      firstIds: groupIds(t.groupList),
+      views: ((t.views ?? []) as string[]).map((id) => ({
+        id,
+        name: String(viewMap[id]?.name ?? ''),
+        type: Number(viewMap[id]?.type ?? 0),
+      })),
       records: (t.recordMap ?? {}) as Record<string, Dict>,
     };
   }

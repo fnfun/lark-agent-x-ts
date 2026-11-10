@@ -157,7 +157,8 @@
 **进展（2026-11-11，多维表格、电子表格和文档完成）。** 协同通道走普通 HTTP 就能用：`POST /space/api/rce/messages` 承载的就是网页通过 WebSocket 发的 `USER_CHANGES` 消息，member id 由客户端自定，不需要 ticket，服务端回 `ACCEPT_COMMIT`。消息格式是在无头 Chrome（DevTools 协议）里打开专为测试新建的资源、记录网页自己的流量得到的，再用 HTTP 重放验证。
 
 - 多维表格，两个账号都实测完成：`lark base tables/fields/records/add/set/rm/field-add` 与库的 `Base`（文本、数字、单选和多选（没有的选项自动新建）、日期、复选框、超链接）。细节写在 `src/domains/base.ts` 文件头。
-- 多维表格未做：视图与筛选、记录搜索、附件、删除字段和数据表、其他字段类型（人员、关联、查找引用、公式按文本读出）。
+- 多维表格还能列出视图、按视图顺序读记录、按字段值筛选（在读到的记录里本地筛选）。
+- 多维表格未做：服务端筛选与搜索、编辑视图、附件、删除字段和数据表、其他字段类型（人员、关联、查找引用、公式按文本读出）。
 - 电子表格，在 Lark 账号上实测完成（飞书账号的会话中途被注销，见下）：`lark sheet tabs/read/write/append` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
 - 电子表格未做：写公式（网页发的是解析后的公式结构，服务端不会重算）、插入删除行列、样式、查找替换、新增工作表。
 - 文档，在 Lark 账号上实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
