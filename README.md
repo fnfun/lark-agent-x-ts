@@ -51,6 +51,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark thread <root_id>` | Fetch a thread: the root message plus the latest replies (`--count`, `--save`, `--json`) |
 | `lark download <msg_id> -o <path>` | Download the image/file in a message (fetched from the server if the message isn't in the local database) |
 | `lark api <type_name> '<json>'` | Call any gateway API (type names are listed in `assets/cmd_map.json`) |
+| `lark web <METHOD> <path> ['<json>']` | Call a web app's API on the tenant domain with the login cookies (e.g. `lark web GET /space/api/user/`; `--query '<json>'`); the app's entry page is opened first so its cookies are set. Which apps work is listed at the top of `src/web.ts` |
 | `lark chats` / `lark sessions` | Chat list / agent session table |
 | `lark search <keyword>` | Search users/group chats |
 | `lark search-messages [keyword]` | Search messages across chats (`--chat`, `--from`, `--since`/`--until`: `3d`, `2026-10-01` or a timestamp; `--at-me` (also matches @all), `--at <user_id,...>`, `--attachment image,video,file,link,folder`, `--chat-type group\|p2p`, `--sender-type` / `--exclude-sender-type user\|bot`; `--limit`, `--json`). The keyword may be left out when a filter is given |
@@ -93,7 +94,7 @@ Every command can be allowed or denied individually or by group, to limit what t
 | `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read`, `group nickname` |
 | `organize` | Organizing that only affects yourself: `flag`, `mute`, plus pinning and unpinning with `shortcut` and editing with `tags` |
 | `manage` | Group chat management: `group`'s `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`, and approving or rejecting with `requests` |
-| `system` | Account and process level: `auth`'s `qr` / `import`, `listen`, `api`, `permissions`'s `edit` / `clear` |
+| `system` | Account and process level: `auth`'s `qr` / `import`, `listen`, `api`, `web`, `permissions`'s `edit` / `clear` |
 
 Commands that mix reads and writes are split by action, named `command.action` (e.g. `group.add`, `scheduled.cancel`, `auth.qr`); `lark permissions` lists all names and the groups they belong to.
 
@@ -158,7 +159,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 - `true`: uses this account's rules from `permissions.json` next to the credentials, or `LARKX_ALLOW` / `LARKX_DENY` if there are none; they are re-read on every call, so rule changes don't need a restart. You can also pass `{ allow, deny }` directly.
 - Every public method maps to a permission item of the same name (classified under the closest command, e.g. `addMembers` → `group.add`, `sendMessage` → `send` / `send-image` / `send-file` / `send-video` / `send-audio` depending on the content, `api` and `gatewayPost` → `api`); when not allowed, it throws `PermissionDenied` (with `permission`, `group`, `rule`).
 - Only the layer the caller calls directly is checked: other methods called internally by a method (e.g. the gateway call made while sending) aren't checked again; callbacks passed to a method (e.g. the long-lived connection's `onMessage`) don't count, and calls made inside a callback are checked as usual.
-- The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource` don't go through the client and aren't subject to permission control.
+- The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource`, and `WebSession` (web app APIs: `new WebSession(auth).json('GET', '/space/api/user/')`), don't go through the client and aren't subject to permission control.
 - `PERMISSIONS`, `GROUPS`, `decide`, `loadRules`, and `saveAccountRules` are exported as well, so you can build your own permissions UI.
 
 ## Development

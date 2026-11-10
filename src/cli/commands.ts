@@ -39,7 +39,9 @@ import { type Dict, parseJsonKeepingBigInts } from '../proto/dict.js';
 import { getRegion, REGIONS, type Region, urls } from '../region.js';
 import { Storage } from '../storage/index.js';
 import { head, preview } from '../text.js';
-import type { CommandSpec, Option, Parsed } from './args.js';
+import { WebSession } from '../web.js';
+import type { Option, Parsed } from './args.js';
+import { type Command, client, err, list, out, s } from './common.js';
 import { errorText, printJson, pyDatetime, shortTime } from './format.js';
 import { keepListening } from './listen-loop.js';
 import { editInTerminal, PermissionEditor } from './permissions-editor.js';
@@ -47,21 +49,6 @@ import { qrAscii, saveQrPng } from './qr.js';
 import { parseTimeArg } from './time.js';
 
 const logger = getLogger('larkx.cli');
-
-const out = (s: string) => process.stdout.write(`${s}\n`);
-const err = (s: string) => process.stderr.write(`${s}\n`);
-const s = (v: Parsed[string]) => (v === undefined ? undefined : String(v));
-
-export interface Command extends CommandSpec {
-  /**
-   * The matching permission (see src/permissions.ts); commands that both read and write pick
-   * `command.action` from their arguments.
-   */
-  access: Permission | ((args: Parsed) => Permission);
-  run(args: Parsed): Promise<number>;
-}
-
-const client = async () => LarkClient.create(new LarkAuth());
 
 async function readLine(prompt: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -1178,6 +1165,40 @@ const search: Command = {
   },
 };
 
+const web: Command = {
+  name: 'web',
+  help: '调网页应用的接口(租户域名下的 HTTP JSON 接口,如 GET /space/api/user/)',
+  access: 'web',
+  positionals: [
+    { name: 'method', choices: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+    { name: 'path', help: '租户域名下的路径,如 /space/api/user/' },
+    { name: 'json_body', nargs: '?', help: '请求体 JSON' },
+  ],
+  options: [{ name: 'query', kind: 'string', help: '查询参数 JSON,如 {"count":10}' }],
+  async run(a) {
+    let body: unknown;
+    let query: Record<string, string> | undefined;
+    try {
+      body = a.json_body === undefined ? undefined : JSON.parse(String(a.json_body));
+      query = a.query === undefined ? undefined : JSON.parse(String(a.query));
+    } catch (e) {
+      err(`JSON 解析失败: ${(e as Error).message}`);
+      return 2;
+    }
+    const res = await new WebSession(new LarkAuth()).request(String(a.method), String(a.path), {
+      query,
+      json: body,
+    });
+    const text = await res.text();
+    try {
+      printJson(JSON.parse(text));
+    } catch {
+      out(text);
+    }
+    return 0;
+  },
+};
+
 const api: Command = {
   name: 'api',
   help: '调任意网关接口(类型名见 docs/cmd_table.md)',
@@ -1271,14 +1292,6 @@ async function senderNames(
     return new Map();
   }
 }
-
-const list = (v: Parsed[string]) =>
-  v === undefined
-    ? undefined
-    : String(v)
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean);
 
 const searchMessages: Command = {
   name: 'search-messages',
@@ -2232,6 +2245,7 @@ export const COMMANDS: Command[] = [
   sessions,
   messages,
   search,
+  web,
   searchMessages,
   searchUsers,
   searchBots,

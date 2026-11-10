@@ -30,7 +30,7 @@ export const GROUPS = {
   modify: '改动已有消息或别人看得见的状态(撤回、编辑、表情、Pin、标已读)',
   organize: '只影响自己的整理(标记、会话置顶、免打扰、会话标签)',
   manage: '群管理(建群、拉人、移出、改群名、管理员、发言权限、入群审批、分享链接)',
-  system: '账号与进程级操作(登录、常驻接收、调任意网关接口、改权限)',
+  system: '账号与进程级操作(登录、常驻接收、调任意网关或网页接口、改权限)',
 } as const;
 
 export type Group = keyof typeof GROUPS;
@@ -112,6 +112,7 @@ export const PERMISSIONS = {
   'auth.import': 'system',
   listen: 'system',
   api: 'system',
+  web: 'system',
   'permissions.edit': 'system',
   'permissions.clear': 'system',
 } as const satisfies Record<string, Group>;

@@ -51,6 +51,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark thread <root_id>` | 拉取一个话题：根消息加最近的回复（`--count`、`--save`、`--json`） |
 | `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
+| `lark web <METHOD> <路径> ['<json>']` | 用登录态调租户域名下网页应用的接口（如 `lark web GET /space/api/user/`；`--query '<json>'`），会先打开对应应用的入口页拿到它的 cookie。哪些应用可用见 `src/web.ts` 文件头 |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
 | `lark search-messages [关键词]` | 跨会话搜消息（`--chat`、`--from`、`--since`/`--until`：`3d`、`2026-10-01` 或时间戳；`--at-me`（含 @所有人）、`--at <user_id,...>`、`--attachment image,video,file,link,folder`、`--chat-type group\|p2p`、`--sender-type` / `--exclude-sender-type user\|bot`；`--limit`、`--json`）。给了过滤条件时可以不带关键词 |
@@ -93,7 +94,7 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 | `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read`、`group nickname` |
 | `organize` | 只影响自己的整理：`flag`、`mute`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
 | `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`，以及 `requests` 的同意与拒绝 |
-| `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`permissions` 的 `edit` / `clear` |
+| `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`web`、`permissions` 的 `edit` / `clear` |
 
 读写混用的命令按动作细分，名字写作 `命令.动作`（如 `group.add`、`scheduled.cancel`、`auth.qr`）；`lark permissions` 列出全部名字与归属。
 
@@ -158,7 +159,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 - `true`：用凭证旁 `permissions.json` 里这个账号的规则，没有则用 `LARKX_ALLOW` / `LARKX_DENY`；每次调用时重新读取，改了规则不用重启。也可以直接传 `{ allow, deny }`。
 - 每个公开方法归到一个同名的权限项上（按最接近的命令归类，如 `addMembers` → `group.add`、`sendMessage` 按内容归到 `send` / `send-image` / `send-file` / `send-video` / `send-audio`、`api` 与 `gatewayPost` → `api`），不允许时抛 `PermissionDenied`（带 `permission`、`group`、`rule`）。
 - 只检查调用方直接调的那一层：方法内部再调其他方法（如发送时内部调网关）不再检查；传给方法的回调（如长连接的 `onMessage`）不算在内，回调里的调用照常检查。
-- 独立函数 `uploadImage`、`uploadFile`、`downloadMessageResource` 不经过客户端，不受权限控制。
+- 独立函数 `uploadImage`、`uploadFile`、`downloadMessageResource`，以及 `WebSession`（网页应用接口：`new WebSession(auth).json('GET', '/space/api/user/')`）不经过客户端，不受权限控制。
 - `PERMISSIONS`、`GROUPS`、`decide`、`loadRules`、`saveAccountRules` 也一并导出，可用来做自己的权限界面。
 
 ## 开发

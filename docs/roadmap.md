@@ -101,6 +101,13 @@ Tasks (the first new domain done over the gateway, used to validate the foundati
 
 Acceptance: `bun test` (fake server); read-only queries on a real account; write operations only in a self-created test tasklist.
 
+**Status (2026-11-10, in progress, blocked on verification).**
+
+- Done: the pipeline extracts namespaces registered as arrays, so every `*.v1` definition is now available (`cmd_map.json` and the core assets are unchanged); the web login availability table (top of `src/web.ts`); `WebSession` and `lark web`; command groups in the CLI entry; helpers shared by command files in `src/cli/common.ts`.
+- Findings: most `todo.v1.*` cmds answer "command not found" on the gateway, while the older `todo.*` ones work (`todo.GetTaskCenterRequest` lists the task containers; `todo.QueryContainerTasksRequest` is asynchronous and only returns a query id). Approval and Attendance return 404 on the test tenant, and Miaoda has no entry on Lark (international).
+- Blocked: the test account has no tasks, docs or calendar data, so reads only return empty results; creating data and verifying writes needs writes on the real account, which the rules allow only for the self chat. Tasks, and every later domain, wait for a decision: allow writes on resources created for testing in the test account (a test task, doc, calendar event), deleted afterwards, or provide data to read.
+- Not done yet: the `destroy` permission group (added with the first destructive domain command) and the tasks commands.
+
 ### v0.4: Docs, Drive, Wiki (read + non-collaborative writes)
 
 - Search: documents, wikis, sheets, via universal search.
