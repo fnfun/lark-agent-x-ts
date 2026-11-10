@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { LarkAuth } from '../src/auth.js';
-import { chatterName } from '../src/client.js';
+import { chatterName, profileText } from '../src/client.js';
 import type { Dict } from '../src/proto/dict.js';
 import { newClient } from './helpers.js';
 
@@ -168,5 +168,114 @@ describe('会话标签', () => {
     expect(reqs.map(([, d]) => d)).toEqual([{ count: '20' }, { count: '20', cursor: 'c1' }]);
     expect(await c.feedGroupChats('2')).toEqual(['71']);
     expect(reqs.at(-1)?.[1]).toEqual({ args: { '2': { count: '20' } } });
+  });
+});
+
+describe('搜人、搜机器人、搜群', () => {
+  const search = (results: Dict[]) => {
+    const c = newClient();
+    withLocale(c);
+    const filters: Dict[] = [];
+    c.api = async (_type, data) => {
+      const ctx = ((data as Dict).header as Dict).searchContext as Dict;
+      filters.push((ctx.entityItems as Dict[])[0] as Dict);
+      return { header: { hasMore: false }, results };
+    };
+    return { c, filters };
+  };
+
+  test('搜人：过滤开关进 userFilter，只取人的结果，名字去掉高亮', async () => {
+    const { c, filters } = search([
+      {
+        id: 'u1',
+        type: 1,
+        titleHighlighted: '<h>同事</h>甲',
+        summaryHighlighted: '研发部',
+        resultMeta: { userMeta: { id: '7100000000000000001', chatId: '7200000000000000001' } },
+      },
+      { id: 'g1', type: 3, resultMeta: { groupChatMeta: { id: '7200000000000000002' } } },
+    ]);
+    expect(await c.searchUsers('同事', { chatted: true, excludeExternal: true })).toEqual([
+      {
+        userId: '7100000000000000001',
+        name: '同事甲',
+        description: '研发部',
+        chatId: '7200000000000000001',
+        email: '',
+        crossTenant: false,
+      },
+    ]);
+    expect(filters[0]).toEqual({
+      type: 1,
+      filter: { userFilter: { haveChatter: true, excludeOuterContact: true } },
+    });
+  });
+
+  test('搜群按模式过滤在本地做：服务端不支持，只留下要的那一类', async () => {
+    const group = (id: string, mode: number) => ({
+      id,
+      type: 3,
+      titleHighlighted: '项目协作群',
+      resultMeta: { groupChatMeta: { id, mode, userCount: 3, isMember: true } },
+    });
+    const { c, filters } = search([group('g1', 1), group('g2', 3), group('g3', 2)]);
+    const got = await c.searchChats('', { mode: 'topic', memberIds: ['u1'], sort: 'members' });
+    expect(got.map((h) => [h.chatId, h.mode])).toEqual([
+      ['g2', 'topic'],
+      ['g3', 'topic'],
+    ]);
+    expect(filters[0]?.filter).toEqual({
+      groupChatFilter: { chatMemberIds: ['u1'], sortType: 4 },
+    });
+  });
+});
+
+describe('资料卡', () => {
+  test('字段值：多语言文本按当前语言取，链接取文字或地址，列表合并，跳过标题和图标', () => {
+    const text = { default_val: 'R&D', i18n_vals: { zh_cn: '研发部' } };
+    expect(profileText({ text }, 'zh_CN')).toBe('研发部');
+    expect(profileText({ text }, 'en_US')).toBe('R&D');
+    expect(profileText([{ text }, { text: { default_val: '平台组' } }], 'zh_CN')).toBe(
+      '研发部、平台组',
+    );
+    expect(
+      profileText({ title: { default_val: '复制链接' }, link: 'https://example.com/u' }, 'zh_CN'),
+    ).toBe('https://example.com/u');
+    expect(profileText({ icon: 'x', title: { default_val: '仅标题' } }, 'zh_CN')).toBe('');
+  });
+
+  test('只留可见且有值的字段，标签按当前语言，带上名字', async () => {
+    const c = newClient();
+    withLocale(c);
+    c.api = async (type) => {
+      if (type === 'chatters.PullChattersByIdsRequest')
+        return { chatters: { '7100000000000000001': { name: '同事甲' } } };
+      expect(type).toBe('users.PullUserProfileV2Request');
+      const label = (zh: string, en: string) => ({ defaultVal: en, i18nVals: { zh_cn: zh } });
+      return {
+        profile: {
+          fields: [
+            {
+              key: 'B-DEPARTMENT',
+              visible: true,
+              i18nNames: label('部门', 'Department'),
+              strFieldVal: JSON.stringify({ text: { default_val: '研发部' } }),
+            },
+            { key: 'B-DESCRIPTION', visible: true, i18nNames: label('状态', 'Status') },
+            {
+              key: 'B-PHONE',
+              visible: false,
+              i18nNames: label('电话', 'Phone'),
+              strFieldVal: JSON.stringify({ text: { default_val: '000' } }),
+            },
+          ],
+        },
+      };
+    };
+    expect(await c.userProfile('7100000000000000001')).toEqual({
+      userId: '7100000000000000001',
+      name: '同事甲',
+      fields: [{ key: 'B-DEPARTMENT', label: '部门', value: '研发部' }],
+    });
   });
 });

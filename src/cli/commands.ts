@@ -4,7 +4,16 @@ import { createInterface } from 'node:readline/promises';
 import { getBackend } from '../agent/backend.js';
 import { AgentDispatcher, type QuotedMessage } from '../agent/dispatcher.js';
 import { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from '../auth.js';
-import { LarkClient, type SendOptions } from '../client.js';
+import {
+  ATTACHMENT_TYPES,
+  type AttachmentType,
+  type ChatInfo,
+  type ChatSummary,
+  LarkClient,
+  type SenderType,
+  type SendOptions,
+  type UserProfile,
+} from '../client.js';
 import { dataDir, loadConfig } from '../config.js';
 import { getLogger } from '../log.js';
 import { download, extractResourceKey, messageResourceUrl } from '../media.js';
@@ -163,11 +172,32 @@ const REPLY_OPTIONS: Option[] = [
   },
 ];
 
+/** The chat_id positional of commands that also take `user:<user_id>`. */
+const CHAT_TARGET = {
+  name: 'chat_id',
+  help: '会话 id;写成 user:<user_id> 表示与该用户的私聊(没有时自动创建)',
+};
+
+/**
+ * chat_id arguments also take `user:<user_id>`, meaning the direct chat with that user; prints the
+ * error and returns null when it cannot be resolved.
+ */
+async function chatTarget(c: LarkClient, raw: Parsed[string]): Promise<string | null> {
+  const v = String(raw);
+  if (!v.startsWith('user:')) return v;
+  try {
+    return await c.directChat(v.slice('user:'.length));
+  } catch (e) {
+    err(`找不到私聊: ${errorText(e)}`);
+    return null;
+  }
+}
+
 const send: Command = {
   name: 'send',
   help: '发送文本消息',
   access: 'send',
-  positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
+  positionals: [CHAT_TARGET, { name: 'text', nargs: '+' }],
   options: [
     ...REPLY_OPTIONS,
     { name: 'links', kind: 'flag', help: '把文本里的 [文字](url) 发成带文字的超链接' },
@@ -190,8 +220,9 @@ const send: Command = {
   ],
   async run(a) {
     const c = await client();
+    const chatId = await chatTarget(c, a.chat_id);
+    if (chatId === null) return 1;
     const st = new Storage();
-    const chatId = String(a.chat_id);
     const text = (a.text as string[]).join(' ');
     const o = await replyTarget(st, chatId, a);
     let msgId: string | null;
@@ -286,12 +317,13 @@ function mediaCommand(kind: 'image' | 'file'): Command {
     name: `send-${kind}`,
     help: `发送${label}(本地文件,自动上传)`,
     access: `send-${kind}`,
-    positionals: [{ name: 'chat_id' }, { name: 'path' }],
+    positionals: [CHAT_TARGET, { name: 'path' }],
     options: REPLY_OPTIONS,
     async run(a) {
       const c = await client();
+      const chatId = await chatTarget(c, a.chat_id);
+      if (chatId === null) return 1;
       const st = new Storage();
-      const chatId = String(a.chat_id);
       const path = String(a.path);
       const name = basename(path);
       let data: Uint8Array;
@@ -322,7 +354,7 @@ const schedule: Command = {
   name: 'schedule',
   help: '定时发送消息(到点由服务端发出)',
   access: 'schedule',
-  positionals: [{ name: 'chat_id' }, { name: 'text', nargs: '+' }],
+  positionals: [CHAT_TARGET, { name: 'text', nargs: '+' }],
   options: [
     {
       name: 'at',
@@ -346,8 +378,9 @@ const schedule: Command = {
       return 1;
     }
     const c = await client();
+    const chatId = await chatTarget(c, a.chat_id);
+    if (chatId === null) return 1;
     const st = new Storage();
-    const chatId = String(a.chat_id);
     const text = (a.text as string[]).join(' ');
     const o = await replyTarget(st, chatId, a);
     await st.close();
@@ -465,16 +498,17 @@ const forward: Command = {
 
 const group: Command = {
   name: 'group',
-  help: '群管理:create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>',
-  access: (a) => `group.${a.action as 'create' | 'add' | 'remove' | 'rename'}`,
+  help: '群管理:info <chat_id> 群信息、create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>',
+  access: (a) => `group.${a.action as 'info' | 'create' | 'add' | 'remove' | 'rename'}`,
   positionals: [
-    { name: 'action', choices: ['create', 'add', 'remove', 'rename'] },
+    { name: 'action', choices: ['info', 'create', 'add', 'remove', 'rename'] },
     { name: 'args', nargs: '+' },
   ],
   options: [
     { name: 'members', kind: 'string', help: 'create 时一起拉进群的人(user_id,逗号分隔)' },
     { name: 'desc', kind: 'string', help: '群描述(create / rename)' },
     { name: 'topic', kind: 'flag', help: 'create 时建话题群' },
+    { name: 'json', kind: 'flag', help: 'info 输出 JSON' },
   ],
   async run(a) {
     const c = await client();
@@ -482,6 +516,15 @@ const group: Command = {
     const target = String(first);
     try {
       switch (a.action) {
+        case 'info': {
+          const info = await c.chatInfo(target);
+          if (!info) {
+            err(`找不到会话: ${target}`);
+            return 1;
+          }
+          printChatInfo(info, Boolean(a.json), await c.userNames([info.ownerId]));
+          return 0;
+        }
         case 'create': {
           const id = await c.createGroup([target, ...rest].join(' '), list(a.members) ?? [], {
             ...(a.desc ? { description: String(a.desc) } : {}),
@@ -518,6 +561,37 @@ const group: Command = {
     }
   },
 };
+
+const POST_TYPE_LABELS = {
+  anyone: '所有人',
+  admins: '仅群主和管理员',
+  whitelist: '指定成员',
+  unknown: '未知',
+} as const;
+
+function printChatInfo(info: ChatInfo, json: boolean, names: Map<string, string>): void {
+  if (json) {
+    printJson(info);
+    return;
+  }
+  const role = info.owner ? '群主' : info.admin ? '管理员' : '成员';
+  const owner = info.ownerId ? `${info.ownerId}(${names.get(info.ownerId) ?? '?'})` : '-';
+  for (const [k, v] of [
+    ['chat_id', info.chatId],
+    ['名称', info.name || '(未命名)'],
+    ['类型', CHAT_KIND_LABELS[info.type]],
+    ['描述', info.description || '-'],
+    ['群主', owner],
+    ['人数', String(info.memberCount)],
+    ['创建于', info.createTime ? shortTime(info.createTime) : '-'],
+    ['我的身份', role],
+    ['发言权限', POST_TYPE_LABELS[info.postType]],
+    ['免打扰', info.muted ? '是' : '否'],
+    ['公开群', info.public ? '是' : '否'],
+    ['外部群', info.crossTenant ? '是' : '否'],
+  ])
+    out(`${k}\t${v}`);
+}
 
 const pin: Command = {
   name: 'pin',
@@ -997,12 +1071,27 @@ const list = (v: Parsed[string]) =>
 
 const searchMessages: Command = {
   name: 'search-messages',
-  help: '跨会话搜消息(同客户端搜索框的"消息")',
+  help: '跨会话搜消息(同客户端搜索框的"消息");关键词可省略,只按过滤条件搜',
   access: 'search-messages',
-  positionals: [{ name: 'query', nargs: '+' }],
+  positionals: [{ name: 'query', nargs: '*' }],
   options: [
     { name: 'chat', kind: 'string', help: '只搜这些会话(chat_id,逗号分隔)' },
     { name: 'from', kind: 'string', help: '只搜这些人发的(user_id,逗号分隔)' },
+    { name: 'at-me', kind: 'flag', help: '只搜 @我 的消息(含 @所有人)' },
+    { name: 'at', kind: 'string', help: '只搜 @ 了这些人的消息(user_id,逗号分隔)' },
+    {
+      name: 'attachment',
+      kind: 'string',
+      help: `只搜带这类附件的消息(逗号分隔:${Object.keys(ATTACHMENT_TYPES).join('/')})`,
+    },
+    { name: 'chat-type', kind: 'string', choices: ['group', 'p2p'], help: '只搜群聊或私聊' },
+    { name: 'sender-type', kind: 'string', choices: ['user', 'bot'], help: '只搜人或机器人发的' },
+    {
+      name: 'exclude-sender-type',
+      kind: 'string',
+      choices: ['user', 'bot'],
+      help: '排除人或机器人发的',
+    },
     {
       name: 'since',
       kind: 'string',
@@ -1022,11 +1111,33 @@ const searchMessages: Command = {
       err((e as Error).message);
       return 1;
     }
-    const hits = await (await client()).searchMessages((a.query as string[]).join(' '), {
+    const attachments = list(a.attachment) ?? [];
+    const bad = attachments.filter((t) => !(t in ATTACHMENT_TYPES));
+    if (bad.length) {
+      err(`不认识的附件类型: ${bad.join(', ')}(可用: ${Object.keys(ATTACHMENT_TYPES).join('/')})`);
+      return 2;
+    }
+    const query = (a.query as string[]).join(' ');
+    const filtered = [a.chat, a.from, a.since, a.until, a.at, a.attachment, a.chat_type].some(
+      (v) => v !== undefined,
+    );
+    if (!query && !filtered && !a.at_me && !a.sender_type && !a.exclude_sender_type) {
+      err('需要关键词或至少一个过滤条件');
+      return 2;
+    }
+    const c = await client();
+    const hits = await c.searchMessages(query, {
       chatIds: list(a.chat),
       fromIds: list(a.from),
       since,
       until,
+      atIds: a.at_me ? [c.auth.userId, ...(list(a.at) ?? [])] : list(a.at),
+      attachmentTypes: attachments as AttachmentType[],
+      chatType: s(a.chat_type) as 'group' | 'p2p' | undefined,
+      senderTypes: a.sender_type ? [String(a.sender_type) as SenderType] : undefined,
+      excludeSenderTypes: a.exclude_sender_type
+        ? [String(a.exclude_sender_type) as SenderType]
+        : undefined,
       limit: Number(a.limit),
     });
     if (a.json) printJson(hits);
@@ -1110,6 +1221,149 @@ const users: Command = {
   },
 };
 
+const user: Command = {
+  name: 'user',
+  help: '查看一个人的资料卡(名字、部门、邮箱、状态等,取决于租户设置与可见范围)',
+  access: 'user',
+  positionals: [{ name: 'user_id' }],
+  options: [{ name: 'json', kind: 'flag' }],
+  async run(a) {
+    let profile: UserProfile;
+    try {
+      profile = await (await client()).userProfile(String(a.user_id));
+    } catch (e) {
+      err(`查询资料失败: ${errorText(e)}`);
+      return 1;
+    }
+    if (a.json) printJson(profile);
+    else {
+      out(`${profile.userId}\t${profile.name}`);
+      for (const f of profile.fields) out(`${f.label}\t${f.value}`);
+    }
+    return 0;
+  },
+};
+
+const LIMIT_OPTION: Option = { name: 'limit', kind: 'int', default: 20 };
+
+const searchUsers: Command = {
+  name: 'search-users',
+  help: '搜人(同客户端搜索框的"联系人");关键词可省略,只按过滤条件列出',
+  access: 'search-users',
+  positionals: [{ name: 'query', nargs: '*' }],
+  options: [
+    { name: 'chatted', kind: 'flag', help: '只要聊过天的人' },
+    { name: 'exclude-external', kind: 'flag', help: '排除外部(其他租户)用户' },
+    { name: 'resigned', kind: 'flag', help: '只要已离职的人' },
+    { name: 'enterprise-email', kind: 'flag', help: '只要有企业邮箱的人' },
+    { name: 'ids', kind: 'string', help: '只在这些 user_id 里找(逗号分隔)' },
+    LIMIT_OPTION,
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const hits = await (await client()).searchUsers((a.query as string[]).join(' '), {
+      chatted: Boolean(a.chatted),
+      excludeExternal: Boolean(a.exclude_external),
+      resigned: Boolean(a.resigned),
+      enterpriseEmail: Boolean(a.enterprise_email),
+      userIds: list(a.ids),
+      limit: Number(a.limit),
+    });
+    if (a.json) printJson(hits);
+    else
+      for (const h of hits)
+        out(`${h.userId}\t${h.name}${h.crossTenant ? '(外部)' : ''}\t${h.description}`);
+    return 0;
+  },
+};
+
+const searchBots: Command = {
+  name: 'search-bots',
+  help: '搜机器人和智能体',
+  access: 'search-bots',
+  positionals: [{ name: 'query', nargs: '*' }],
+  options: [
+    { name: 'chat', kind: 'string', help: '只在这些会话里找(chat_id,逗号分隔)' },
+    { name: 'chatted', kind: 'flag', help: '只要聊过天的' },
+    LIMIT_OPTION,
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const hits = await (await client()).searchBots((a.query as string[]).join(' '), {
+      chatIds: list(a.chat),
+      chatted: Boolean(a.chatted),
+      limit: Number(a.limit),
+    });
+    if (a.json) printJson(hits);
+    else
+      for (const h of hits)
+        out(`${h.botId}\t${h.name}${h.agent ? '(智能体)' : ''}\t${h.description}`);
+    return 0;
+  },
+};
+
+const chatSearch: Command = {
+  name: 'chat-search',
+  help: '搜群(按群名,也匹配成员名);关键词可省略,只按过滤条件列出',
+  access: 'chat-search',
+  positionals: [{ name: 'query', nargs: '*' }],
+  options: [
+    { name: 'member', kind: 'string', help: '只要包含这些人的群(user_id,逗号分隔)' },
+    { name: 'mode', kind: 'string', choices: ['group', 'topic'], help: '只要普通群或话题群' },
+    {
+      name: 'sort',
+      kind: 'string',
+      choices: ['active', 'created', 'members'],
+      help: '排序:最近活跃、创建时间、人数(默认按相关度)',
+    },
+    LIMIT_OPTION,
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const hits = await (await client()).searchChats((a.query as string[]).join(' '), {
+      memberIds: list(a.member),
+      mode: s(a.mode) as 'group' | 'topic' | undefined,
+      sort: s(a.sort) as 'active' | 'created' | 'members' | undefined,
+      limit: Number(a.limit),
+    });
+    if (a.json) printJson(hits);
+    else
+      for (const h of hits)
+        out(
+          `${h.chatId}\t${h.mode === 'topic' ? '话题群' : '群聊'}\t${h.name}\t${h.memberCount} 人${h.member ? '' : '(未加入)'}`,
+        );
+    return 0;
+  },
+};
+
+const CHAT_KIND_LABELS = { p2p: '私聊', group: '群聊', topic: '话题群' } as const;
+
+const chatList: Command = {
+  name: 'chat-list',
+  help: '从服务端列出会话列表(最近活跃在前);本地记录见 chats',
+  access: 'chat-list',
+  options: [
+    { name: 'type', kind: 'string', choices: ['p2p', 'group', 'topic'], help: '只列这类会话' },
+    { name: 'exclude-muted', kind: 'flag', help: '排除免打扰的会话' },
+    { name: 'limit', kind: 'int', default: 50 },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const list = await (await client()).chatList({
+      types: a.type ? [String(a.type) as ChatSummary['type']] : undefined,
+      excludeMuted: Boolean(a.exclude_muted),
+      limit: Number(a.limit),
+    });
+    if (a.json) printJson(list);
+    else
+      for (const c of list)
+        out(
+          `${c.chatId}\t${CHAT_KIND_LABELS[c.type]}\t${c.name || '(未命名)'}\t${c.muted ? '免打扰\t' : ''}${c.unread ? `未读 ${c.unread}\t` : ''}活跃于 ${shortTime(Math.floor(c.updatedAt / 1000))}`,
+        );
+    return 0;
+  },
+};
+
 const getCmd: Command = {
   name: 'get',
   help: '按消息 id 取消息(可跨会话;引用回复的原文、链接里的消息都能取)',
@@ -1167,7 +1421,7 @@ const history: Command = {
   name: 'history',
   help: '拉取会话历史消息',
   access: 'history',
-  positionals: [{ name: 'chat_id' }],
+  positionals: [CHAT_TARGET],
   options: [
     { name: 'start', kind: 'int', help: '起始 position(默认从最新往前)' },
     { name: 'count', kind: 'int', default: 20 },
@@ -1183,7 +1437,8 @@ const history: Command = {
   ],
   async run(a) {
     const c = await client();
-    const chatId = String(a.chat_id);
+    const chatId = await chatTarget(c, a.chat_id);
+    if (chatId === null) return 1;
     const count = Number(a.count);
     if (a.since !== undefined || a.until !== undefined) {
       let since: number | undefined;
@@ -1699,9 +1954,14 @@ export const COMMANDS: Command[] = [
   messages,
   search,
   searchMessages,
+  searchUsers,
+  searchBots,
+  chatSearch,
+  chatList,
   unread,
   members,
   users,
+  user,
   api,
   history,
   getCmd,

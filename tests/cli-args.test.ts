@@ -32,6 +32,18 @@ describe('参数解析（对齐 argparse）', () => {
     expect(parse('lark', send, ['c1', '-1'])).toMatchObject({ text: ['-1'] });
   });
 
+  test('任意个数的位置参数（*）可以为空，也可以吃掉剩下的全部', () => {
+    const spec = { name: 'find', help: '', positionals: [{ name: 'query', nargs: '*' as const }] };
+    expect(parse('lark', spec, [])).toEqual({ query: [] });
+    expect(parse('lark', spec, ['月报', '导出'])).toEqual({ query: ['月报', '导出'] });
+    const tail = {
+      ...spec,
+      positionals: [{ name: 'query', nargs: '*' as const }, { name: 'chat_id' }],
+    };
+    expect(parse('lark', tail, ['c1'])).toEqual({ query: [], chat_id: 'c1' });
+    expect(parse('lark', tail, ['月报', 'c1'])).toEqual({ query: ['月报'], chat_id: 'c1' });
+  });
+
   test('可选位置参数、短别名、整数、默认值', () => {
     expect(parse('lark', download, ['-o', 'x.png'])).toEqual({
       out: 'x.png',

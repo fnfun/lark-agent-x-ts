@@ -85,6 +85,34 @@ describe('跨会话搜消息', () => {
     expect([reqs[1]?.sessionSeqId, reqs[1]?.paginationToken]).toEqual([2, 't1']);
   });
 
+  test('@人、附件、会话类型与发送方类型换成服务端的过滤字段和枚举值', async () => {
+    const c = newClient();
+    Object.assign(c.auth, { region: { locale: 'zh_CN' } });
+    let filter: Dict = {};
+    c.api = async (_type, data) => {
+      const ctx = ((data as Dict).header as Dict).searchContext as Dict;
+      filter = ((ctx.entityItems as Dict[])[0] as Dict).filter as Dict;
+      filter = filter.messageFilter as Dict;
+      return { header: { hasMore: false }, results: [] };
+    };
+    await c.searchMessages('', {
+      atIds: ['me'],
+      attachmentTypes: ['file', 'image', 'folder'],
+      chatType: 'p2p',
+      senderTypes: ['user'],
+      excludeSenderTypes: ['bot'],
+    });
+    expect(filter).toEqual({
+      includeAtUserIds: ['me'],
+      includeAttachmentTypes: [3, 1, 5],
+      chatType: 2,
+      fromTypes: [2],
+      excludedFromTypes: [1],
+    });
+    await c.searchMessages('周报', { chatType: 'group' });
+    expect(filter).toEqual({ chatType: 1 });
+  });
+
   test('时间参数：相对时长、日期、日期时间与时间戳', () => {
     const now = new Date(2026, 9, 14, 12, 0, 0).getTime();
     expect(parseTimeArg('30m', now)).toBe(now - 30 * 60_000);

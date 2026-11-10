@@ -26,12 +26,12 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark auth qr` | Log in by QR code (recommended; `--region lark` logs in to Lark, the international version) |
 | `lark auth import` | Log in by pasting a cookie |
 | `lark auth check` / `status` | Check whether the credentials have expired / show a credentials overview |
-| `lark send <chat_id> <text>` | Send a message (`--root` replies into a thread, `--reply <msg_id>` sends a quote reply, `--links` sends `[text](url)` as hyperlinks, `--md [--title]` sends Markdown (rendered as Markdown by the client), `--post [--title]` sends HTML rich text, `--rich <json\|@file>` sends structured rich text; `--cid` sets the idempotency key, so resending with the same cid never sends a duplicate) |
+| `lark send <chat_id> <text>` | Send a message (`--root` replies into a thread, `--reply <msg_id>` sends a quote reply, `--links` sends `[text](url)` as hyperlinks, `--md [--title]` sends Markdown (rendered as Markdown by the client), `--post [--title]` sends HTML rich text, `--rich <json\|@file>` sends structured rich text; `--cid` sets the idempotency key, so resending with the same cid never sends a duplicate). Wherever a command takes `<chat_id>` to send to or read from (`send`, `send-image`, `send-file`, `schedule`, `history`), `user:<user_id>` means the direct chat with that user (created if there is none yet) |
 | `lark send-image <chat_id> <path>` / `lark send-file <chat_id> <path>` | Send an image / file (local files are uploaded automatically; `--root` and `--reply` are supported too) |
 | `lark schedule <chat_id> <text> --at <time>` / `lark scheduled <chat_id>` | Schedule a message (`--at 10m`, `--at "2026-10-15 09:30"`, `--md`; each chat can have only one pending scheduled message at a time) / list pending scheduled messages (`--cancel`, `--reschedule` together with `--at`) |
 | `lark translate <text>` | Translate text (`--to en`, default zh); with `--msg` the arguments are message ids and those messages are translated |
 | `lark forward <msg_id> <chat_id...>` | Forward a message to one or more chats |
-| `lark group create <name>` / `add` / `remove` / `rename` | Create a group chat (`--members`, `--desc`, `--topic` creates a topic group), add members, remove members, rename the group or change its description |
+| `lark group info <chat_id>` / `create <name>` / `add` / `remove` / `rename` | Show group details (owner, member count, description, my role, who may post, `--json`), create a group chat (`--members`, `--desc`, `--topic` creates a topic group), add members, remove members, rename the group or change its description |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin a message (`--remove` unpins) / list pinned messages in a chat |
 | `lark shortcut [chat_id,...]` | Pin chats to the top of the chat list (`--remove` unpins; with no arguments, lists pinned chats) |
 | `lark tags [tag]` | Feed tags (feed groups): list tags, or list the chats under a tag |
@@ -52,8 +52,11 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark api <type_name> '<json>'` | Call any gateway API (type names are listed in `assets/cmd_map.json`) |
 | `lark chats` / `lark sessions` | Chat list / agent session table |
 | `lark search <keyword>` | Search users/group chats |
-| `lark search-messages <keyword>` | Search messages across chats (`--chat`, `--from`, `--since`/`--until`: `3d`, `2026-10-01` or a timestamp, `--limit`, `--json`) |
+| `lark search-messages [keyword]` | Search messages across chats (`--chat`, `--from`, `--since`/`--until`: `3d`, `2026-10-01` or a timestamp; `--at-me` (also matches @all), `--at <user_id,...>`, `--attachment image,video,file,link,folder`, `--chat-type group\|p2p`, `--sender-type` / `--exclude-sender-type user\|bot`; `--limit`, `--json`). The keyword may be left out when a filter is given |
 | `lark unread` | Chats with unread messages; `--chat <id>` shows a chat's unread messages, `--at` shows only unread messages that @mention me in each chat (`--since`, `--names`, `--json`) |
+| `lark user <user_id>` | A person's profile card: name plus the visible fields such as department, email and status (`--json`; which fields appear depends on the tenant and what you may see) |
+| `lark search-users [keyword]` / `lark search-bots [keyword]` | Search people (`--chatted`, `--exclude-external`, `--resigned`, `--enterprise-email`, `--ids`) / bots and AI agents (`--chat`, `--chatted`); `--limit`, `--json` |
+| `lark chat-search [keyword]` / `lark chat-list` | Search group chats by name or members (`--member <user_id,...>`, `--mode group\|topic`, `--sort active\|created\|members`) / list chats from the server, most recently active first (`--type p2p\|group\|topic`, `--exclude-muted`; direct chats show the other person's name); `--limit`, `--json` |
 | `lark members <chat_id>` / `lark users <user_id...>` | Chat members (id, name, user/bot) / look up user names in bulk; with `--names`, `history`, `get` and `thread` show senders by name |
 | `lark config` | Show the effective configuration |
 | `lark permissions` | Which permission group each command belongs to and whether it can run now (`--json`); `edit` edits the current account's rules interactively in the terminal, `clear` clears them; see [Command permissions](#command-permissions) |
@@ -84,7 +87,7 @@ Every command can be allowed or denied individually or by group, to limit what t
 | Group | Contains |
 |---|---|
 | `local` | Read-only local data: `auth status`, `config`, `chats`, `sessions`, `messages`, `permissions` (view) |
-| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `unread`, `members`, `users`, `reactions`, `read-status`, `pins`, `flags`, `tags`, `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
+| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info`, `reactions`, `read-status`, `pins`, `flags`, `tags`, `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
 | `outbound` | Sending new messages: `send`, `send-image`, `send-file`, `schedule`, `forward`, plus cancelling and rescheduling with `scheduled` |
 | `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read` |
 | `organize` | Organizing that only affects yourself: `flag`, plus pinning and unpinning with `shortcut` |
@@ -136,7 +139,9 @@ await client.addReaction('<msg_id>', 'DONE'); // also editMessage, recallMessage
 const names = await client.userNames(['<user_id>']); // id → name (batched, cached); chatMembers(chatId) lists group members
 const today = await client.historyRange('<chat_id>', { since: Date.now() - 3_600_000 }); // fetch chat history by time range
 const mentions = await client.unreadMentions(); // unread @mentions of me; unreadChats() / unreadMessages(chatId)
-const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000 }); // search messages across chats
+const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000, atIds: [client.auth.userId] }); // search messages across chats; also attachmentTypes, chatType, senderTypes
+const people = await client.searchUsers('同事', { chatted: true }); // also searchBots, searchChats, userProfile(userId), chatList(), chatInfo(chatId)
+const dm = await client.directChat('<user_id>'); // the direct chat with a user (created if missing)
 const [quoted] = await client.getMessages(['<msg_id>']); // fetch messages by id; threadMessages(rootId) fetches a whole thread
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // backfill after reconnecting: messages that arrived after a given time (including thread replies)
 

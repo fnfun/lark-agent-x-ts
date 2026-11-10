@@ -1,11 +1,11 @@
 /**
  * Subcommand argument parsing that behaves like the original's argparse: positionals can be single,
- * optional (?) or one-or-more (+); options support values, flags, choices, integers, required and
+ * optional (?), one-or-more (+) or any number (*); options support values, flags, choices, integers, required and
  * short aliases; `-h/--help` prints help; on error it prints usage and exits with 2.
  */
 export interface Positional {
   name: string;
-  nargs?: '?' | '+';
+  nargs?: '?' | '+' | '*';
   choices?: readonly string[];
   help?: string;
 }
@@ -48,7 +48,15 @@ export function usage(prog: string, spec: CommandSpec): string {
   }
   for (const p of spec.positionals ?? []) {
     const n = p.choices ? `{${p.choices.join(',')}}` : p.name;
-    parts.push(p.nargs === '?' ? `[${n}]` : p.nargs === '+' ? `${n} [${n} ...]` : n);
+    parts.push(
+      p.nargs === '?'
+        ? `[${n}]`
+        : p.nargs === '+'
+          ? `${n} [${n} ...]`
+          : p.nargs === '*'
+            ? `[${n} ...]`
+            : n,
+    );
   }
   return parts.join(' ');
 }
@@ -112,14 +120,19 @@ export function parse(prog: string, spec: CommandSpec, argv: string[]): Parsed {
     rest.push(a);
   }
   const positionals = spec.positionals ?? [];
-  const required = positionals.filter((p) => p.nargs !== '?');
+  const optional = (p: Positional) => p.nargs === '?' || p.nargs === '*';
+  const required = positionals.filter((p) => !optional(p));
   let idx = 0;
   for (let pi = 0; pi < positionals.length; pi++) {
     const p = positionals[pi] as Positional;
-    const remainingRequired = positionals.slice(pi + 1).filter((x) => x.nargs !== '?').length;
-    if (p.nargs === '+') {
+    const remainingRequired = positionals.slice(pi + 1).filter((x) => !optional(x)).length;
+    if (p.nargs === '+' || p.nargs === '*') {
       const take = rest.length - idx - remainingRequired;
-      if (take < 1) break;
+      if (p.nargs === '*') out[p.name] = rest.slice(idx, idx + Math.max(take, 0));
+      if (take < 1) {
+        if (p.nargs === '+') break;
+        continue;
+      }
       out[p.name] = rest.slice(idx, idx + take);
       idx += take;
     } else if (p.nargs === '?') {

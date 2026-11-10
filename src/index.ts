@@ -4,7 +4,15 @@
 // the CLI; see docs/compat.md.
 export { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from './auth.js';
 export {
+  ATTACHMENT_TYPES,
+  type AttachmentType,
+  type BotHit,
+  type BotSearchOptions,
+  type ChatHit,
+  type ChatInfo,
   type ChatMember,
+  type ChatSearchOptions,
+  type ChatSummary,
   type ClientOptions,
   chatterName,
   type FeedGroup,
@@ -16,13 +24,18 @@ export {
   type MessageReactions,
   type MessageSearchOptions,
   type PinnedMessage,
+  type ProfileField,
   type ReactionHandler,
   type ReadState,
   type RecentChat,
   type ScheduledMessage,
+  type SenderType,
   type SendOptions,
   SendUnconfirmed,
   type UnreadChat,
+  type UserHit,
+  type UserProfile,
+  type UserSearchOptions,
 } from './client.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';

@@ -26,12 +26,12 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark auth qr` | 扫码登录（推荐；`--region lark` 登录 Lark 国际版） |
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
-| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重） |
+| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重）。凡是要发往或读取 `<chat_id>` 的命令（`send`、`send-image`、`send-file`、`schedule`、`history`），都可以写 `user:<user_id>` 表示与该用户的私聊（没有时自动创建） |
 | `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
 | `lark schedule <chat_id> <text> --at <时间>` / `lark scheduled <chat_id>` | 定时发送（`--at 10m`、`--at "2026-10-15 09:30"`，`--md`；每个会话同时只能有一条待发）/ 列出待发的定时消息（`--cancel`、`--reschedule` 配合 `--at`） |
 | `lark translate <文本>` | 翻译文本（`--to en`，默认 zh）；`--msg` 时参数是消息 id，翻译这些消息 |
 | `lark forward <msg_id> <chat_id...>` | 把一条消息转发到一个或多个会话 |
-| `lark group create <群名>` / `add` / `remove` / `rename` | 建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
+| `lark group info <chat_id>` / `create <群名>` / `add` / `remove` / `rename` | 群信息（群主、人数、描述、我的身份、发言权限，`--json`）、建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin 消息（`--remove` 取消） / 列出会话里被 Pin 的消息 |
 | `lark shortcut [chat_id,...]` | 在会话列表里置顶会话（`--remove` 取消，不带参数列出已置顶的） |
 | `lark tags [标签]` | 会话标签（分组）：列出标签，或列出某标签里的会话 |
@@ -52,8 +52,11 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
-| `lark search-messages <关键词>` | 跨会话搜消息（`--chat`、`--from`、`--since`/`--until`：`3d`、`2026-10-01` 或时间戳，`--limit`、`--json`） |
+| `lark search-messages [关键词]` | 跨会话搜消息（`--chat`、`--from`、`--since`/`--until`：`3d`、`2026-10-01` 或时间戳；`--at-me`（含 @所有人）、`--at <user_id,...>`、`--attachment image,video,file,link,folder`、`--chat-type group\|p2p`、`--sender-type` / `--exclude-sender-type user\|bot`；`--limit`、`--json`）。给了过滤条件时可以不带关键词 |
 | `lark unread` | 有未读的会话；`--chat <id>` 看某会话的未读消息，`--at` 只看各会话里 @我 的未读消息（`--since`、`--names`、`--json`） |
+| `lark user <user_id>` | 个人资料卡：名字以及部门、邮箱、状态等可见字段（`--json`；有哪些字段取决于租户设置与可见范围） |
+| `lark search-users [关键词]` / `lark search-bots [关键词]` | 搜人（`--chatted`、`--exclude-external`、`--resigned`、`--enterprise-email`、`--ids`） / 搜机器人与智能体（`--chat`、`--chatted`）；`--limit`、`--json` |
+| `lark chat-search [关键词]` / `lark chat-list` | 按群名或成员搜群（`--member <user_id,...>`、`--mode group\|topic`、`--sort active\|created\|members`） / 从服务端列出会话列表，最近活跃在前（`--type p2p\|group\|topic`、`--exclude-muted`；私聊显示对方名字）；`--limit`、`--json` |
 | `lark members <chat_id>` / `lark users <user_id...>` | 会话成员（id、名字、user/bot） / 批量查用户名字；`history`、`get`、`thread` 加 `--names` 时发送者显示为名字 |
 | `lark config` | 查看生效配置 |
 | `lark permissions` | 每个命令归哪个权限分组、现在能否执行（`--json`）；`edit` 在终端里交互编辑当前账号的规则，`clear` 清除，见[命令权限](#命令权限) |
@@ -84,7 +87,7 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 | 分组 | 包含 |
 |---|---|
 | `local` | 只读本机数据：`auth status`、`config`、`chats`、`sessions`、`messages`、`permissions`（查看） |
-| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`unread`、`members`、`users`、`reactions`、`read-status`、`pins`、`flags`、`tags`、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
+| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group info`、`reactions`、`read-status`、`pins`、`flags`、`tags`、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
 | `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`schedule`、`forward`，以及 `scheduled` 的取消与改时间 |
 | `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read` |
 | `organize` | 只影响自己的整理：`flag`，以及 `shortcut` 的置顶与取消 |
@@ -136,7 +139,9 @@ await client.addReaction('<msg_id>', 'DONE'); // 另有 editMessage、recallMess
 const names = await client.userNames(['<user_id>']); // id → 名字（批量、缓存）；chatMembers(chatId) 列群成员
 const today = await client.historyRange('<chat_id>', { since: Date.now() - 3_600_000 }); // 按时间范围拉会话历史
 const mentions = await client.unreadMentions(); // 未读的 @我；unreadChats() / unreadMessages(chatId)
-const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000 }); // 跨会话搜消息
+const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000, atIds: [client.auth.userId] }); // 跨会话搜消息；另有 attachmentTypes、chatType、senderTypes
+const people = await client.searchUsers('同事', { chatted: true }); // 另有 searchBots、searchChats、userProfile(userId)、chatList()、chatInfo(chatId)
+const dm = await client.directChat('<user_id>'); // 与某人的私聊（没有时自动创建）
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
 

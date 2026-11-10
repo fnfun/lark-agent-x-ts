@@ -144,9 +144,25 @@ export interface MessageSearchOptions {
   fromIds?: string[] | undefined;
   since?: number | undefined;
   until?: number | undefined;
+  /** Only messages that @ any of these people (the server also counts @all as a match). */
+  atIds?: string[] | undefined;
+  /** Only messages carrying these attachment kinds. */
+  attachmentTypes?: AttachmentType[] | undefined;
+  chatType?: 'group' | 'p2p' | undefined;
+  /** Only messages from these kinds of senders. */
+  senderTypes?: SenderType[] | undefined;
+  /** Leave out messages from these kinds of senders. */
+  excludeSenderTypes?: SenderType[] | undefined;
   /** Maximum number of results, default 20. */
   limit?: number | undefined;
 }
+
+/** Attachment kinds a message search can filter by (entities.Message.MessageAttachmentType). */
+export const ATTACHMENT_TYPES = { image: 1, video: 2, file: 3, link: 4, folder: 5 } as const;
+export type AttachmentType = keyof typeof ATTACHMENT_TYPES;
+/** usearch MessageFilter.FromType. */
+const SENDER_TYPES = { bot: 1, user: 2 } as const;
+export type SenderType = keyof typeof SENDER_TYPES;
 
 /**
  * A search hit: summary is the server-provided summary ("sender: content…", with highlight markup
@@ -165,8 +181,175 @@ export interface MessageHit {
   summary: string;
 }
 
+// usearch.SearchEntityType
+const SEARCH_ENTITY_USER = 1;
+const SEARCH_ENTITY_BOT = 2;
+const SEARCH_ENTITY_GROUP = 3;
 const SEARCH_ENTITY_MESSAGE = 5;
 const unhighlight = (s: unknown) => String(s ?? '').replace(/<\/?h>/g, '');
+
+/** Criteria for searching people; the flags narrow the results, leaving them off does not. */
+export interface UserSearchOptions {
+  /** Only people I have chatted with. */
+  chatted?: boolean | undefined;
+  /** Leave out users from other tenants. */
+  excludeExternal?: boolean | undefined;
+  /** Only people who have left the organization. */
+  resigned?: boolean | undefined;
+  /** Only people with an enterprise email address. */
+  enterpriseEmail?: boolean | undefined;
+  /** Only these users (combine with a query to check which of them match). */
+  userIds?: string[] | undefined;
+  /** Maximum number of results, default 20. */
+  limit?: number | undefined;
+}
+
+export interface UserHit {
+  userId: string;
+  name: string;
+  /** What the client shows under the name: department, title or signature. */
+  description: string;
+  /** Direct chat with this user; empty when there is none yet. */
+  chatId: string;
+  email: string;
+  crossTenant: boolean;
+}
+
+export interface BotSearchOptions {
+  /** Only bots in these chats. */
+  chatIds?: string[] | undefined;
+  /** Only bots I have chatted with. */
+  chatted?: boolean | undefined;
+  limit?: number | undefined;
+}
+
+export interface BotHit {
+  botId: string;
+  name: string;
+  description: string;
+  /** Direct chat with this bot; empty when there is none yet. */
+  chatId: string;
+  /** An AI agent rather than a classic bot. */
+  agent: boolean;
+}
+
+export interface ChatSearchOptions {
+  /** Only groups that have all of these people as members. */
+  memberIds?: string[] | undefined;
+  /** Only regular groups or only topic groups. */
+  mode?: 'group' | 'topic' | undefined;
+  /** Server-side order; relevance when omitted. */
+  sort?: 'active' | 'created' | 'members' | undefined;
+  limit?: number | undefined;
+}
+
+export interface ChatHit {
+  chatId: string;
+  name: string;
+  description: string;
+  mode: 'group' | 'topic';
+  memberCount: number;
+  /** Whether I am a member. */
+  member: boolean;
+  public: boolean;
+  crossTenant: boolean;
+  /** Time of the last message (s); 0 when unknown. */
+  lastMessageTime: number;
+}
+
+/** entities.GroupSortRuleType */
+const GROUP_SORT = { active: 2, created: 3, members: 4 } as const;
+// entities.Chat.ChatMode: THREAD and THREAD_V2 are topic groups
+const TOPIC_MODES = new Set([2, 3]);
+
+/** One line of a user's profile card, e.g. Email, Department, Status. */
+export interface ProfileField {
+  key: string;
+  /** Field name in the account's language. */
+  label: string;
+  value: string;
+}
+
+export interface UserProfile {
+  userId: string;
+  name: string;
+  /** Visible fields that have a value, in the order the client shows them. */
+  fields: ProfileField[];
+}
+
+/** A chat as listed in the chat list. */
+export interface ChatSummary {
+  chatId: string;
+  /** Group name; for a direct chat, the other person's name (my own for the self chat). */
+  name: string;
+  type: 'p2p' | 'group' | 'topic';
+  /** For a direct chat, the other person's id (my own for the self chat); empty for groups. */
+  peerId: string;
+  /** Notifications are off (do not disturb). */
+  muted: boolean;
+  memberCount: number;
+  unread: number;
+  /** Time of the chat's latest change (ms). */
+  updatedAt: number;
+}
+
+/** Group details (also usable for direct chats, where most group fields are empty). */
+export interface ChatInfo {
+  chatId: string;
+  name: string;
+  type: 'p2p' | 'group' | 'topic';
+  description: string;
+  ownerId: string;
+  memberCount: number;
+  /** Time the chat was created (s). */
+  createTime: number;
+  /** I am the owner or an admin. */
+  admin: boolean;
+  owner: boolean;
+  muted: boolean;
+  public: boolean;
+  crossTenant: boolean;
+  /** Who may post: anyone, only admins, or a whitelist. */
+  postType: 'anyone' | 'admins' | 'whitelist' | 'unknown';
+}
+
+const POST_TYPES = { 1: 'anyone', 2: 'admins', 3: 'whitelist' } as const;
+
+/** Picks the value for locale from `{default_val, i18n_vals}` (either key spelling). */
+function localized(v: Dict, locale: string): string {
+  const i18n = (v.i18n_vals ?? v.i18nVals ?? {}) as Record<string, string>;
+  return String(i18n[locale.toLowerCase()] || v.default_val || v.defaultVal || '');
+}
+
+/**
+ * Display text of a profile field value (the JSON in strFieldVal). Shapes vary by field type, so
+ * this walks the value: localized texts are resolved, link-like objects yield their text or URL,
+ * and lists are joined; titles and icons are decoration and are skipped.
+ */
+export function profileText(v: unknown, locale: string): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v !== 'object') return String(v);
+  if (Array.isArray(v))
+    return v
+      .map((x) => profileText(x, locale))
+      .filter(Boolean)
+      .join('、');
+  const d = v as Dict;
+  if ('default_val' in d || 'defaultVal' in d || 'i18n_vals' in d || 'i18nVals' in d)
+    return localized(d, locale);
+  for (const key of ['text', 'content', 'name', 'value', 'url', 'link', 'href']) {
+    const t = profileText(d[key], locale);
+    if (t) return t;
+  }
+  return Object.entries(d)
+    .filter(([k]) => !['title', 'icon', 'avatar', 'style', 'key'].includes(k))
+    .map(([, x]) => profileText(x, locale))
+    .filter(Boolean)
+    .join('、');
+}
+
+const chatKind = (chat: Dict): ChatSummary['type'] =>
+  enumToInt(chat.type ?? 0) === 1 ? 'p2p' : isThreadChat(chat) ? 'topic' : 'group';
 
 /** Read status of a message (from the sender's view): who has read it and who hasn't. */
 export interface ReadState {
@@ -310,6 +493,9 @@ const GROUP_FIELD_DESCRIPTION = 3;
 const PUSH_REACTIONS = 27;
 /** Number of threads to look back at a time in a topic group. */
 const RECENT_THREADS = 20;
+// users.PullUserProfileV2Request: Scene.BY_USER_ID, Source.CHAT
+const PROFILE_BY_USER_ID = 1;
+const PROFILE_FROM_CHAT = 2;
 
 const int = (v: unknown, dflt = -1): number =>
   v === undefined || v === null ? dflt : Number(v as number | bigint);
@@ -782,7 +968,6 @@ export class LarkClient {
    * Server search has indexing lag, so a message just sent may take a while to become searchable.
    */
   async searchMessages(query: string, o: MessageSearchOptions = {}): Promise<MessageHit[]> {
-    const limit = o.limit ?? 20;
     const filter: Dict = {};
     if (o.chatIds?.length) filter.chatIds = o.chatIds;
     if (o.fromIds?.length) filter.creatorIds = o.fromIds;
@@ -791,31 +976,23 @@ export class LarkClient {
         ...(o.since !== undefined ? { startTime: String(Math.floor(o.since / 1000)) } : {}),
         ...(o.until !== undefined ? { endTime: String(Math.floor(o.until / 1000)) } : {}),
       };
-    const session = requestCid();
-    const out: MessageHit[] = [];
-    let token = '';
-    for (let seq = 1; out.length < limit; seq++) {
-      const resp = await this.api('usearch.UniversalSearchRequest', {
-        header: {
-          searchSession: session,
-          sessionSeqId: seq,
-          query,
-          ...(token ? { paginationToken: token } : {}),
-          searchContext: {
-            tagName: 'MESSAGE',
-            entityItems: [{ type: SEARCH_ENTITY_MESSAGE, filter: { messageFilter: filter } }],
-            commonFilter: { includeOuterTenant: true },
-            sourceKey: 'messenger',
-          },
-          locale: this.auth.region.locale,
-          pageSize: Math.min(limit - out.length, 50),
-          extraParam: {},
-        },
-      });
-      for (const r of (resp.results ?? []) as Dict[]) {
-        const m = ((r.resultMeta as Dict | undefined)?.messageMeta ?? {}) as Dict;
-        if (r.type !== SEARCH_ENTITY_MESSAGE || !m.id) continue;
-        out.push({
+    if (o.atIds?.length) filter.includeAtUserIds = o.atIds;
+    if (o.attachmentTypes?.length)
+      filter.includeAttachmentTypes = o.attachmentTypes.map((t) => ATTACHMENT_TYPES[t]);
+    if (o.chatType) filter.chatType = o.chatType === 'group' ? 1 : 2;
+    if (o.senderTypes?.length) filter.fromTypes = o.senderTypes.map((t) => SENDER_TYPES[t]);
+    if (o.excludeSenderTypes?.length)
+      filter.excludedFromTypes = o.excludeSenderTypes.map((t) => SENDER_TYPES[t]);
+    return this.universalSearch(
+      SEARCH_ENTITY_MESSAGE,
+      'MESSAGE',
+      query,
+      { messageFilter: filter },
+      o.limit ?? 20,
+      (r, meta) => {
+        const m = (meta.messageMeta ?? {}) as Dict;
+        if (!m.id) return null;
+        return {
           msgId: String(m.id),
           chatId: String(m.chatId ?? ''),
           chatTitle: unhighlight(r.titleHighlighted),
@@ -825,13 +1002,263 @@ export class LarkClient {
           msgType: enumToInt(m.type ?? 0),
           p2p: m.isP2pChat === true,
           summary: unhighlight(r.summaryHighlighted),
-        });
+        };
+      },
+    );
+  }
+
+  /**
+   * Search people (like "Contacts" in the client's search box), ordered by relevance; an empty
+   * query lists people matching the filters.
+   */
+  async searchUsers(query: string, o: UserSearchOptions = {}): Promise<UserHit[]> {
+    const filter: Dict = {};
+    if (o.chatted) filter.haveChatter = true;
+    if (o.excludeExternal) filter.excludeOuterContact = true;
+    if (o.resigned) filter.isResigned = true;
+    if (o.enterpriseEmail) filter.existsEnterpriseEmail = true;
+    if (o.userIds?.length) filter.inUserIds = o.userIds;
+    return this.universalSearch(
+      SEARCH_ENTITY_USER,
+      'USER',
+      query,
+      { userFilter: filter },
+      o.limit ?? 20,
+      (r, meta) => {
+        const m = (meta.userMeta ?? {}) as Dict;
+        if (!m.id) return null;
+        return {
+          userId: String(m.id),
+          name: unhighlight(r.titleHighlighted),
+          description: unhighlight(r.summaryHighlighted),
+          chatId: String(m.chatId ?? ''),
+          email: String(m.enterpriseMailAddress || m.mailAddress || ''),
+          crossTenant: m.isCrossTenant === true,
+        };
+      },
+    );
+  }
+
+  /** Search bots and AI agents visible to me, ordered by relevance. */
+  async searchBots(query: string, o: BotSearchOptions = {}): Promise<BotHit[]> {
+    const filter: Dict = {};
+    if (o.chatIds?.length) filter.chatIds = o.chatIds;
+    if (o.chatted) filter.haveChatter = true;
+    return this.universalSearch(
+      SEARCH_ENTITY_BOT,
+      'BOT',
+      query,
+      { botFilter: filter },
+      o.limit ?? 20,
+      (r, meta) => {
+        const m = (meta.botMeta ?? {}) as Dict;
+        if (!m.id) return null;
+        return {
+          botId: String(m.id),
+          name: unhighlight(r.titleHighlighted),
+          description: unhighlight(r.summaryHighlighted),
+          chatId: String(m.chatId ?? ''),
+          agent: m.isAgent === true,
+        };
+      },
+    );
+  }
+
+  /**
+   * Search group chats I can see by name (the server also matches member names), optionally only
+   * groups with certain members; an empty query lists groups matching the filters.
+   */
+  async searchChats(query: string, o: ChatSearchOptions = {}): Promise<ChatHit[]> {
+    const filter: Dict = {};
+    if (o.memberIds?.length) filter.chatMemberIds = o.memberIds;
+    if (o.sort) filter.sortType = GROUP_SORT[o.sort];
+    const limit = o.limit ?? 20;
+    // The server has no mode filter, so filter here and fetch a little more to fill the page
+    const hits = await this.universalSearch(
+      SEARCH_ENTITY_GROUP,
+      'GROUP_CHAT',
+      query,
+      { groupChatFilter: filter },
+      o.mode ? limit * 3 : limit,
+      (r, meta): ChatHit | null => {
+        const m = (meta.groupChatMeta ?? {}) as Dict;
+        if (!m.id) return null;
+        return {
+          chatId: String(m.id),
+          name: unhighlight(r.titleHighlighted),
+          description: String(m.description ?? ''),
+          mode: TOPIC_MODES.has(enumToInt(m.mode ?? 0)) ? 'topic' : 'group',
+          memberCount: Number(m.userCount ?? 0),
+          member: m.isMember === true,
+          public: m.isPublicV2 === true,
+          crossTenant: m.isCrossTenant === true,
+          lastMessageTime: Number(m.lastMessageTime ?? 0),
+        };
+      },
+    );
+    return hits.filter((h) => !o.mode || h.mode === o.mode).slice(0, limit);
+  }
+
+  /**
+   * One kind of entity from the client's universal search, paging within one search session until
+   * limit results or no more; pick maps a result (and its resultMeta) to the caller's shape, null
+   * to skip it.
+   */
+  private async universalSearch<T>(
+    entity: number,
+    tagName: string,
+    query: string,
+    filter: Dict,
+    limit: number,
+    pick: (result: Dict, meta: Dict) => T | null,
+  ): Promise<T[]> {
+    const session = requestCid();
+    const out: T[] = [];
+    let token = '';
+    for (let seq = 1; out.length < limit; seq++) {
+      const resp = await this.api('usearch.UniversalSearchRequest', {
+        header: {
+          searchSession: session,
+          sessionSeqId: seq,
+          query,
+          ...(token ? { paginationToken: token } : {}),
+          searchContext: {
+            tagName,
+            entityItems: [{ type: entity, filter }],
+            commonFilter: { includeOuterTenant: true },
+            sourceKey: 'messenger',
+          },
+          locale: this.auth.region.locale,
+          pageSize: Math.min(limit - out.length, 50),
+          extraParam: {},
+        },
+      });
+      for (const r of (resp.results ?? []) as Dict[]) {
+        if (r.type !== entity) continue;
+        const hit = pick(r, (r.resultMeta ?? {}) as Dict);
+        if (hit !== null) out.push(hit);
       }
       const header = (resp.header ?? {}) as Dict;
       token = String(header.paginationToken ?? '');
       if (!header.hasMore || !token || !(resp.results as unknown[] | undefined)?.length) break;
     }
     return out.slice(0, limit);
+  }
+
+  /**
+   * A user's profile card (as the client shows it): name plus the visible fields that have a value,
+   * such as department, email and status. Fields depend on the tenant's settings and on what the
+   * user may see.
+   */
+  async userProfile(userId: string): Promise<UserProfile> {
+    const resp = await this.api('users.PullUserProfileV2Request', {
+      scene: PROFILE_BY_USER_ID,
+      userId,
+      source: PROFILE_FROM_CHAT,
+    });
+    const profile = resp.profile as Dict | undefined;
+    if (!profile) throw new Error(`查不到用户资料: ${userId}`);
+    const locale = this.auth.region.locale;
+    const fields: ProfileField[] = [];
+    for (const f of (profile.fields ?? []) as Dict[]) {
+      if (f.visible === false || !f.strFieldVal) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(f.strFieldVal));
+      } catch {
+        parsed = String(f.strFieldVal);
+      }
+      const value = profileText(parsed, locale);
+      if (value)
+        fields.push({
+          key: String(f.key ?? ''),
+          label: localized((f.i18nNames ?? {}) as Dict, locale) || String(f.key ?? ''),
+          value,
+        });
+    }
+    const name = (await this.userNames([userId])).get(userId) ?? '';
+    return { userId, name, fields };
+  }
+
+  /**
+   * Chats in my chat list (direct and group chats), most recently active first; o.types narrows the
+   * kinds, o.excludeMuted drops chats with notifications off.
+   */
+  async chatList(
+    o: {
+      types?: ChatSummary['type'][] | undefined;
+      excludeMuted?: boolean | undefined;
+      limit?: number | undefined;
+    } = {},
+  ): Promise<ChatSummary[]> {
+    const limit = o.limit ?? 50;
+    const recent = await this.recentChats(0, Math.ceil(limit / 50) + 2);
+    const missing = recent.filter((rc) => !rc.chat).map((rc) => rc.chatId);
+    const fetched = missing.length
+      ? (((await this.api('chats.PullChatsByIdsRequest', { chatIds: missing })).chats ??
+          {}) as Record<string, Dict>)
+      : {};
+    const out: ChatSummary[] = [];
+    for (const rc of recent) {
+      const chat = rc.chat ?? fetched[rc.chatId];
+      if (!chat) continue;
+      const item: ChatSummary = {
+        chatId: rc.chatId,
+        name: String(chat.name ?? ''),
+        type: chatKind(chat),
+        peerId: '',
+        muted: chat.isRemind === false,
+        memberCount: Number(chat.userCount ?? chat.memberCount ?? 0),
+        unread: int(chat.newMessageCount, 0),
+        updatedAt: rc.updatedAt,
+      };
+      if (o.types?.length && !o.types.includes(item.type)) continue;
+      if (o.excludeMuted && item.muted) continue;
+      out.push(item);
+      if (out.length >= limit) break;
+    }
+    // Direct chats carry no name or peer; one member lookup each fills them in
+    for (const item of out) {
+      if (item.type !== 'p2p') continue;
+      const members = await this.chatMembers(item.chatId, 2);
+      const peer = members.find((m) => m.id !== this.auth.userId) ?? members[0];
+      if (!peer) continue;
+      item.peerId = peer.id;
+      item.name ||= peer.name;
+    }
+    return out;
+  }
+
+  /** Details of a chat; null when it does not exist or is not visible. */
+  async chatInfo(chatId: string): Promise<ChatInfo | null> {
+    const chat = await this.getChatInfo(chatId);
+    if (!chat) return null;
+    const ownerId = String(chat.ownerId ?? '');
+    return {
+      chatId,
+      name: String(chat.name ?? ''),
+      type: chatKind(chat),
+      description: String(chat.description ?? ''),
+      ownerId,
+      memberCount: Number(chat.userCount ?? chat.memberCount ?? 0),
+      createTime: int(chat.createTime, 0),
+      admin: chat.isAdmin === true || (ownerId !== '' && ownerId === this.auth.userId),
+      owner: ownerId !== '' && ownerId === this.auth.userId,
+      muted: chat.isRemind === false,
+      public: chat.isPublicV2 === true || chat.isPublic === true,
+      crossTenant: chat.isCrossTenant === true,
+      postType: POST_TYPES[enumToInt(chat.postType ?? 0) as 1 | 2 | 3] ?? 'unknown',
+    };
+  }
+
+  /**
+   * The direct chat with a user (created on the server if it does not exist yet); throws when the
+   * server returns no chat, e.g. for a user I may not message.
+   */
+  async directChat(userId: string): Promise<string> {
+    const id = await this.createChat(userId);
+    if (!id) throw new Error(`拿不到与 ${userId} 的私聊`);
+    return id;
   }
 
   async createChat(userId: string): Promise<string | null> {
@@ -1813,6 +2240,13 @@ const METHOD_PERMISSIONS: {
   getChatInfo: 'search',
   isThreadChat: 'search',
   searchMessages: 'search-messages',
+  searchUsers: 'search-users',
+  searchBots: 'search-bots',
+  searchChats: 'chat-search',
+  userProfile: 'user',
+  chatList: 'chat-list',
+  chatInfo: 'group.info',
+  directChat: 'search',
   messageLink: 'message-link',
   selfChat: 'self-chat',
   getUserName: 'users',
