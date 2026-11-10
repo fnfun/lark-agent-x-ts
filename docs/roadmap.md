@@ -122,10 +122,9 @@ Acceptance: `bun test` (fake server); read-only queries on a real account; write
 
 New documents are created via "import Markdown" first, without depending on the collaborative-editing channel.
 
-**Status (2026-11-10, partly done).** Docs' web API paths and request shapes come from the Docs web app's JavaScript (preloaded and lazily loaded chunks; paths are `/space/api/...` on the tenant). Done and tested on the real account with documents and folders created for the test and moved to the trash afterwards: `lark doc search/ls/create/rm/fetch` and the library's `Docs`; `WebSession` sends Docs' CSRF token and form / multipart bodies. How the API behaves is at the top of `src/domains/docs.ts`.
+**Status (2026-11-10, partly done).** Docs' web API paths and request shapes come from the Docs web app's JavaScript (preloaded and lazily loaded chunks; paths are `/space/api/...` on the tenant). Done and tested on both test accounts (Lark and Feishu) with documents and folders created for the test and moved to the trash afterwards: `lark doc search/ls/create/import/rm/fetch` and the library's `Docs`; `fetch` converts a docx to Markdown (checked by importing Markdown and reading it back); `WebSession` sends Docs' CSRF token and form / multipart bodies. How the API behaves is at the top of `src/domains/docs.ts`, the block format at the top of `src/domains/docx-markdown.ts`.
 
-- `doc fetch` reads only the title and the plain text of each block: a document with content could not be created for testing, because importing Markdown (`import/create`, after a working upload) was refused with "invalid param" in every encoding tried, so how headings, lists or tables are marked up stays unchecked.
-- Not done: Markdown import, rename / move / copy, comments, permissions, file upload and download, version history, Wiki (spaces, node tree) and Markdown files.
+- Not done: rename / move / copy, comments, permissions, file upload and download, version history, Wiki (spaces, node tree) and Markdown files.
 
 ### v0.5: Calendar
 

@@ -52,7 +52,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark task <动作>` | 任务：`list`（`--done`、`--all`）、`search <关键词>`、`get <guid...>`（描述、截止、负责人、关注人、所属清单、父任务）、`subtasks <guid>`、`create <标题>`（`--desc`、`--due`、`--all-day`、`--assignees`、`--followers`、`--parent`、`--list`）、`update <guid>`（`--title`、`--desc`、`--due`（`none` 清除）、`--assignees` / `--followers` 整体替换）、`complete <guid...>`（`--reopen` 重开）、`delete <guid...>`、`comment <guid> <内容>`、`comments <guid>`，任务清单 `lists` / `list-create <名字>` / `list-delete <guid>`；列出类的动作支持 `--json`。`lark task -h` 列出全部动作 |
-| `lark doc <动作>` | 云文档与云盘：`search <关键词>`、`ls [文件夹]`（我的空间或某个文件夹；第一列是节点 token）、`create <名字>`（`--type docx\|doc\|sheet\|base\|mindnote\|folder`、`--folder`）、`rm <token...>`（移到回收站）、`fetch <链接\|obj_token>`（docx 的标题和各段纯文本）；列出类的动作支持 `--json` |
+| `lark doc <动作>` | 云文档与云盘：`search <关键词>`、`ls [文件夹]`（我的空间或某个文件夹；第一列是节点 token）、`create <名字>`（`--type docx\|doc\|sheet\|base\|mindnote\|folder`、`--folder`）、`import <路径>`（Markdown / 文本 / Word 成文档，Excel / CSV 成表格；`--name`、`--folder`）、`rm <token...>`（移到回收站）、`fetch <链接\|obj_token>`（docx 转 Markdown：标题、列表、待办、引用、代码、表格、行内样式和链接）；列出类的动作支持 `--json` |
 | `lark web <METHOD> <路径> ['<json>']` | 用登录态调租户域名下网页应用的接口（如 `lark web GET /space/api/user/`；`--query '<json>'`），会先打开对应应用的入口页拿到它的 cookie。哪些应用可用见 `src/web.ts` 文件头 |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
@@ -94,7 +94,7 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 | `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group` 的 `info` / `admins` / `requests`（列出）、`task` 的列出与查看（`list`、`search`、`get`、`subtasks`、`comments`、`lists`）、`doc search` / `ls` / `fetch`、`reactions`、`read-status`、`pins`、`flags`、`tags`（列出）、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
 | `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`send-video`、`send-audio`、`schedule`、`forward`、`task create` / `comment`（负责人、关注人会收到通知），以及 `scheduled` 的取消与改时间 |
 | `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read`、`group nickname`、`task update` / `complete` |
-| `organize` | 只影响自己的整理：`flag`、`mute`、`task list-create`、`doc create`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
+| `organize` | 只影响自己的整理：`flag`、`mute`、`task list-create`、`doc create` / `import`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
 | `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`，以及 `requests` 的同意与拒绝 |
 | `destroy` | 删除：`task delete`、`task list-delete`（相关的人都看不到了）、`doc rm`（移到回收站） |
 | `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`web`、`permissions` 的 `edit` / `clear` |

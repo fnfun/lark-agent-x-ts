@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { LarkAuth } from '../auth.js';
-import { DOC_TYPES, Docs, type DocType } from '../domains/docs.js';
+import { DOC_TYPES, Docs, type DocType, IMPORTABLE } from '../domains/docs.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
 import { type Command, type CommandGroup, err, out, s } from './common.js';
@@ -79,25 +81,53 @@ const rm: Command = {
   },
 };
 
+const importCmd: Command = {
+  name: 'import',
+  help: `把本地文件导入成在线文档(${IMPORTABLE.join('/')};Markdown/Word 成文档,Excel/CSV 成表格)`,
+  access: 'doc.import',
+  positionals: [{ name: 'path' }],
+  options: [
+    { name: 'folder', kind: 'string', help: '放进这个文件夹(节点 token)' },
+    { name: 'name', kind: 'string', help: '文档名(默认用文件名)' },
+  ],
+  async run(a) {
+    const path = String(a.path);
+    let data: Uint8Array;
+    try {
+      data = new Uint8Array(readFileSync(path));
+    } catch (e) {
+      err(`读取文件失败: ${(e as Error).message}`);
+      return 1;
+    }
+    try {
+      const ext = path.includes('.') ? path.slice(path.lastIndexOf('.')) : '';
+      const name = a.name ? `${String(a.name)}${ext}` : basename(path);
+      const d = await docs().import(data, name, a.folder ? { folder: String(a.folder) } : {});
+      out(`已导入 obj_token=${d.objToken} ${d.type} ${d.url}`);
+      return 0;
+    } catch (e) {
+      err(errorText(e));
+      return 1;
+    }
+  },
+};
+
 const fetch: Command = {
   name: 'fetch',
-  help: '读文档(docx)的标题和各段纯文本',
+  help: '读文档(docx),输出 Markdown',
   access: 'doc.fetch',
   positionals: [{ name: 'doc', help: '文档链接或 obj_token' }],
   options: [JSON_OPTION],
   async run(a) {
     const d = await docs().fetch(String(a.doc));
     if (a.json) printJson(d);
-    else {
-      out(`# ${d.title}`);
-      for (const p of d.paragraphs) out(`\n${p}`);
-    }
+    else process.stdout.write(d.markdown);
     return 0;
   },
 };
 
 export const doc: CommandGroup = {
   name: 'doc',
-  help: '云文档与云盘:搜索、列目录、新建、移到回收站、读正文',
-  subcommands: [search, ls, create, rm, fetch],
+  help: '云文档与云盘:搜索、列目录、新建、导入、移到回收站、读正文(Markdown)',
+  subcommands: [search, ls, create, importCmd, rm, fetch],
 };

@@ -47,7 +47,9 @@ export {
   type DocType,
   type DriveFile,
   docToken,
+  IMPORTABLE,
 } from './domains/docs.js';
+export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
 export {
   type NewTask,
   type Task,

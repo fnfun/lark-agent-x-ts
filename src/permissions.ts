@@ -111,6 +111,7 @@ export const PERMISSIONS = {
   'tags.edit': 'organize',
   'task.list-create': 'organize',
   'doc.create': 'organize',
+  'doc.import': 'organize',
   'shortcut.add': 'organize',
   'shortcut.remove': 'organize',
 

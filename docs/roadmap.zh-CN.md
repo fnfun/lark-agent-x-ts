@@ -122,10 +122,9 @@
 
 新建文档先用"导入 Markdown"实现，不依赖协同通道。
 
-**进展（2026-11-10，部分完成）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（预载和按需加载的代码块；路径是租户域名下的 `/space/api/...`）。已完成并在真实账号上用专为测试新建、测完移进回收站的文档和文件夹实测：`lark doc search/ls/create/rm/fetch` 与库的 `Docs`；`WebSession` 会带云文档的 csrf，并支持表单与 multipart 请求体。接口的实际行为写在 `src/domains/docs.ts` 文件头。
+**进展（2026-11-10，部分完成）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（预载和按需加载的代码块；路径是租户域名下的 `/space/api/...`）。已完成并在两个测试账号（Lark 与飞书）上用专为测试新建、测完移进回收站的文档和文件夹实测：`lark doc search/ls/create/import/rm/fetch` 与库的 `Docs`；`fetch` 把 docx 转成 Markdown（导入 Markdown 再读回来核对过）；`WebSession` 会带云文档的 csrf，并支持表单与 multipart 请求体。接口的实际行为写在 `src/domains/docs.ts` 文件头，块格式写在 `src/domains/docx-markdown.ts` 文件头。
 
-- `doc fetch` 只读标题和每个块的纯文本：造不出有内容的测试文档——上传成功后的 Markdown 导入（`import/create`）在试过的各种编码下都回"invalid param"——所以标题、列表、表格等的写法没有核对。
-- 未做：Markdown 导入，改名 / 移动 / 复制，评论，权限，文件上传下载，历史版本，知识库（空间、节点树）与 Markdown 文件。
+- 未做：改名 / 移动 / 复制，评论，权限，文件上传下载，历史版本，知识库（空间、节点树）与 Markdown 文件。
 
 ### v0.5：日历
 

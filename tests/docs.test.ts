@@ -72,7 +72,7 @@ describe('云文档', () => {
     ]);
   });
 
-  test('读正文：按游标翻页合并块，标题取页面块，正文按子块深度优先的顺序', async () => {
+  test('读正文：按游标翻页合并块，标题取页面块，正文按子块深度优先的顺序转成 Markdown', async () => {
     const block = (text: string, children: string[] = []) => ({
       data: { text: { initialAttributedTexts: { text: { '0': text } } }, children },
     });
@@ -93,7 +93,7 @@ describe('云文档', () => {
     expect(await docs.fetch('https://x.example.com/docx/AbC123?from=im')).toEqual({
       objToken: 'AbC123',
       title: '周会纪要',
-      paragraphs: ['议题一', '结论', '议题二'],
+      markdown: '# 周会纪要\n\n议题一\n结论\n\n议题二\n',
     });
     expect(calls.map(([, , o]) => o.query?.cursor)).toEqual([undefined, 'c1']);
   });

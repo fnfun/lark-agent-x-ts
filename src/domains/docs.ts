@@ -12,13 +12,17 @@
  *   `node_list` counts.
  * - Files have two tokens: the node token (`token`, used by Drive operations) and the object token
  *   (`obj_token`, used to open the content, e.g. the docx id).
- * - A docx's content is `GET docx/pages/client_vars`: a block map whose texts are Etherpad-style
- *   attributed strings. Only the page title and plain texts are read here; how other block kinds
- *   (headings, lists, tables) are marked up could not be checked, because importing Markdown to
- *   create a document with content was refused by the server ("invalid param") in every encoding
- *   tried.
+ * - A docx's content is `GET docx/pages/client_vars` (paged by cursor), converted to Markdown by
+ *   docx-markdown.ts.
+ * - Removing is asynchronous (the reply carries a task id): a listing right after it may still show
+ *   the file for a moment.
+ * - Importing a file: upload it to Drive's upload host (`box/stream/upload/all`, mount point
+ *   `ccm_import`, Adler-32 checksum, `ext[extra]` naming the target type), then `POST import/create/`
+ *   as JSON with `event_source: 1` (a string there gives "invalid param"), then poll
+ *   `import/result/<ticket>` until `job_status` leaves 1/2 (0 means done).
  */
 import type { WebSession } from '../web.js';
+import { type BlockMap, docxToMarkdown } from './docx-markdown.js';
 
 /** Drive object types (the `type` of explorer nodes). */
 export const DOC_TYPES = {
@@ -65,24 +69,13 @@ export interface DocHit {
 export interface DocContent {
   objToken: string;
   title: string;
-  /** Texts of the blocks under the page, in document order. */
-  paragraphs: string[];
+  /** The whole document as Markdown, starting with `# title`. */
+  markdown: string;
 }
 
 type Dict = Record<string, unknown>;
 const typeOf = (t: unknown) => TYPE_NAMES[Number(t)] ?? 'unknown';
 const plain = (s: unknown) => String(s ?? '').replace(/<\/?em>/g, '');
-
-/** Block text: the attributed text's segments joined in order. */
-function blockText(data: Dict | undefined): string {
-  const segs = ((data?.text as Dict | undefined)?.initialAttributedTexts as Dict | undefined)
-    ?.text as Record<string, string> | undefined;
-  if (!segs) return '';
-  return Object.keys(segs)
-    .sort((a, b) => Number(a) - Number(b))
-    .map((k) => segs[k])
-    .join('');
-}
 
 const toFile = (n: Dict): DriveFile => ({
   token: String(n.token ?? ''),
@@ -93,6 +86,39 @@ const toFile = (n: Dict): DriveFile => ({
   ownerId: String(n.owner_id ?? ''),
   editTime: Number(n.edit_time ?? 0),
 });
+
+/** Adler-32 of the data, as Drive's upload checksum. */
+export function adler32(data: Uint8Array): number {
+  let a = 1;
+  let b = 0;
+  for (const x of data) {
+    a = (a + x) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+/** Online document type a file imports into, by extension. */
+const IMPORT_TYPES: Record<string, string> = {
+  md: 'docx',
+  markdown: 'docx',
+  txt: 'docx',
+  docx: 'docx',
+  doc: 'docx',
+  xlsx: 'sheet',
+  xls: 'sheet',
+  csv: 'sheet',
+};
+export const IMPORTABLE = Object.keys(IMPORT_TYPES);
+
+/** Drive's upload host for a tenant origin (regional tenants have a regional upload host). */
+export function uploadHost(tenantOrigin: string): string {
+  const parts = new URL(tenantOrigin).hostname.split('.');
+  // <tenant>.<region>.larksuite.com → -<region>; <tenant>.feishu.cn → none
+  return parts.length > 3
+    ? `https://internal-api-drive-stream-${parts[1]}.${parts.slice(2).join('.')}`
+    : `https://internal-api-drive-stream.${parts.slice(1).join('.')}`;
+}
 
 /** A docx URL or a bare object token → the object token. */
 export function docToken(urlOrToken: string): string {
@@ -193,7 +219,82 @@ export class Docs {
     return failed;
   }
 
-  /** A docx's title and the plain texts of its blocks, paging through all blocks. */
+  /** The node token of My Space's root folder. */
+  private async rootFolder(): Promise<string> {
+    const body = (await this.web.json('GET', '/space/api/explorer/v3/my_space/obj/', {
+      query: { length: 1 },
+    })) as Dict;
+    const nodes = (((body.data as Dict | undefined)?.entities as Dict | undefined)?.nodes ??
+      {}) as Record<string, Dict>;
+    const root = Object.values(nodes).find((n) => Number(n.type) === TYPE_ROOT);
+    if (!root?.token) throw new Error('找不到"我的空间"的根目录');
+    return String(root.token);
+  }
+
+  /**
+   * Import a local file as an online document (Markdown / text / Word → docx, Excel / CSV →
+   * sheet) into My Space or a folder (node token); returns the new document.
+   */
+  async import(
+    data: Uint8Array,
+    fileName: string,
+    o: { folder?: string; timeoutMs?: number } = {},
+  ): Promise<{ objToken: string; type: string; url: string }> {
+    const ext = fileName.includes('.') ? (fileName.split('.').pop() as string).toLowerCase() : '';
+    const type = IMPORT_TYPES[ext];
+    if (!type) throw new Error(`不支持导入这种文件: ${fileName}(可导入 ${IMPORTABLE.join('/')})`);
+    const folder = o.folder || (await this.rootFolder());
+    const form = new FormData();
+    form.append('file', new File([data], fileName));
+    const up = (await this.web.json('POST', '/space/api/box/stream/upload/all/', {
+      origin: uploadHost(await this.web.origin()),
+      multipart: form,
+      query: {
+        name: fileName,
+        size: data.length,
+        checksum: String(adler32(data)),
+        mount_point: 'ccm_import',
+        mount_node_token: folder,
+        'ext[extra]': JSON.stringify({ obj_type: type, file_extension: ext }),
+      },
+    })) as Dict;
+    const fileToken = (up.data as Dict | undefined)?.file_token;
+    if (up.code !== 0 || !fileToken) throw new Error(`上传失败: ${String(up.msg ?? up.code)}`);
+    const job = (await this.web.json('POST', '/space/api/import/create/', {
+      json: {
+        file_token: fileToken,
+        type,
+        file_extension: ext,
+        point: { mount_type: 1, mount_key: folder },
+        event_source: 1,
+        client_token: crypto.randomUUID(),
+        passback: JSON.stringify({ time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+      },
+    })) as Dict;
+    const ticket = (job.data as Dict | undefined)?.ticket;
+    if (job.code !== 0 || !ticket) throw new Error(`导入失败: ${String(job.msg ?? job.code)}`);
+    const deadline = Date.now() + (o.timeoutMs ?? 120_000);
+    for (;;) {
+      const res = (await this.web.json(
+        'GET',
+        `/space/api/import/result/${String(ticket)}`,
+      )) as Dict;
+      const r = ((res.data as Dict | undefined)?.result ?? {}) as Dict;
+      const status = Number(r.job_status ?? -1);
+      if (status === 0 && r.token)
+        return {
+          objToken: String(r.token),
+          type: String(r.type ?? type),
+          url: String(r.url ?? ''),
+        };
+      if (status !== 1 && status !== 2)
+        throw new Error(`导入失败: ${String(r.job_error_msg ?? res.msg ?? status)}`);
+      if (Date.now() > deadline) throw new Error('导入超时');
+      await new Promise((x) => setTimeout(x, 800));
+    }
+  }
+
+  /** A docx as Markdown, paging through all blocks. */
   async fetch(urlOrToken: string): Promise<DocContent> {
     const objToken = docToken(urlOrToken);
     const blocks: Record<string, Dict> = {};
@@ -210,16 +311,6 @@ export class Docs {
       cursor = String(data.cursor ?? '');
       if (!data.has_more || !cursor) break;
     }
-    const page = (blocks[root]?.data ?? {}) as Dict;
-    const paragraphs: string[] = [];
-    const walk = (id: string) => {
-      const data = blocks[id]?.data as Dict | undefined;
-      if (!data) return;
-      const text = blockText(data);
-      if (text) paragraphs.push(text);
-      for (const child of (data.children ?? []) as string[]) walk(child);
-    };
-    for (const child of (page.children ?? []) as string[]) walk(child);
-    return { objToken, title: blockText(page), paragraphs };
+    return { objToken, ...docxToMarkdown(blocks as BlockMap, root) };
   }
 }
