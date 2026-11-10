@@ -159,7 +159,7 @@
 - 邮箱：列信、读信与会话、搜索、发信、回复、转发、草稿、文件夹与标签、移动与标记、回收站、收信规则、签名与模板、分享到会话、`mail watch` 监听新邮件（能否复用长连接推送待确认）。
 - 审批：我的待办与已办、实例详情、可发起的审批定义、发起、同意、拒绝、转交、加签、退回、抄送、催办、撤回。
 
-**进展（2026-11-10，卡住）。** 邮箱：测试账号有邮件设置，但没有绑定邮箱、也没有租户邮件域名（`mails.ListConnectedEmailAccountsRequest`、`mails.GetTenantDomainsRequest` 都返回空），没有可读可发的邮件。审批在测试租户上 404。
+**进展（2026-11-10，卡住）。** 邮箱：两个测试账号都没有邮箱（`mails.ListConnectedEmailAccountsRequest`、`mails.GetTenantDomainsRequest` 都返回空），没有可读可发的邮件。审批：Lark 测试租户上不可用；飞书上能打开管理后台（`www.feishu.cn/approval/admin/`，接口在 `/approval/admin/api/` 下）和数据分析应用（`/approval/web/`，`/approval/web/api/...`：实例管理查询、代理审批、效率报表），但普通用户用的审批中心（待办、同意 / 拒绝、发起审批）在客户端内嵌的小程序里，入口和接口还没找到。
 
 ### v0.8：会议记录、妙记、纪要、OKR、考勤
 

@@ -159,7 +159,7 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Mail: list mail, read messages and threads, search, send, reply, forward, drafts, folders and labels, move and mark, trash, inbox rules, signatures and templates, share to a chat, `mail watch` to listen for new mail (whether it can reuse long-lived connection pushes is to be confirmed).
 - Approval: my pending and completed items, instance details, approval definitions I can start, start, approve, reject, transfer, add approvers, return, CC, remind, withdraw.
 
-**Status (2026-11-10, blocked).** Mail: the test account has mail settings but no connected mailbox or tenant mail domain (`mails.ListConnectedEmailAccountsRequest`, `mails.GetTenantDomainsRequest` return nothing), so there is nothing to read or send. Approval returns 404 on the test tenant.
+**Status (2026-11-10, blocked).** Mail: neither test account has a mailbox (`mails.ListConnectedEmailAccountsRequest` and `mails.GetTenantDomainsRequest` return nothing), so there is nothing to read or send. Approval: unavailable on the Lark test tenant; on Feishu, the admin console (`www.feishu.cn/approval/admin/`, APIs under `/approval/admin/api/`) and the analytics app (`/approval/web/`, `/approval/web/api/...`: instance admin queries, delegation, efficiency reports) open, but the user-facing approval center (pending tasks, approve / reject, starting an instance) lives in the client's embedded mini-app, whose entry and APIs have not been found yet.
 
 ### v0.8: Meeting records, Minutes, meeting notes, OKR, Attendance
 
