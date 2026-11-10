@@ -135,7 +135,9 @@ New documents are created via "import Markdown" first, without depending on the 
 
 Prerequisite: v0.3's protocol pipeline extension must be able to extract the event create/update/delete requests from the Calendar app.
 
-**Status (2026-11-10, blocked).** On the gateway, the legacy `calendars.GetUserPrimaryCalendarRequest` and `calendars.ListCalendarListRequest` work and `calendarevents.ListCalendarEventsRequest` answers (the test calendar has no events, so event parsing cannot be checked). Creating, editing and deleting events need the `calendar.v1` commands the calendar web app uses (`3101 SaveEvent`, `3105 DeleteEvent`, from its own cmd map); every `calendar.v1` command answers "command not found" for this account, whether sent with the calendar app's id (166462), other client versions or the regional gateway host (`internal-api-lark-api-sg`). Without event writes there is no way to create test events either, so nothing was built for this version.
+**Status (2026-11-10, mostly done).** `lark cal calendars/agenda/get/create/update/delete` and the library's `Calendar`, tested on the Feishu test account with events created for the test and deleted afterwards. Events go through the calendar web app's `calendarweb` commands (1002001 list, 1002003 create, 1002004 update, 1002005 delete, 1002006 fetch by id), which the cmd map lacks and `LarkClient.command` calls by number; the `calendar.v1.*` numbers in the same app answer "command not found". Details at the top of `src/domains/calendar.ts`.
+
+- Not done: attendees (inviting others), RSVP, free/busy and suggested times, meeting rooms, event search. The legacy free/busy request answered with an empty packet; attendees and RSVP would involve other people.
 
 ### v0.6: Collaborative editing: docs, sheets, Base
 

@@ -40,6 +40,13 @@ export {
   type UserSearchOptions,
 } from './client.js';
 export {
+  Calendar,
+  type CalendarEvent,
+  type CalendarInfo,
+  type EventUpdate,
+  type NewEvent,
+} from './domains/calendar.js';
+export {
   DOC_TYPES,
   type DocContent,
   type DocHit,

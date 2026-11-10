@@ -2095,6 +2095,31 @@ export class LarkClient {
   }
 
   /**
+   * Call a gateway command that the cmd map lacks (it was extracted from the messenger client only;
+   * other web apps carry their own command numbers), with the request and response types named:
+   * e.g. the calendar web app's `1002003` with `calendarweb.CreateEventRequest`. data is in the same
+   * JSON-like form as api's; the response dict is empty when the server returns no payload.
+   */
+  async command(
+    cmd: number,
+    requestType: string,
+    data: Dict,
+    responseType?: string,
+  ): Promise<Dict> {
+    const req = larkType(requestType);
+    const pkt = LarkClient.packet({
+      cmd,
+      cid: longRequestId(),
+      payload: toBinary(req, fromDict(req, data)),
+    });
+    const out = fromBinary(protoType('Packet'), await this.gatewayPost(pkt));
+    const body = (out as unknown as { payload?: Uint8Array }).payload;
+    if (!responseType || !body?.length) return {};
+    const resp = larkType(responseType);
+    return toDict(resp, fromBinary(resp, body));
+  }
+
+  /**
    * Like api, but the request is built as a protobuf object: bytes fields take Uint8Array directly,
    * int64 takes bigint (the property of rich text elements is bytes).
    */
@@ -2503,6 +2528,7 @@ const METHOD_PERMISSIONS: {
   connectWebsocket: 'listen',
   gatewayPost: 'api',
   api: 'api',
+  command: 'api',
   sendMessage: (_chatId, content) =>
     'image' in content
       ? 'send-image'

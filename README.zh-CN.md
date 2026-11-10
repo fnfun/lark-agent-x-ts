@@ -53,6 +53,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark task <动作>` | 任务：`list`（`--done`、`--all`）、`search <关键词>`、`get <guid...>`（描述、截止、负责人、关注人、所属清单、父任务）、`subtasks <guid>`、`create <标题>`（`--desc`、`--due`、`--all-day`、`--assignees`、`--followers`、`--parent`、`--list`）、`update <guid>`（`--title`、`--desc`、`--due`（`none` 清除）、`--assignees` / `--followers` 整体替换）、`complete <guid...>`（`--reopen` 重开）、`delete <guid...>`、`comment <guid> <内容>`、`comments <guid>`，任务清单 `lists` / `list-create <名字>` / `list-delete <guid>`；列出类的动作支持 `--json`。`lark task -h` 列出全部动作 |
 | `lark doc <动作>` | 云文档与云盘：`search <关键词>`、`ls [文件夹]`（我的空间或某个文件夹；第一列是节点 token）、`create <名字>`（`--type docx\|doc\|sheet\|base\|mindnote\|folder`、`--folder`）、`import <路径>`（Markdown / 文本 / Word 成文档，Excel / CSV 成表格；`--name`、`--folder`）、`rm <token...>`（移到回收站）、`fetch <链接\|obj_token>`（docx 转 Markdown：标题、列表、待办、引用、代码、表格、行内样式和链接）；列出类的动作支持 `--json` |
+| `lark cal <动作>` | 日历：`calendars`、`agenda`（默认今天；`--days`、`--since` / `--until`、`--calendar`）、`get <key>`（含描述）、`create <标题> --start <时间>`（`--end` 默认一小时后；`--desc`、`--location`、`--all-day`；不邀请他人、不发通知）、`update <key>`（`--title`、`--start`、`--end`、`--desc`、`--location`）、`delete <key...>`；列出类的动作支持 `--json` |
 | `lark web <METHOD> <路径> ['<json>']` | 用登录态调租户域名下网页应用的接口（如 `lark web GET /space/api/user/`；`--query '<json>'`），会先打开对应应用的入口页拿到它的 cookie。哪些应用可用见 `src/web.ts` 文件头 |
 | `lark chats` / `lark sessions` | 会话列表 / agent 会话表 |
 | `lark search <关键词>` | 搜索用户/群 |
@@ -91,12 +92,12 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 | 分组 | 包含 |
 |---|---|
 | `local` | 只读本机数据：`auth status`、`config`、`chats`、`sessions`、`messages`、`permissions`（查看） |
-| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group` 的 `info` / `admins` / `requests`（列出）、`task` 的列出与查看（`list`、`search`、`get`、`subtasks`、`comments`、`lists`）、`doc search` / `ls` / `fetch`、`reactions`、`read-status`、`pins`、`flags`、`tags`（列出）、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
+| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group` 的 `info` / `admins` / `requests`（列出）、`task` 的列出与查看（`list`、`search`、`get`、`subtasks`、`comments`、`lists`）、`doc search` / `ls` / `fetch`、`cal calendars` / `agenda` / `get`、`reactions`、`read-status`、`pins`、`flags`、`tags`（列出）、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
 | `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`send-video`、`send-audio`、`schedule`、`forward`、`task create` / `comment`（负责人、关注人会收到通知），以及 `scheduled` 的取消与改时间 |
 | `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read`、`group nickname`、`task update` / `complete` |
-| `organize` | 只影响自己的整理：`flag`、`mute`、`task list-create`、`doc create` / `import`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
+| `organize` | 只影响自己的整理：`flag`、`mute`、`task list-create`、`doc create` / `import`、`cal create` / `update`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
 | `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`，以及 `requests` 的同意与拒绝 |
-| `destroy` | 删除：`task delete`、`task list-delete`（相关的人都看不到了）、`doc rm`（移到回收站） |
+| `destroy` | 删除：`task delete`、`task list-delete`（相关的人都看不到了）、`doc rm`（移到回收站）、`cal delete` |
 | `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`web`、`permissions` 的 `edit` / `clear` |
 
 读写混用的命令按动作细分，名字写作 `命令.动作`（如 `group.add`、`scheduled.cancel`、`auth.qr`）；`lark permissions` 列出全部名字与归属。
@@ -149,6 +150,8 @@ const people = await client.searchUsers('同事', { chatted: true }); // 另有 
 const dm = await client.directChat('<user_id>'); // 与某人的私聊（没有时自动创建）
 const tasks = new Tasks(client); // import { Tasks } from 'lark-agent-x-ts'；list、search、get、create、update、complete、reopen、delete、comment、comments、subtasks、lists、createList、deleteList
 const t = await tasks.create({ title: '周报', due: Date.now() + 86_400_000, assigneeIds: ['<user_id>'] });
+const cal = new Calendar(client); // events({ since, until })、get、create({ summary, start, end })、update、delete、calendars
+await client.command(1002001, 'calendarweb.ListCalendarEventsRequest', { params: [] }, 'calendarweb.ListCalendarEventsResponse'); // cmd 映射里没有的网关命令
 await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // 另有 { video, name, cover? } 与 { audio }（Ogg/Opus）
 await client.setMuted(['<chat_id>'], true); // 另有 setGroupNickname、chatAdmins / updateAdmins、setPostPermission、joinRequests / handleJoinRequest、chatShareLink、forwardThread、createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
@@ -165,7 +168,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 - 每个公开方法归到一个同名的权限项上（按最接近的命令归类，如 `addMembers` → `group.add`、`sendMessage` 按内容归到 `send` / `send-image` / `send-file` / `send-video` / `send-audio`、`api` 与 `gatewayPost` → `api`），不允许时抛 `PermissionDenied`（带 `permission`、`group`、`rule`）。
 - 只检查调用方直接调的那一层：方法内部再调其他方法（如发送时内部调网关）不再检查；传给方法的回调（如长连接的 `onMessage`）不算在内，回调里的调用照常检查。
 - 独立函数 `uploadImage`、`uploadFile`、`downloadMessageResource`，以及 `WebSession`（网页应用接口：`new WebSession(auth).json('GET', '/space/api/user/')`）和基于它的 `Docs`（`new Docs(new WebSession(auth))`）不经过客户端，不受权限控制。
-- 基于客户端构造的领域对象（`new Tasks(client)`）沿用它的权限设置：每个方法按 `task.<动作>` 检查，内部发出的网关调用不再按 `api` 检查。
+- 基于客户端构造的领域对象（`new Tasks(client)`、`new Calendar(client)`）沿用它的权限设置：每个方法按 `task.<动作>` / `cal.<动作>` 检查，内部发出的网关调用不再按 `api` 检查。
 - `PERMISSIONS`、`GROUPS`、`decide`、`loadRules`、`saveAccountRules` 也一并导出，可用来做自己的权限界面。
 
 ## 开发

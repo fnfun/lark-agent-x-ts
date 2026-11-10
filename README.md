@@ -53,6 +53,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark api <type_name> '<json>'` | Call any gateway API (type names are listed in `assets/cmd_map.json`) |
 | `lark task <action>` | Tasks: `list` (`--done`, `--all`), `search <keyword>`, `get <guid...>` (description, due, assignees, followers, lists, parent), `subtasks <guid>`, `create <title>` (`--desc`, `--due`, `--all-day`, `--assignees`, `--followers`, `--parent`, `--list`), `update <guid>` (`--title`, `--desc`, `--due` (`none` clears it), `--assignees` / `--followers` replace the list), `complete <guid...>` (`--reopen`), `delete <guid...>`, `comment <guid> <text>`, `comments <guid>`, task lists `lists` / `list-create <name>` / `list-delete <guid>`; `--json` where it lists. `lark task -h` lists them all |
 | `lark doc <action>` | Docs and Drive: `search <keyword>`, `ls [folder]` (My Space or a folder; the first column is the node token), `create <name>` (`--type docx\|doc\|sheet\|base\|mindnote\|folder`, `--folder`), `import <path>` (Markdown / text / Word → docx, Excel / CSV → sheet; `--name`, `--folder`), `rm <token...>` (to the trash), `fetch <url\|obj_token>` (a docx as Markdown: headings, lists, to-dos, quotes, code, tables, inline styles and links); `--json` where it lists |
+| `lark cal <action>` | Calendar: `calendars`, `agenda` (today by default; `--days`, `--since` / `--until`, `--calendar`), `get <key>` (with the description), `create <title> --start <time>` (`--end`, default one hour; `--desc`, `--location`, `--all-day`; no attendees, nobody is notified), `update <key>` (`--title`, `--start`, `--end`, `--desc`, `--location`), `delete <key...>`; `--json` where it lists |
 | `lark web <METHOD> <path> ['<json>']` | Call a web app's API on the tenant domain with the login cookies (e.g. `lark web GET /space/api/user/`; `--query '<json>'`); the app's entry page is opened first so its cookies are set. Which apps work is listed at the top of `src/web.ts` |
 | `lark chats` / `lark sessions` | Chat list / agent session table |
 | `lark search <keyword>` | Search users/group chats |
@@ -91,12 +92,12 @@ Every command can be allowed or denied individually or by group, to limit what t
 | Group | Contains |
 |---|---|
 | `local` | Read-only local data: `auth status`, `config`, `chats`, `sessions`, `messages`, `permissions` (view) |
-| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info` / `admins` / `requests` (listing), `task` listing and reading (`list`, `search`, `get`, `subtasks`, `comments`, `lists`), `doc search` / `ls` / `fetch`, `reactions`, `read-status`, `pins`, `flags`, `tags` (listing), `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
+| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info` / `admins` / `requests` (listing), `task` listing and reading (`list`, `search`, `get`, `subtasks`, `comments`, `lists`), `doc search` / `ls` / `fetch`, `cal calendars` / `agenda` / `get`, `reactions`, `read-status`, `pins`, `flags`, `tags` (listing), `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
 | `outbound` | Sending new messages: `send`, `send-image`, `send-file`, `send-video`, `send-audio`, `schedule`, `forward`, `task create` / `comment` (assignees and followers are notified), plus cancelling and rescheduling with `scheduled` |
 | `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read`, `group nickname`, `task update` / `complete` |
-| `organize` | Organizing that only affects yourself: `flag`, `mute`, `task list-create`, `doc create` / `import`, plus pinning and unpinning with `shortcut` and editing with `tags` |
+| `organize` | Organizing that only affects yourself: `flag`, `mute`, `task list-create`, `doc create` / `import`, `cal create` / `update`, plus pinning and unpinning with `shortcut` and editing with `tags` |
 | `manage` | Group chat management: `group`'s `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`, and approving or rejecting with `requests` |
-| `destroy` | Deleting: `task delete`, `task list-delete` (gone for everyone involved), `doc rm` (to the trash) |
+| `destroy` | Deleting: `task delete`, `task list-delete` (gone for everyone involved), `doc rm` (to the trash), `cal delete` |
 | `system` | Account and process level: `auth`'s `qr` / `import`, `listen`, `api`, `web`, `permissions`'s `edit` / `clear` |
 
 Commands that mix reads and writes are split by action, named `command.action` (e.g. `group.add`, `scheduled.cancel`, `auth.qr`); `lark permissions` lists all names and the groups they belong to.
@@ -149,6 +150,8 @@ const people = await client.searchUsers('同事', { chatted: true }); // also se
 const dm = await client.directChat('<user_id>'); // the direct chat with a user (created if missing)
 const tasks = new Tasks(client); // import { Tasks } from 'lark-agent-x-ts'; list, search, get, create, update, complete, reopen, delete, comment, comments, subtasks, lists, createList, deleteList
 const t = await tasks.create({ title: '周报', due: Date.now() + 86_400_000, assigneeIds: ['<user_id>'] });
+const cal = new Calendar(client); // events({ since, until }), get, create({ summary, start, end }), update, delete, calendars
+await client.command(1002001, 'calendarweb.ListCalendarEventsRequest', { params: [] }, 'calendarweb.ListCalendarEventsResponse'); // gateway commands missing from the cmd map
 await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // also { video, name, cover? } and { audio } (Ogg/Opus)
 await client.setMuted(['<chat_id>'], true); // also setGroupNickname, chatAdmins / updateAdmins, setPostPermission, joinRequests / handleJoinRequest, chatShareLink, forwardThread, createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // fetch messages by id; threadMessages(rootId) fetches a whole thread
@@ -165,7 +168,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 - Every public method maps to a permission item of the same name (classified under the closest command, e.g. `addMembers` → `group.add`, `sendMessage` → `send` / `send-image` / `send-file` / `send-video` / `send-audio` depending on the content, `api` and `gatewayPost` → `api`); when not allowed, it throws `PermissionDenied` (with `permission`, `group`, `rule`).
 - Only the layer the caller calls directly is checked: other methods called internally by a method (e.g. the gateway call made while sending) aren't checked again; callbacks passed to a method (e.g. the long-lived connection's `onMessage`) don't count, and calls made inside a callback are checked as usual.
 - The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource`, and `WebSession` (web app APIs: `new WebSession(auth).json('GET', '/space/api/user/')`) with `Docs` built on it (`new Docs(new WebSession(auth))`), don't go through the client and aren't subject to permission control.
-- Domain clients built on a client (`new Tasks(client)`) follow its permission setting: each method is checked as `task.<action>`, and the gateway calls they make inside are not checked again as `api`.
+- Domain clients built on a client (`new Tasks(client)`, `new Calendar(client)`) follow its permission setting: each method is checked as `task.<action>` / `cal.<action>`, and the gateway calls they make inside are not checked again as `api`.
 - `PERMISSIONS`, `GROUPS`, `decide`, `loadRules`, and `saveAccountRules` are exported as well, so you can build your own permissions UI.
 
 ## Development

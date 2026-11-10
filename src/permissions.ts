@@ -70,6 +70,8 @@ export const PERMISSIONS = {
   'doc.search': 'query',
   'doc.ls': 'query',
   'doc.fetch': 'query',
+  'cal.calendars': 'query',
+  'cal.agenda': 'query',
   unread: 'query',
   members: 'query',
   users: 'query',
@@ -112,6 +114,8 @@ export const PERMISSIONS = {
   'task.list-create': 'organize',
   'doc.create': 'organize',
   'doc.import': 'organize',
+  'cal.create': 'organize',
+  'cal.update': 'organize',
   'shortcut.add': 'organize',
   'shortcut.remove': 'organize',
 
@@ -127,6 +131,7 @@ export const PERMISSIONS = {
   'task.delete': 'destroy',
   'task.list-delete': 'destroy',
   'doc.rm': 'destroy',
+  'cal.delete': 'destroy',
 
   'auth.qr': 'system',
   'auth.import': 'system',

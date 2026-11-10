@@ -135,7 +135,9 @@
 
 先决：v0.3 的协议管线扩展要能提取日历应用里的日程增删改请求。
 
-**进展（2026-11-10，卡住）。** 网关上老版的 `calendars.GetUserPrimaryCalendarRequest`、`calendars.ListCalendarListRequest` 可用，`calendarevents.ListCalendarEventsRequest` 有响应（测试日历里没有日程，解析日程的部分无法核对）。新建、修改、删除日程要用日历网页应用用的 `calendar.v1` 命令（它自带的 cmd 映射里有 `3101 SaveEvent`、`3105 DeleteEvent`），而对这个账号所有 `calendar.v1` 命令都回"command not found"：带日历应用的 id（166462）、换客户端版本、换区域网关域名（`internal-api-lark-api-sg`）都一样。没有写日程的能力也就造不出测试日程，这一版没有产出代码。
+**进展（2026-11-10，大部分完成）。** `lark cal calendars/agenda/get/create/update/delete` 与库的 `Calendar`，在飞书测试账号上用专为测试新建、测完删除的日程实测。日程走日历网页应用的 `calendarweb` 命令（1002001 列出、1002003 新建、1002004 修改、1002005 删除、1002006 按 id 取），cmd 映射里没有这些号，由 `LarkClient.command` 按号调用；同一应用里的 `calendar.v1.*` 命令号回"command not found"。细节写在 `src/domains/calendar.ts` 文件头。
+
+- 未做：参会人（邀请他人）、回复邀请、忙闲与推荐时间、会议室、日程搜索。老版忙闲请求回空包；参会人与回复邀请会涉及他人。
 
 ### v0.6：协同编辑：文档、表格、多维表格
 
