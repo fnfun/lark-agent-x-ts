@@ -42,7 +42,7 @@ bun src/cli/main.ts <命令>     # 从源码运行
 - **编解码以原版为准**：改 `src/proto/` 后必须过 `tests/parity.test.ts`；对照样本由 `scripts/gen-parity-fixtures.py` 在装有 fork 版的 Python 环境里生成，不手改 `parity.json`。
 - **库入口必须能在 Node 下运行**：`src/index.ts` 能触达的模块不得用 `Bun.*` 或 `bun:*`；协议资产一律经 `readAsset()` 读取（单文件构建由 `src/bun-assets.ts` 注册内嵌路径，它也以 `lark-agent-x-ts/bun-assets` 导出给打单文件的 Bun 嵌入方）。导出或签名有变化时同步 README 的“作为库使用”，破坏性变更在 commit 里写 `BREAKING CHANGE`。嵌入方以 git 依赖按 commit 锁版本。
 - **测试不碰真实账号**：用 `Bun.serve` 起假服务端或替换 `api` / `gatewayPost`；id 用 `7000000000000000001` 这类合成值，人名、群名用“同事甲”“项目协作群”这类占位。
-- **实测真实账号时**：只做只读调用；需要验证发送时只发到自己的会话（`lark self-chat`）。凭证只在 `~/.larkx`，不打印、不提交。
+- **实测真实账号时**：读操作随意；写操作只针对只有自己的对象：发消息只发自己的会话（`lark self-chat`），其余写操作只在专为测试新建、不涉及他人的资源上做（只有自己的测试群、测试任务、测试文档、测试日程等），验证完删除。不改动已有数据，不给他人发消息、邀请或通知。凭证只在 `~/.larkx`，不打印、不提交；账号名、租户域名、真实 id 不写进代码库。
 - **发布边界**：原项目没有开源许可证。本仓库公开源码但不附带许可证、不发布到 npm（README 末尾的“来源与致谢”声明），不要擅自加 LICENSE 或改 `package.json` 的发布字段。
 
 ## 代码约定

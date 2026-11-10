@@ -1423,7 +1423,9 @@ const members: Command = {
   async run(a) {
     const list = await (await client()).chatMembers(String(a.chat_id));
     if (a.json) printJson(list);
-    else for (const m of list) out(`${m.id}\t${m.name}\t${m.type}`);
+    else
+      for (const m of list)
+        out(`${m.id}\t${m.name}${m.nickname ? `(群昵称 ${m.nickname})` : ''}\t${m.type}`);
     return 0;
   },
 };

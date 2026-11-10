@@ -496,6 +496,8 @@ export interface ChatMember {
   id: string;
   name: string;
   type: 'user' | 'bot' | 'ai' | 'unknown';
+  /** Nickname the member set in this group (chatMembers only); empty when none. */
+  nickname?: string;
 }
 
 const CHATTER_TYPES: Record<number, ChatMember['type']> = { 1: 'user', 2: 'bot', 3: 'ai' };
@@ -1447,9 +1449,12 @@ export class LarkClient {
     for (;;) {
       const resp = await this.api('chats.PullChatChattersRequest', { chatId, limit: 100, ...page });
       const before = members.size;
+      // Group nicknames come in metas, keyed by member id
+      const metas = (resp.metas ?? {}) as Record<string, Dict>;
       for (const field of ['chatters', 'updateChatters'])
         for (const [id, v] of Object.entries((resp[field] ?? {}) as Record<string, Dict>)) {
           const m = toMember(id, v, this.auth.region.locale);
+          m.nickname = String(metas[id]?.groupNickname ?? '');
           members.set(id, m);
           this.chatterNames.set(id, m.name);
         }

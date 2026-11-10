@@ -26,6 +26,7 @@ describe('人名与群成员', () => {
     const pages: Dict[] = [
       {
         chatters: { u1: { name: '同事甲', type: 1 }, b1: { name: '提醒机器人', type: 2 } },
+        metas: { u1: { groupNickname: '组长' } },
         nextCursor: 5n,
         nextOffset: 'o2',
       },
@@ -38,10 +39,10 @@ describe('人名与群成员', () => {
       return pages[reqs.length - 1] ?? {};
     };
     expect(await c.chatMembers('g1')).toEqual([
-      { id: 'u1', name: '同事甲', type: 'user' },
-      { id: 'b1', name: '提醒机器人', type: 'bot' },
-      { id: 'u2', name: '同事乙', type: 'user' },
-      { id: 'u3', name: '同事丙', type: 'user' },
+      { id: 'u1', name: '同事甲', type: 'user', nickname: '组长' },
+      { id: 'b1', name: '提醒机器人', type: 'bot', nickname: '' },
+      { id: 'u2', name: '同事乙', type: 'user', nickname: '' },
+      { id: 'u3', name: '同事丙', type: 'user', nickname: '' },
     ]);
     expect(reqs).toEqual([
       { chatId: 'g1', limit: 100 },
