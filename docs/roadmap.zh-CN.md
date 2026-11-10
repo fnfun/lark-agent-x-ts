@@ -161,7 +161,8 @@
 - 电子表格，在 Lark 账号上实测完成（飞书账号的会话中途被注销，见下）：`lark sheet tabs/read/write/append` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
 - 电子表格未做：写公式（网页发的是解析后的公式结构，服务端不会重算）、插入删除行列、样式、查找替换、新增工作表。
 - 文档，在 Lark 账号上实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
-- 文档未做：改已有块里的文字（文本变更集）、图片和附件、表格、划词评论、历史版本。
+- 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
+- 文档未做：图片和附件、表格、划词评论、历史版本。
 - 注意：用飞书测试账号的 cookie 在无头浏览器里观察网页，导致该会话被服务端注销，需要重新登录。
 
 ### v0.7：邮箱 + 审批

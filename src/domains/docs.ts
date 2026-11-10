@@ -687,11 +687,8 @@ export class Docs {
     return { objToken, title, markdown: `${parts.join('\n')}\n` };
   }
 
-  /** All blocks of a docx or slides deck from its client_vars, paging by cursor. */
-  private async blocks(
-    path: string,
-    id: string,
-  ): Promise<{ blocks: Record<string, Dict>; root: string }> {
+  /** All blocks of a docx or slides deck (with their versions) from its client_vars, paging by cursor. */
+  async blocks(path: string, id: string): Promise<{ blocks: Record<string, Dict>; root: string }> {
     const blocks: Record<string, Dict> = {};
     let root = '';
     let cursor = '';

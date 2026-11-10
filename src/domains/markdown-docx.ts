@@ -154,6 +154,21 @@ export function parseMarkdown(markdown: string): BlockSpec[] {
   return blocks;
 }
 
+/**
+ * One changeset op for a run of text with the same attributes: a run containing newlines is split
+ * after its last newline, that part carrying `|<newline count>` (the Etherpad rule the server
+ * checks; anything else answers "schema mismatch").
+ */
+function ops(attrs: string, segment: string): string {
+  const cut = segment.lastIndexOf('\n') + 1;
+  const len = (s: string) => s.length.toString(36);
+  if (!cut) return `${attrs}+${len(segment)}`;
+  const head = segment.slice(0, cut);
+  const lines = head.split('\n').length - 1;
+  const rest = segment.slice(cut);
+  return `${attrs}|${lines.toString(36)}+${len(head)}${rest ? `${attrs}+${len(rest)}` : ''}`;
+}
+
 const STYLE_KEYS = ['bold', 'italic', 'strikethrough', 'inlineCode'] as const;
 
 /**
@@ -174,14 +189,83 @@ export function attributedText(runs: Run[], author: string) {
     const attrs = [0];
     for (const k of STYLE_KEYS) if (r[k]) attrs.push(index([k, 'true']));
     if (r.link) attrs.push(index(['link', encodeURIComponent(r.link)]));
-    attribs += `${attrs
-      .sort((a, b) => a - b)
-      .map((a) => `*${a.toString(36)}`)
-      .join('')}+${r.text.length.toString(36)}`;
+    attribs += ops(
+      attrs
+        .sort((a, b) => a - b)
+        .map((a) => `*${a.toString(36)}`)
+        .join(''),
+      r.text,
+    );
     text += r.text;
   }
   return {
     apool: { nextNum: pool.length, numToAttrib: Object.fromEntries(pool.map((a, i) => [i, a])) },
     initialAttributedTexts: { text: { 0: text }, attribs: { 0: attribs } },
   };
+}
+
+/** One character of an attributed text with its attribute numbers (from the text's pool). */
+export interface AttributedChar {
+  ch: string;
+  attrs: number[];
+}
+
+/** An attributed text's first zone → characters with their attribute numbers. */
+export function decodeAttributed(text: string, attribs: string): AttributedChar[] {
+  const out: AttributedChar[] = [];
+  let pos = 0;
+  for (const m of attribs.matchAll(/((?:\*[0-9a-z]+)*)(?:\|[0-9a-z]+)?\+([0-9a-z]+)/g)) {
+    const attrs = ((m[1] ?? '').match(/[0-9a-z]+/g) ?? []).map((n) => Number.parseInt(n, 36));
+    const len = Number.parseInt(m[2] as string, 36);
+    for (const ch of text.slice(pos, pos + len)) out.push({ ch, attrs });
+    pos += len;
+  }
+  for (const ch of text.slice(pos)) out.push({ ch, attrs: [] });
+  return out;
+}
+
+/** Characters → text and changeset, runs of equal attributes merged. */
+export function encodeAttributed(chars: AttributedChar[]): { text: string; attribs: string } {
+  let text = '';
+  let attribs = '';
+  let i = 0;
+  while (i < chars.length) {
+    const attrs = (chars[i] as AttributedChar).attrs;
+    const key = attrs.join(',');
+    let segment = '';
+    while (i < chars.length && (chars[i] as AttributedChar).attrs.join(',') === key) {
+      segment += (chars[i] as AttributedChar).ch;
+      i++;
+    }
+    text += segment;
+    attribs += ops(attrs.map((a) => `*${a.toString(36)}`).join(''), segment);
+  }
+  return { text, attribs };
+}
+
+/**
+ * Replaces every occurrence of find in an attributed text; the new characters take the
+ * attributes of the first character they replace. Returns null when nothing matched.
+ */
+export function replaceAttributed(
+  text: string,
+  attribs: string,
+  find: string,
+  replacement: string,
+): { text: string; attribs: string; count: number } | null {
+  if (!find || !text.includes(find)) return null;
+  const chars = decodeAttributed(text, attribs);
+  const plain = chars.map((c) => c.ch);
+  const out: AttributedChar[] = [];
+  const target = [...find];
+  let count = 0;
+  for (let i = 0; i < plain.length; ) {
+    if (target.every((ch, k) => plain[i + k] === ch)) {
+      const attrs = (chars[i] as AttributedChar).attrs;
+      for (const ch of replacement) out.push({ ch, attrs });
+      i += target.length;
+      count++;
+    } else out.push(chars[i++] as AttributedChar);
+  }
+  return { ...encodeAttributed(out), count };
 }

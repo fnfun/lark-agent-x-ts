@@ -12,11 +12,18 @@
  * - Block ids are "dox" + the document's two-letter operation id + random letters and digits, 27
  *   characters long; the operation id comes from the document token (unscrambled when the token
  *   does not start with "dox").
+ * - Changing a block's text: `{p: ["text"], action: {od: <old text>, oi: <new text>}}`; the text
+ *   is the whole attributed text (pool + changeset), so replacing keeps each character's attributes.
  * - The reply's `data.type` is ACCEPT_COMMIT with the blocks' new versions.
  */
 import type { WebSession } from '../web.js';
-import { check } from './docs.js';
-import { attributedText, type BlockSpec, parseMarkdown } from './markdown-docx.js';
+import { check, Docs } from './docs.js';
+import {
+  attributedText,
+  type BlockSpec,
+  parseMarkdown,
+  replaceAttributed,
+} from './markdown-docx.js';
 
 type Dict = Record<string, unknown>;
 
@@ -123,6 +130,57 @@ export class DocEditor {
         },
       });
     return this.append(docToken, markdown);
+  }
+
+  /**
+   * Replace text throughout a docx, keeping the formatting of the replaced characters. Blocks whose
+   * text has several zones (not seen in documents so far) are left alone and counted as skipped.
+   */
+  async replace(
+    docToken: string,
+    find: string,
+    replacement: string,
+  ): Promise<{ replaced: number; blocks: number; skipped: number }> {
+    if (!find) throw new Error('要替换的文字不能为空');
+    const { blocks } = await new Docs(this.web).blocks(
+      '/space/api/docx/pages/client_vars',
+      docToken,
+    );
+    const changes: Record<string, Dict> = {};
+    let replaced = 0;
+    let skipped = 0;
+    for (const [id, record] of Object.entries(blocks)) {
+      const data = (record.data ?? {}) as Dict;
+      if (data.type === 'page') continue;
+      const old = data.text as Dict | undefined;
+      const initial = (old?.initialAttributedTexts ?? {}) as Dict;
+      const texts = (initial.text ?? {}) as Record<string, string>;
+      const text = texts['0'];
+      if (text === undefined || !text.includes(find)) continue;
+      if (Object.keys(texts).length !== 1) {
+        skipped++;
+        continue;
+      }
+      const r = replaceAttributed(
+        text,
+        ((initial.attribs ?? {}) as Record<string, string>)['0'] ?? '',
+        find,
+        replacement,
+      );
+      if (!r) continue;
+      replaced += r.count;
+      const neu = {
+        ...old,
+        initialAttributedTexts: { text: { 0: r.text }, attribs: { 0: r.attribs } },
+      };
+      changes[id] = {
+        id,
+        version: Number(record.version ?? 0),
+        payload: { ops: [{ p: ['text'], action: { od: old, oi: neu } }] },
+      };
+    }
+    if (Object.keys(changes).length) await this.commit(docToken, changes);
+    return { replaced, blocks: Object.keys(changes).length, skipped };
   }
 
   private async commit(docToken: string, changeMap: Record<string, Dict>): Promise<void> {

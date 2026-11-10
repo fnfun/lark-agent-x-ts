@@ -489,6 +489,26 @@ const writeDoc: Command = {
     }),
 };
 
+const replace: Command = {
+  name: 'replace',
+  help: '在 docx 里查找替换文字(保留原格式)',
+  access: 'doc.replace',
+  positionals: [DOC_ARG, { name: 'find' }, { name: 'replacement' }],
+  options: [TYPE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const r = await new DocEditor(web()).replace(
+        (await ref(a)).token,
+        String(a.find),
+        String(a.replacement),
+      );
+      out(
+        `已替换 ${r.replaced} 处(${r.blocks} 个块)${r.skipped ? `,跳过 ${r.skipped} 个无法处理的块` : ''}`,
+      );
+      return r.replaced ? 0 : 1;
+    }),
+};
+
 const fetch: Command = {
   name: 'fetch',
   help: '读文档,输出 Markdown(docx 全文;思维笔记为大纲列表;幻灯片按页列出文字)',
@@ -521,6 +541,7 @@ export const doc: CommandGroup = {
     fetch,
     append,
     writeDoc,
+    replace,
     rename,
     mv,
     cp,

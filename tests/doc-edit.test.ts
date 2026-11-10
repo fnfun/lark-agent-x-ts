@@ -6,6 +6,7 @@ import {
   type BlockSpec,
   parseInline,
   parseMarkdown,
+  replaceAttributed,
 } from '../src/domains/markdown-docx.js';
 import type { WebRequest, WebSession } from '../src/web.js';
 
@@ -157,5 +158,71 @@ describe('Markdown 写入文档', () => {
       [1, 'x2'],
       [0, 'x1'],
     ]);
+  });
+
+  test('多行文字按服务端规则编码：同属性的一段在最后一个换行处切开，前半带 |换行数', () => {
+    expect(attributedText([{ text: 'a\nbb\nc' }], 'u').initialAttributedTexts.attribs[0]).toBe(
+      '*0|2+5*0+1',
+    );
+    expect(
+      attributedText([{ text: 'x\n' }, { text: 'y', bold: true }], 'u').initialAttributedTexts
+        .attribs[0],
+    ).toBe('*0|1+2*0*1+1');
+  });
+
+  test('替换保留每个字原有的属性（含不认识的属性编号），新字沿用被替换的第一个字的属性', () => {
+    // 0 author, 1 bold, 7 an attribute this project does not know (say a colour).
+    expect(replaceAttributed('今天很好', '*0+2*0*1*7+2', '很好', '晴朗无云')).toEqual({
+      text: '今天晴朗无云',
+      attribs: '*0+2*0*1*7+4',
+      count: 1,
+    });
+    expect(replaceAttributed('a\nab', '*0|1+2*0+2', 'a', 'XY')?.text).toBe('XY\nXYb');
+    expect(replaceAttributed('abc', '*0+3', 'z', 'y')).toBeNull();
+  });
+
+  test('查找替换：只改命中的块，按块的当前版本提交 od/oi', async () => {
+    const text = (t: string, attribs: string) => ({
+      apool: { nextNum: 1, numToAttrib: { 0: ['author', 'u1'] } },
+      initialAttributedTexts: { text: { 0: t }, attribs: { 0: attribs } },
+    });
+    const commits: Dict[] = [];
+    const web = {
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.endsWith('client_vars'))
+          return {
+            code: 0,
+            data: {
+              block_sequence: ['D'],
+              block_map: {
+                D: {
+                  version: 3,
+                  data: { type: 'page', text: text('测试标题', '*0+4'), children: ['a', 'b'] },
+                },
+                a: { version: 2, data: { type: 'text', text: text('要测试', '*0+3') } },
+                b: { version: 9, data: { type: 'text', text: text('无关', '*0+2') } },
+              },
+            },
+          };
+        commits.push((o.json as { change_map: Dict }).change_map);
+        return { code: 0, data: { type: 'ACCEPT_COMMIT' } };
+      },
+    } as unknown as WebSession;
+    expect(await new DocEditor(web).replace('D', '测试', '核对')).toEqual({
+      replaced: 1,
+      blocks: 1,
+      skipped: 0,
+    });
+    const change = (
+      commits[0] as Record<
+        string,
+        { version: number; payload: { ops: { p: string[]; action: Dict }[] } }
+      >
+    ).a;
+    expect(change?.version).toBe(2);
+    const op = change?.payload.ops[0];
+    expect(op?.p).toEqual(['text']);
+    expect(op?.action.oi).toMatchObject({ initialAttributedTexts: { text: { 0: '要核对' } } });
+    expect(Object.keys(commits[0] as Dict)).toEqual(['a']);
   });
 });

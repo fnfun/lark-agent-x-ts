@@ -161,7 +161,8 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Sheets, done on the Lark account (the Feishu account's session was revoked mid-way, see below): `lark sheet tabs/read/write/append` and the library's `Sheets`. Writes go through `v2/sheet/user_changes` (a protobuf of cell actions); reads export .xlsx and parse it, since the page's cell blocks use an undocumented encoding. Details at the top of `src/domains/sheet.ts`.
 - Not done for Sheets: writing formulas (the web app sends a parsed form the server does not recompute), inserting and deleting rows and columns, styles, find and replace, adding tabs.
 - Docs, done on the Lark account: `lark doc append/write` and the library's `DocEditor` append Markdown to a docx or replace its body. Commits go to `POST /space/api/docx/blocks/user_change` with json0-style ops per block (new block `oi`, parent `children` `li`/`ld`); the op shapes were read from the docx editor's code, not observed, and checked by round-tripping Markdown through the server. Details at the top of `src/domains/doc-edit.ts`.
-- Not done for Docs: editing inside an existing block (text changesets), images and attachments, tables, comments anchored to text, version history.
+- Docs also replace text in place (`lark doc replace`): a block's text op swaps the whole attributed text, keeping each character's attributes; multi-line texts follow the Etherpad newline rule the server checks.
+- Not done for Docs: images and attachments, tables, comments anchored to text, version history.
 - Caution: observing the web apps in a headless browser with the Feishu test account's cookies got that session revoked by the server; the account had to log in again.
 
 ### v0.7: Mail + Approval

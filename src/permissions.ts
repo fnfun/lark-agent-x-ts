@@ -126,6 +126,7 @@ export const PERMISSIONS = {
   'doc.rename': 'modify',
   'doc.append': 'modify',
   'doc.write': 'modify',
+  'doc.replace': 'modify',
   'doc.resolve': 'modify',
   'wiki.rename': 'modify',
   'base.add': 'modify',
