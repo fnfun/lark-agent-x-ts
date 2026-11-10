@@ -9,9 +9,10 @@
 | 功能、命令、配置、库用法、来源声明 | `README.md` |
 | 与 fork 版（Python）的模块对照、兼容承诺与有意差异 | `docs/compat.md` |
 | 为什么用 Bun 打单文件 | `docs/adr/0001-bun-single-binary.md` |
+| 与官方 lark-cli 的功能对照、分版本迭代计划 | `docs/roadmap.md` |
 | 协议资产（`assets/`）怎么重建 | `scripts/proto-pipeline/README.md` |
 
-文档之间只引用不复制。
+文档之间只引用不复制。上表的文档都是中英双语：`X.md` 为英文（默认），`X.zh-CN.md` 为中文，开头互相跳转；改其中一份时在同一个 commit 里同步另一份。
 
 ## 常用命令
 
