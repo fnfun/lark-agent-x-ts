@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
-import { uploadFile, uploadImage } from '../src/media.js';
+import { mp4DurationMs, oggOpusDurationMs, uploadFile, uploadImage } from '../src/media.js';
 import { toDict } from '../src/proto/dict.js';
 import { protoType } from '../src/proto/registry.js';
 import { urls } from '../src/region.js';
@@ -115,5 +115,50 @@ describe('上传图片与文件', () => {
         'r1',
       ],
     ]);
+  });
+});
+
+describe('音视频时长（只读容器头，不解码）', () => {
+  const be32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+  const box = (type: string, payload: number[]) => [
+    ...be32(8 + payload.length),
+    ...[...type].map((ch) => ch.charCodeAt(0)),
+    ...payload,
+  ];
+
+  test('MP4：在 moov 里找 mvhd，按版本取 timescale 与 duration', () => {
+    // version 0: flags, creation, modification, timescale=1000, duration=6038
+    const v0 = [0, 0, 0, 0, ...be32(0), ...be32(0), ...be32(1000), ...be32(6038)];
+    // version 1: 64-bit times; timescale=600, duration=3000 (5 s)
+    const v1 = [1, 0, 0, 0, ...Array(16).fill(0), ...be32(600), ...be32(0), ...be32(3000)];
+    const file = (mvhd: number[]) =>
+      new Uint8Array([...box('ftyp', [0, 0, 0, 0]), ...box('moov', box('mvhd', mvhd))]);
+    expect(mp4DurationMs(file(v0))).toBe(6038);
+    expect(mp4DurationMs(file(v1))).toBe(5000);
+    expect(mp4DurationMs(new Uint8Array(box('ftyp', [0, 0, 0, 0])))).toBeNull();
+  });
+
+  test('Ogg/Opus：最后一页的 granule 减去 OpusHead 的 pre-skip，按 48kHz 换成毫秒', () => {
+    const le = (n: bigint, bytes: number) =>
+      Array.from({ length: bytes }, (_, i) => Number((n >> BigInt(8 * i)) & 255n));
+    const page = (granule: bigint, body: number[]) => [
+      ...[...'OggS'].map((ch) => ch.charCodeAt(0)),
+      0,
+      0,
+      ...le(granule, 8),
+      ...Array(12).fill(0),
+      1,
+      body.length,
+      ...body,
+    ];
+    // OpusHead: version 1, 1 channel, pre-skip 312, 48 kHz
+    const head = [...[...'OpusHead'].map((ch) => ch.charCodeAt(0)), 1, 1, ...le(312n, 2), 0, 0];
+    const ogg = new Uint8Array([
+      ...page(0n, head),
+      ...page(48_000n + 312n, [0]),
+      ...page(0xffffffffffffffffn, [0]),
+    ]);
+    expect(oggOpusDurationMs(ogg)).toBe(1000);
+    expect(oggOpusDurationMs(new Uint8Array(64))).toBeNull();
   });
 });

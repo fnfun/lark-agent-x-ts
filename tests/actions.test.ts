@@ -126,6 +126,50 @@ describe('Markdown 消息', () => {
   });
 });
 
+describe('Markdown 里的图片与附件', () => {
+  const sendAndDecode = async (
+    content: Parameters<ReturnType<typeof newClient>['sendMessage']>[1],
+  ) => {
+    const c = newClient();
+    c.isThreadChat = async () => false;
+    c.sendRetryDelayMs = 0;
+    const seen = capture(c, 'messages.PutMessageRequest');
+    await c.sendMessage('7200000000000000001', content).catch(() => {});
+    return seen[0]?.body.content as Dict;
+  };
+
+  test('图片 key 原样嵌入：文字段进 MARKDOWN 元素、图片进 IMG 元素，按原顺序排列', async () => {
+    const content = await sendAndDecode({
+      markdown: '前文 ![图一](img_v3_a1) 中间 ![图二](img_v3_b2)',
+    });
+    const rt = content.richText as Dict;
+    const els = (rt.elements as Dict).dictionary as Record<string, Dict>;
+    expect((rt.elementIds as string[]).map((id) => els[id]?.tag)).toEqual([49, 2, 49, 2]);
+    expect(rt.markdownIds).toEqual(['1', '3']);
+    expect(rt.innerText).toBe('前文 [图片] 中间 [图片]');
+    const img = toDict(
+      larkType('entities.RichTextElement.ImageProperty'),
+      fromBinary(
+        larkType('entities.RichTextElement.ImageProperty'),
+        els['2']?.property as Uint8Array,
+      ),
+    );
+    expect(img).toEqual({ originKey: 'img_v3_a1', token: 'img_v3_a1' });
+  });
+
+  test('没给 imageDir 时本地路径不读文件、原样留在文本里；给了也不许绝对路径和 ..', async () => {
+    const plain = await sendAndDecode({ markdown: '看 ![图](/etc/hosts)' });
+    const rt = plain.richText as Dict;
+    expect([rt.elementIds, rt.innerText]).toEqual([['1'], '看 ![图](/etc/hosts)']);
+    const c = newClient();
+    c.isThreadChat = async () => false;
+    for (const src of ['/etc/hosts', '../secret.png', 'a/../../b.png'])
+      await expect(
+        c.sendMessage('7200000000000000001', { markdown: `![x](${src})`, imageDir: '/tmp' }),
+      ).rejects.toThrow('只能用相对路径');
+  });
+});
+
 describe('已读情况', () => {
   test('发送方视角的已读/未读名单，与我自己是否读过', async () => {
     const c = newClient();

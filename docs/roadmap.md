@@ -74,6 +74,12 @@ Second batch (group settings and sending details):
 
 Acceptance: read-only commands tested for real on a real account; write operations only in `lark self-chat` and a self-created test group.
 
+**Status (2026-11-10, done).** As built, a direct chat is addressed as `user:<user_id>` in the `<chat_id>` position rather than with `--user` (the argument parser cannot drop a positional when an option is present), and `chat-search` has no `--managed` (the server's group filter has no such field).
+
+- Tested on the real account (read-only, plus sends to the self chat that were recalled afterwards): every first-batch command; `send-video` / `send-audio` (bytes downloaded back identical, durations as expected; the server keeps voice durations in whole seconds, so they are rounded); `send --md` inline images and `--attach`; `forward --thread`; `history --order/--reactions`.
+- Implemented from the protocol definitions and covered by fake-server tests that encode requests strictly against the real definitions, but **not tested for real** because the rules allow no writes on the real account beyond the self chat: `mute`, `group nickname/admin/moderation/requests --approve/--reject/link`, `tags` editing. The first real use of each is its verification.
+- Moved: listing folder messages needs `media.v1.*` definitions that the current pipeline does not extract (the names are in `cmd_map.json`, the definitions are not), so it moves to v0.3 together with the pipeline extension. Dropped: `shortcut` insert position, because how the server treats `position` can only be learned by writing on the real account.
+
 ### v0.3: Multi-domain foundation + tasks
 
 Foundation (every later version depends on it):

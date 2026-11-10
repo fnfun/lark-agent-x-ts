@@ -1,9 +1,9 @@
-import { create, toBinary } from '@bufbuild/protobuf';
+import { create, fromJson, type JsonValue, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
 import { LarkClient } from '../src/client.js';
 import type { Dict } from '../src/proto/dict.js';
 import { fromDict } from '../src/proto/dict.js';
-import { protoType } from '../src/proto/registry.js';
+import { protoType, resolveCmd } from '../src/proto/registry.js';
 
 /**
  * Offline client: auth carries only user_id; tests replace api / gatewayPost for gateway calls.
@@ -62,4 +62,15 @@ function jsonable(d: Dict): Dict {
           ? Buffer.from(v).toString('base64')
           : v;
   return out;
+}
+
+/**
+ * Encodes a gateway request strictly against the real protocol definitions: an unknown field name
+ * or enum value throws. The client's own encoding ignores unknown fields, so stubs of `api` use
+ * this to catch misspelled request fields.
+ */
+export function strictRequest(typeName: string, data: Dict): void {
+  const { req } = resolveCmd(typeName);
+  if (!req) throw new Error(`${typeName} 不是请求类型`);
+  fromJson(req, data as JsonValue);
 }

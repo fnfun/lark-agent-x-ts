@@ -17,6 +17,7 @@ export {
   chatterName,
   type FeedGroup,
   type FlagItem,
+  type JoinRequest,
   LarkClient,
   type MessageContent,
   type MessageHandler,
@@ -24,6 +25,7 @@ export {
   type MessageReactions,
   type MessageSearchOptions,
   type PinnedMessage,
+  type PostType,
   type ProfileField,
   type ReactionHandler,
   type ReadState,
@@ -42,6 +44,8 @@ export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
 export {
   downloadMessageResource,
   extractResourceKey,
+  mp4DurationMs,
+  oggOpusDurationMs,
   type UploadedFile,
   uploadFile,
   uploadImage,
@@ -61,7 +65,13 @@ export {
   saveAccountRules,
   type Verdict,
 } from './permissions.js';
-export type { EditableContent, RichBlock, RichRun, SearchHit } from './proto/builders.js';
+export type {
+  EditableContent,
+  MarkdownPart,
+  RichBlock,
+  RichRun,
+  SearchHit,
+} from './proto/builders.js';
 export { contentDataJson, type LarkMessage, type ReactionEvent } from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
 export { getRegion, REGIONS, type Region } from './region.js';

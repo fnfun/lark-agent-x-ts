@@ -10,6 +10,7 @@ import {
   type ChatInfo,
   type ChatSummary,
   LarkClient,
+  type MessageReactions,
   type SenderType,
   type SendOptions,
   type UserProfile,
@@ -213,12 +214,22 @@ const send: Command = {
     },
     { name: 'title', kind: 'string', help: '富文本标题(配合 --post / --md)' },
     {
+      name: 'attach',
+      kind: 'string',
+      metavar: 'PATHS',
+      help: '配合 --md:把这些本地文件放进消息的附件区(逗号分隔)',
+    },
+    {
       name: 'rich',
       kind: 'string',
       help: '结构化富文本 JSON(或 @文件路径),text 作为纯文本摘要;blocks: p/ul/quote/blank,run: text|link|at',
     },
   ],
   async run(a) {
+    if (a.attach && !a.md) {
+      err('--attach 需要配合 --md');
+      return 2;
+    }
     const c = await client();
     const chatId = await chatTarget(c, a.chat_id);
     if (chatId === null) return 1;
@@ -234,7 +245,15 @@ const send: Command = {
       msgId = await c.sendRich(spec.blocks ?? [], text, chatId, o);
     } else if (a.md) {
       try {
-        msgId = await c.sendMessage(chatId, { markdown: text, title: s(a.title) ?? '' }, o);
+        const attachments = (list(a.attach) ?? []).map((path) => ({
+          data: new Uint8Array(readFileSync(path)),
+          name: basename(path),
+        }));
+        msgId = await c.sendMessage(
+          chatId,
+          { markdown: text, title: s(a.title) ?? '', imageDir: process.cwd(), attachments },
+          o,
+        );
       } catch (e) {
         logger.error(`发送 Markdown 失败: ${errorText(e)}`);
         msgId = null;
@@ -311,41 +330,67 @@ async function finishSend(
 }
 
 /** Sends an image or file: reads the local file, uploads it, then sends it. */
-function mediaCommand(kind: 'image' | 'file'): Command {
-  const label = kind === 'image' ? '图片' : '文件';
+const MEDIA_KINDS = {
+  image: { label: '图片', msgType: 5, help: '发送图片(本地文件,自动上传)' },
+  file: { label: '文件', msgType: 3, help: '发送文件(本地文件,自动上传)' },
+  video: {
+    label: '视频',
+    msgType: 15,
+    help: '发送视频(本地 MP4,自动上传;时长从文件读取,--cover 指定封面图)',
+  },
+  audio: {
+    label: '语音',
+    msgType: 7,
+    help: '发送语音(本地 Ogg/Opus 文件,即客户端录音的格式;时长从文件读取)',
+  },
+} as const;
+
+/** Sends an image, file, video or voice message: reads the local file, uploads it, then sends it. */
+function mediaCommand(kind: keyof typeof MEDIA_KINDS): Command {
+  const { label, msgType, help } = MEDIA_KINDS[kind];
   return {
     name: `send-${kind}`,
-    help: `发送${label}(本地文件,自动上传)`,
+    help,
     access: `send-${kind}`,
     positionals: [CHAT_TARGET, { name: 'path' }],
-    options: REPLY_OPTIONS,
+    options:
+      kind === 'video'
+        ? [...REPLY_OPTIONS, { name: 'cover', kind: 'string', help: '封面图片路径' }]
+        : REPLY_OPTIONS,
     async run(a) {
       const c = await client();
       const chatId = await chatTarget(c, a.chat_id);
       if (chatId === null) return 1;
-      const st = new Storage();
       const path = String(a.path);
       const name = basename(path);
       let data: Uint8Array;
+      let cover: Uint8Array | undefined;
       try {
         data = new Uint8Array(readFileSync(path));
+        if (a.cover) cover = new Uint8Array(readFileSync(String(a.cover)));
       } catch (e) {
-        await st.close();
         err(`读取文件失败: ${(e as Error).message}`);
         return 1;
       }
+      const st = new Storage();
       const o = await replyTarget(st, chatId, a);
       let msgId: string | null = null;
       try {
         msgId = await c.sendMessage(
           chatId,
-          kind === 'image' ? { image: data, name } : { file: data, name },
+          kind === 'image'
+            ? { image: data, name }
+            : kind === 'file'
+              ? { file: data, name }
+              : kind === 'video'
+                ? { video: data, name, ...(cover ? { cover } : {}) }
+                : { audio: data },
           o,
         );
       } catch (e) {
         logger.error(`发送${label}失败: ${errorText(e)}`);
       }
-      return finishSend(st, c, chatId, msgId, o, kind === 'image' ? 5 : 3, `[${label}] ${name}`);
+      return finishSend(st, c, chatId, msgId, o, msgType, `[${label}] ${name}`);
     },
   };
 }
@@ -477,14 +522,18 @@ const translate: Command = {
 
 const forward: Command = {
   name: 'forward',
-  help: '把一条消息转发到一个或多个会话',
+  help: '把一条消息转发到一个或多个会话;--thread 时 msg_id 是话题根消息,转发整个话题',
   access: 'forward',
   positionals: [{ name: 'msg_id' }, { name: 'chat_ids', nargs: '+' }],
+  options: [{ name: 'thread', kind: 'flag', help: '转发整个话题(根消息加全部回复)' }],
   async run(a) {
     const targets = a.chat_ids as string[];
     let sent: Map<string, string>;
     try {
-      sent = await (await client()).forwardMessage(String(a.msg_id), targets);
+      const c = await client();
+      sent = a.thread
+        ? await c.forwardThread(String(a.msg_id), targets)
+        : await c.forwardMessage(String(a.msg_id), targets);
     } catch (e) {
       err(`转发失败: ${errorText(e)}`);
       return 1;
@@ -496,19 +545,63 @@ const forward: Command = {
   },
 };
 
+const GROUP_ACTIONS = [
+  'info',
+  'create',
+  'add',
+  'remove',
+  'rename',
+  'nickname',
+  'admins',
+  'admin',
+  'moderation',
+  'requests',
+  'link',
+] as const;
+
 const group: Command = {
   name: 'group',
-  help: '群管理:info <chat_id> 群信息、create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>',
-  access: (a) => `group.${a.action as 'info' | 'create' | 'add' | 'remove' | 'rename'}`,
+  help: '群管理:info <chat_id> 群信息、create <群名> 建群、add/remove <chat_id> <user_id...> 拉人/移出、rename <chat_id> <新群名>、nickname <chat_id> [昵称] 我的群昵称、admins <chat_id> 列出管理员、admin <chat_id> <user_id...> 设管理员(--remove 取消)、moderation <chat_id> anyone|admins|whitelist 发言权限、requests <chat_id> 入群申请(--approve/--reject)、link <chat_id> 分享链接',
+  access: (a) => {
+    const action = String(a.action);
+    if (action === 'requests' && (a.approve || a.reject)) return 'group.approve';
+    return `group.${action}` as Permission;
+  },
   positionals: [
-    { name: 'action', choices: ['info', 'create', 'add', 'remove', 'rename'] },
+    { name: 'action', choices: GROUP_ACTIONS },
     { name: 'args', nargs: '+' },
   ],
   options: [
     { name: 'members', kind: 'string', help: 'create 时一起拉进群的人(user_id,逗号分隔)' },
     { name: 'desc', kind: 'string', help: '群描述(create / rename)' },
     { name: 'topic', kind: 'flag', help: 'create 时建话题群' },
-    { name: 'json', kind: 'flag', help: 'info 输出 JSON' },
+    {
+      name: 'remove',
+      kind: 'string',
+      metavar: 'USER_IDS',
+      help: 'admin:取消这些人的管理员;moderation:移出发言白名单(逗号分隔)',
+    },
+    {
+      name: 'add',
+      kind: 'string',
+      metavar: 'USER_IDS',
+      help: 'moderation whitelist:加入发言白名单(逗号分隔)',
+    },
+    {
+      name: 'approve',
+      kind: 'string',
+      metavar: 'USER_IDS',
+      help: 'requests:同意这些人入群(逗号分隔)',
+    },
+    {
+      name: 'reject',
+      kind: 'string',
+      metavar: 'USER_IDS',
+      help: 'requests:拒绝这些人入群(逗号分隔)',
+    },
+    { name: 'days', kind: 'int', default: 7, help: 'link:有效天数(客户端可选 7、30、365)' },
+    { name: 'forever', kind: 'flag', help: 'link:永久有效' },
+    { name: 'json', kind: 'flag', help: 'info / admins / requests 输出 JSON' },
   ],
   async run(a) {
     const c = await client();
@@ -523,6 +616,70 @@ const group: Command = {
             return 1;
           }
           printChatInfo(info, Boolean(a.json), await c.userNames([info.ownerId]));
+          return 0;
+        }
+        case 'nickname':
+          await c.setGroupNickname(target, rest.join(' '));
+          out(rest.length ? `已设置群昵称 chat_id=${target}` : `已清除群昵称 chat_id=${target}`);
+          return 0;
+        case 'admins': {
+          const ids = await c.chatAdmins(target);
+          const names = await c.userNames(ids);
+          if (a.json) printJson(ids.map((id) => ({ id, name: names.get(id) ?? '' })));
+          else for (const id of ids) out(`${id}\t${names.get(id) ?? ''}`);
+          return 0;
+        }
+        case 'admin': {
+          const remove = list(a.remove) ?? [];
+          if (!rest.length && !remove.length) {
+            err('需要 user_id(或 --remove)');
+            return 2;
+          }
+          await c.updateAdmins(target, rest, remove);
+          out(`已更新管理员 chat_id=${target}`);
+          return 0;
+        }
+        case 'moderation': {
+          const type = rest[0];
+          if (type !== 'anyone' && type !== 'admins' && type !== 'whitelist') {
+            err('需要发言权限: anyone / admins / whitelist');
+            return 2;
+          }
+          await c.setPostPermission(target, type, {
+            add: list(a.add) ?? [],
+            remove: list(a.remove) ?? [],
+          });
+          out(`已设置发言权限 ${POST_TYPE_LABELS[type]} chat_id=${target}`);
+          return 0;
+        }
+        case 'requests': {
+          const approve = list(a.approve) ?? [];
+          const reject = list(a.reject) ?? [];
+          if (approve.length || reject.length) {
+            for (const id of approve) await c.handleJoinRequest(target, id, true);
+            for (const id of reject) await c.handleJoinRequest(target, id, false);
+            out(`已处理入群申请:同意 ${approve.length} 人,拒绝 ${reject.length} 人`);
+            return 0;
+          }
+          const reqs = await c.joinRequests(target);
+          if (a.json) printJson(reqs);
+          else
+            for (const r of reqs)
+              out(
+                `${r.userId}\t${JOIN_STATUS_LABELS[r.status]}\t${shortTime(r.time)}\t${r.via}${r.inviterId ? `\t邀请人 ${r.inviterId}` : ''}${r.reason ? `\t${r.reason}` : ''}`,
+              );
+          return 0;
+        }
+        case 'link': {
+          const link = await c.chatShareLink(target, {
+            days: Number(a.days),
+            forever: Boolean(a.forever),
+          });
+          out(
+            link.expireTime
+              ? `${link.url}\t有效期至 ${shortTime(link.expireTime)}`
+              : `${link.url}\t永久有效`,
+          );
           return 0;
         }
         case 'create': {
@@ -562,6 +719,13 @@ const group: Command = {
   },
 };
 
+const JOIN_STATUS_LABELS = {
+  pending: '待审批',
+  approved: '已同意',
+  rejected: '已拒绝',
+  unknown: '未知',
+} as const;
+
 const POST_TYPE_LABELS = {
   anyone: '所有人',
   admins: '仅群主和管理员',
@@ -586,7 +750,7 @@ function printChatInfo(info: ChatInfo, json: boolean, names: Map<string, string>
     ['创建于', info.createTime ? shortTime(info.createTime) : '-'],
     ['我的身份', role],
     ['发言权限', POST_TYPE_LABELS[info.postType]],
-    ['免打扰', info.muted ? '是' : '否'],
+    ['免打扰', info.muted ? (info.muteAtAll ? '是(含 @所有人)' : '是') : '否'],
     ['公开群', info.public ? '是' : '否'],
     ['外部群', info.crossTenant ? '是' : '否'],
   ])
@@ -640,6 +804,28 @@ const pins: Command = {
         out(
           `${p.messageId} [${shortTime(Math.floor(p.pinnedAt / 1000))}] ${p.message ? `${p.message.from_id}: ${preview(p.message.content || '', 100)}` : ''}`,
         );
+    return 0;
+  },
+};
+
+const mute: Command = {
+  name: 'mute',
+  help: '会话免打扰(只影响自己);--remove 恢复提醒;--at-all 连 @所有人 也一起处理',
+  access: 'mute',
+  positionals: [{ name: 'chat_ids', nargs: '+' }],
+  options: [
+    { name: 'remove', kind: 'flag', help: '恢复提醒' },
+    { name: 'at-all', kind: 'flag', help: '同时屏蔽(或恢复) @所有人 的提醒' },
+  ],
+  async run(a) {
+    const ids = (a.chat_ids as string[]).flatMap((x) => list(x) ?? []);
+    try {
+      await (await client()).setMuted(ids, !a.remove, { atAll: Boolean(a.at_all) });
+    } catch (e) {
+      err(`免打扰设置失败: ${errorText(e)}`);
+      return 1;
+    }
+    out(`已${a.remove ? '恢复提醒' : '设为免打扰'} ${ids.length} 个会话`);
     return 0;
   },
 };
@@ -1028,22 +1214,47 @@ const api: Command = {
  * fields except content_data.
  * When names is given (--names), senders are shown by name, and --json adds a from_name.
  */
-function printMessages(msgs: LarkMessage[], json: boolean, names?: Map<string, string>): void {
+type ReactionsById = Map<string, MessageReactions['reactions']>;
+
+function printMessages(
+  msgs: LarkMessage[],
+  json: boolean,
+  names?: Map<string, string>,
+  reactions?: ReactionsById,
+): void {
   if (json) {
     printJson(
-      msgs.map(({ content_data: _, ...rest }) =>
-        names ? { ...rest, from_name: names.get(rest.from_id) ?? '' } : rest,
-      ),
+      msgs.map(({ content_data: _, ...rest }) => ({
+        ...rest,
+        ...(names ? { from_name: names.get(rest.from_id) ?? '' } : {}),
+        ...(reactions ? { reactions: reactions.get(rest.msg_id) ?? [] } : {}),
+      })),
     );
     return;
   }
   for (const m of msgs) {
     const scope = m.anchor ? `[${m.scope}:${head(m.anchor, 8)}]` : '';
     const sender = names?.get(m.from_id) || m.from_id;
+    const rs = reactions?.get(m.msg_id) ?? [];
+    const tail = rs.length ? ` {${rs.map((r) => `${r.type}×${r.count}`).join(' ')}}` : '';
     out(
-      `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${sender}: ${preview(m.content || '', 120)}`,
+      `${String(m.position).padStart(6)} [${shortTime(m.create_time)}]${scope} ${sender}: ${preview(m.content || '', 120)}${tail}`,
     );
   }
+}
+
+/** With --reactions, looks up the reactions on these messages (in batches of 50). */
+async function messageReactions(
+  c: LarkClient,
+  msgs: LarkMessage[],
+  want: boolean,
+): Promise<ReactionsById | undefined> {
+  if (!want) return undefined;
+  const out: ReactionsById = new Map();
+  const ids = msgs.map((m) => m.msg_id);
+  for (let i = 0; i < ids.length; i += 50)
+    for (const r of await c.reactions(ids.slice(i, i + 50))) out.set(r.messageId, r.reactions);
+  return out;
 }
 
 /** With --names, looks up sender names; senders not found are still shown by id. */
@@ -1432,12 +1643,27 @@ const history: Command = {
     },
     { name: 'until', kind: 'string', help: '只要这之前的消息(格式同 --since)' },
     { name: 'save', kind: 'flag', help: '同时写入本地库' },
+    {
+      name: 'order',
+      kind: 'string',
+      choices: ['asc', 'desc'],
+      default: 'asc',
+      help: '输出顺序:asc 旧的在前(默认),desc 新的在前',
+    },
+    { name: 'reactions', kind: 'flag', help: '同时列出每条消息上的表情回复' },
     NAMES_OPTION,
     { name: 'json', kind: 'flag' },
   ],
   async run(a) {
     const c = await client();
     const chatId = await chatTarget(c, a.chat_id);
+    const show = async (msgs: LarkMessage[]) =>
+      printMessages(
+        a.order === 'desc' ? [...msgs].reverse() : msgs,
+        Boolean(a.json),
+        await senderNames(c, msgs, Boolean(a.names)),
+        await messageReactions(c, msgs, Boolean(a.reactions)),
+      );
     if (chatId === null) return 1;
     const count = Number(a.count);
     if (a.since !== undefined || a.until !== undefined) {
@@ -1457,7 +1683,7 @@ const history: Command = {
         st ? (m: LarkMessage) => st.saveMessage(m) : undefined,
       );
       await st?.close();
-      printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
+      await show(msgs);
       if (a.save) out(`已入库 ${msgs.length} 条`);
       return 0;
     }
@@ -1489,7 +1715,7 @@ const history: Command = {
       st ? (m: LarkMessage) => st.saveMessage(m) : undefined,
     );
     await st?.close();
-    printMessages(msgs, Boolean(a.json), await senderNames(c, msgs, Boolean(a.names)));
+    await show(msgs);
     if (a.save) out(`已入库 ${msgs.length} 条`);
     return 0;
   },
@@ -1616,14 +1842,30 @@ async function tagChats(c: LarkClient, wanted: string[]): Promise<Set<string>> {
   return chats;
 }
 
+const TAG_EDITS = ['create', 'rename', 'delete', 'add', 'remove'] as const;
+
 const tags: Command = {
   name: 'tags',
-  help: '会话标签(分组):不带参数列出标签;带标签名或 id 列出其中的会话',
-  access: 'tags',
+  help: '会话标签(分组):不带参数列出标签;带标签名或 id 列出其中的会话;--create/--rename/--delete/--add/--remove 管理标签(只影响自己)',
+  access: (a) =>
+    TAG_EDITS.some((k) => a[k] !== undefined && a[k] !== false) ? 'tags.edit' : 'tags.list',
   positionals: [{ name: 'tag', nargs: '?' }],
-  options: [{ name: 'json', kind: 'flag' }],
+  options: [
+    {
+      name: 'create',
+      kind: 'string',
+      metavar: 'NAME',
+      help: '新建标签(可配合 --add 一起放入会话)',
+    },
+    { name: 'rename', kind: 'string', metavar: 'NAME', help: '把标签改名' },
+    { name: 'delete', kind: 'flag', help: '删除标签(其中的会话不受影响)' },
+    { name: 'add', kind: 'string', metavar: 'CHAT_IDS', help: '把这些会话放进标签(逗号分隔)' },
+    { name: 'remove', kind: 'string', metavar: 'CHAT_IDS', help: '把这些会话移出标签(逗号分隔)' },
+    { name: 'json', kind: 'flag' },
+  ],
   async run(a) {
     const c = await client();
+    if (TAG_EDITS.some((k) => a[k] !== undefined && a[k] !== false)) return editTag(c, a);
     if (a.tag === undefined) {
       const groups = await c.feedGroups();
       if (a.json) printJson(groups);
@@ -1642,6 +1884,40 @@ const tags: Command = {
     return 0;
   },
 };
+
+async function editTag(c: LarkClient, a: Parsed): Promise<number> {
+  try {
+    if (a.create !== undefined) {
+      const id = await c.createFeedGroup(String(a.create), list(a.add) ?? []);
+      out(`已建标签 id=${id}`);
+      return 0;
+    }
+    if (a.tag === undefined) {
+      err('需要标签名或 id');
+      return 2;
+    }
+    const g = (await c.feedGroups()).find((x) => x.id === a.tag || x.name === a.tag);
+    if (!g) {
+      err(`找不到会话标签: ${a.tag}`);
+      return 1;
+    }
+    if (a.delete) {
+      await c.deleteFeedGroup(g.id);
+      out(`已删除标签 ${g.name}`);
+      return 0;
+    }
+    if (a.rename !== undefined) await c.renameFeedGroup(g.id, String(a.rename));
+    const add = list(a.add) ?? [];
+    const remove = list(a.remove) ?? [];
+    if (add.length) await c.addToFeedGroup(g.id, add);
+    if (remove.length) await c.removeFromFeedGroup(g.id, remove);
+    out(`已更新标签 ${a.rename ?? g.name}`);
+    return 0;
+  } catch (e) {
+    err(`标签操作失败: ${errorText(e)}`);
+    return 1;
+  }
+}
 
 async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
   const c = await LarkClient.create(la);
@@ -1929,6 +2205,8 @@ export const COMMANDS: Command[] = [
   send,
   mediaCommand('image'),
   mediaCommand('file'),
+  mediaCommand('video'),
+  mediaCommand('audio'),
   schedule,
   scheduled,
   translate,
@@ -1936,6 +2214,7 @@ export const COMMANDS: Command[] = [
   group,
   pin,
   pins,
+  mute,
   shortcut,
   tags,
   flag,

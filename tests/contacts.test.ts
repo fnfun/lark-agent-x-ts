@@ -228,6 +228,26 @@ describe('搜人、搜机器人、搜群', () => {
       groupChatFilter: { chatMemberIds: ['u1'], sortType: 4 },
     });
   });
+
+  test('要的那一类排在后面几页时继续翻页，直到凑够数量', async () => {
+    const group = (id: string, mode: number) => ({
+      id,
+      type: 3,
+      resultMeta: { groupChatMeta: { id, mode } },
+    });
+    const pages: Dict[] = [
+      { header: { hasMore: true, paginationToken: 't1' }, results: [group('g1', 1)] },
+      { header: { hasMore: true, paginationToken: 't2' }, results: [group('g2', 1)] },
+      { header: { hasMore: false }, results: [group('g3', 3)] },
+    ];
+    const c = newClient();
+    withLocale(c);
+    let n = 0;
+    c.api = async () => pages[n++] ?? {};
+    expect((await c.searchChats('', { mode: 'topic', limit: 1 })).map((h) => h.chatId)).toEqual([
+      'g3',
+    ]);
+  });
 });
 
 describe('资料卡', () => {

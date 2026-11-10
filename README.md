@@ -26,15 +26,16 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark auth qr` | Log in by QR code (recommended; `--region lark` logs in to Lark, the international version) |
 | `lark auth import` | Log in by pasting a cookie |
 | `lark auth check` / `status` | Check whether the credentials have expired / show a credentials overview |
-| `lark send <chat_id> <text>` | Send a message (`--root` replies into a thread, `--reply <msg_id>` sends a quote reply, `--links` sends `[text](url)` as hyperlinks, `--md [--title]` sends Markdown (rendered as Markdown by the client), `--post [--title]` sends HTML rich text, `--rich <json\|@file>` sends structured rich text; `--cid` sets the idempotency key, so resending with the same cid never sends a duplicate). Wherever a command takes `<chat_id>` to send to or read from (`send`, `send-image`, `send-file`, `schedule`, `history`), `user:<user_id>` means the direct chat with that user (created if there is none yet) |
-| `lark send-image <chat_id> <path>` / `lark send-file <chat_id> <path>` | Send an image / file (local files are uploaded automatically; `--root` and `--reply` are supported too) |
+| `lark send <chat_id> <text>` | Send a message (`--root` replies into a thread, `--reply <msg_id>` sends a quote reply, `--links` sends `[text](url)` as hyperlinks, `--md [--title]` sends Markdown (rendered as Markdown by the client; `![alt](src)` images given as an image key, an http(s) URL or a path relative to the current directory are uploaded and shown inline; `--attach <path,...>` puts files in the message's attachment zone), `--post [--title]` sends HTML rich text, `--rich <json\|@file>` sends structured rich text; `--cid` sets the idempotency key, so resending with the same cid never sends a duplicate). Wherever a command takes `<chat_id>` to send to or read from (`send`, `send-image`, `send-file`, `schedule`, `history`), `user:<user_id>` means the direct chat with that user (created if there is none yet) |
+| `lark send-image <chat_id> <path>` / `send-file` / `send-video` / `send-audio` | Send an image / file / MP4 video (`--cover <image>`) / voice message (Ogg/Opus, the format the client records); local files are uploaded automatically and durations are read from the file; `--root` and `--reply` are supported too |
 | `lark schedule <chat_id> <text> --at <time>` / `lark scheduled <chat_id>` | Schedule a message (`--at 10m`, `--at "2026-10-15 09:30"`, `--md`; each chat can have only one pending scheduled message at a time) / list pending scheduled messages (`--cancel`, `--reschedule` together with `--at`) |
 | `lark translate <text>` | Translate text (`--to en`, default zh); with `--msg` the arguments are message ids and those messages are translated |
-| `lark forward <msg_id> <chat_id...>` | Forward a message to one or more chats |
-| `lark group info <chat_id>` / `create <name>` / `add` / `remove` / `rename` | Show group details (owner, member count, description, my role, who may post, `--json`), create a group chat (`--members`, `--desc`, `--topic` creates a topic group), add members, remove members, rename the group or change its description |
+| `lark forward <msg_id> <chat_id...>` | Forward a message to one or more chats (`--thread`: `msg_id` is a thread's root message and the whole thread is forwarded) |
+| `lark group info <chat_id>` / `create <name>` / `add` / `remove` / `rename` | Show group details (owner, member count, description, my role, who may post, `--json`), create a group chat (`--members`, `--desc`, `--topic` creates a topic group), add members, remove members, rename the group or change its description; `nickname <chat_id> [name]` sets or clears my nickname in the group, `admins` / `admin <chat_id> <user_id...>` (`--remove <ids>`) list and change admins, `moderation <chat_id> anyone\|admins\|whitelist` (`--add` / `--remove`) sets who may post, `requests <chat_id>` lists join requests (`--approve` / `--reject <ids>`), `link <chat_id>` (`--days`, `--forever`) gets a share link to join |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin a message (`--remove` unpins) / list pinned messages in a chat |
 | `lark shortcut [chat_id,...]` | Pin chats to the top of the chat list (`--remove` unpins; with no arguments, lists pinned chats) |
-| `lark tags [tag]` | Feed tags (feed groups): list tags, or list the chats under a tag |
+| `lark tags [tag]` | Feed tags (feed groups): list tags, or list the chats under a tag; `--create <name>`, `--rename <name>`, `--delete`, `--add` / `--remove <chat_id,...>` manage tags (only affects me) |
+| `lark mute <chat_id...>` | Mute chats (do not disturb; only affects me); `--remove` turns notifications back on, `--at-all` also mutes / unmutes @all |
 | `lark flag <msg_id...>` / `lark flags` | Flag messages (`--chat` flags chats, `--remove` unflags) / list my flags |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | Recall messages / edit a text or rich-text message you sent (`--links`, `--rich`) |
 | `lark react <msg_id> <emoji>` / `lark reactions <msg_id...>` | Add a reaction (e.g. `THUMBSUP`, `DONE`; `--remove` removes it) / show the reactions on messages |
@@ -45,7 +46,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark listen` | Long-running: receive messages over the long-lived connection and save them to the local database; after reconnecting, automatically backfills messages missed while disconnected (including thread replies); updates the local database when the other side recalls or edits a message; logs reaction changes |
 | `lark listen --agent` (or `bun run agent`) | Long-running: receive messages and hand them to a local coding agent for automatic replies |
 | `lark messages <chat_id>` | Read message records from the local database (`--anchor` shows only a thread; an empty string shows only the main chat) |
-| `lark history <chat_id>` | Fetch message history (`--save` saves to the local database; `--since` / `--until` fetch the latest `--count` messages in a time range, e.g. `--since 2h`, `--since 2026-10-01`) |
+| `lark history <chat_id>` | Fetch message history (`--save` saves to the local database; `--since` / `--until` fetch the latest `--count` messages in a time range, e.g. `--since 2h`, `--since 2026-10-01`; `--order desc` lists newest first, `--reactions` adds each message's reactions) |
 | `lark get <msg_id...>` | Fetch messages by id (across chats; `--save` saves to the local database, `--json`) |
 | `lark thread <root_id>` | Fetch a thread: the root message plus the latest replies (`--count`, `--save`, `--json`) |
 | `lark download <msg_id> -o <path>` | Download the image/file in a message (fetched from the server if the message isn't in the local database) |
@@ -87,11 +88,11 @@ Every command can be allowed or denied individually or by group, to limit what t
 | Group | Contains |
 |---|---|
 | `local` | Read-only local data: `auth status`, `config`, `chats`, `sessions`, `messages`, `permissions` (view) |
-| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info`, `reactions`, `read-status`, `pins`, `flags`, `tags`, `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
-| `outbound` | Sending new messages: `send`, `send-image`, `send-file`, `schedule`, `forward`, plus cancelling and rescheduling with `scheduled` |
-| `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read` |
-| `organize` | Organizing that only affects yourself: `flag`, plus pinning and unpinning with `shortcut` |
-| `manage` | Group chat management: `group`'s `create` / `add` / `remove` / `rename` |
+| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info` / `admins` / `requests` (listing), `reactions`, `read-status`, `pins`, `flags`, `tags` (listing), `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
+| `outbound` | Sending new messages: `send`, `send-image`, `send-file`, `send-video`, `send-audio`, `schedule`, `forward`, plus cancelling and rescheduling with `scheduled` |
+| `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read`, `group nickname` |
+| `organize` | Organizing that only affects yourself: `flag`, `mute`, plus pinning and unpinning with `shortcut` and editing with `tags` |
+| `manage` | Group chat management: `group`'s `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`, and approving or rejecting with `requests` |
 | `system` | Account and process level: `auth`'s `qr` / `import`, `listen`, `api`, `permissions`'s `edit` / `clear` |
 
 Commands that mix reads and writes are split by action, named `command.action` (e.g. `group.add`, `scheduled.cancel`, `auth.qr`); `lark permissions` lists all names and the groups they belong to.
@@ -142,6 +143,8 @@ const mentions = await client.unreadMentions(); // unread @mentions of me; unrea
 const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000, atIds: [client.auth.userId] }); // search messages across chats; also attachmentTypes, chatType, senderTypes
 const people = await client.searchUsers('同事', { chatted: true }); // also searchBots, searchChats, userProfile(userId), chatList(), chatInfo(chatId)
 const dm = await client.directChat('<user_id>'); // the direct chat with a user (created if missing)
+await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // also { video, name, cover? } and { audio } (Ogg/Opus)
+await client.setMuted(['<chat_id>'], true); // also setGroupNickname, chatAdmins / updateAdmins, setPostPermission, joinRequests / handleJoinRequest, chatShareLink, forwardThread, createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // fetch messages by id; threadMessages(rootId) fetches a whole thread
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // backfill after reconnecting: messages that arrived after a given time (including thread replies)
 
@@ -153,7 +156,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 **Permissions**: the `permissions` option of `LarkClient.create` enables the same [command permissions](#command-permissions) as the CLI; when it isn't passed, nothing is checked, same as before.
 
 - `true`: uses this account's rules from `permissions.json` next to the credentials, or `LARKX_ALLOW` / `LARKX_DENY` if there are none; they are re-read on every call, so rule changes don't need a restart. You can also pass `{ allow, deny }` directly.
-- Every public method maps to a permission item of the same name (classified under the closest command, e.g. `addMembers` → `group.add`, `sendMessage` → `send` / `send-image` / `send-file` depending on the content, `api` and `gatewayPost` → `api`); when not allowed, it throws `PermissionDenied` (with `permission`, `group`, `rule`).
+- Every public method maps to a permission item of the same name (classified under the closest command, e.g. `addMembers` → `group.add`, `sendMessage` → `send` / `send-image` / `send-file` / `send-video` / `send-audio` depending on the content, `api` and `gatewayPost` → `api`); when not allowed, it throws `PermissionDenied` (with `permission`, `group`, `rule`).
 - Only the layer the caller calls directly is checked: other methods called internally by a method (e.g. the gateway call made while sending) aren't checked again; callbacks passed to a method (e.g. the long-lived connection's `onMessage`) don't count, and calls made inside a callback are checked as usual.
 - The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource` don't go through the client and aren't subject to permission control.
 - `PERMISSIONS`, `GROUPS`, `decide`, `loadRules`, and `saveAccountRules` are exported as well, so you can build your own permissions UI.

@@ -26,15 +26,16 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark auth qr` | 扫码登录（推荐；`--region lark` 登录 Lark 国际版） |
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
-| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重）。凡是要发往或读取 `<chat_id>` 的命令（`send`、`send-image`、`send-file`、`schedule`、`history`），都可以写 `user:<user_id>` 表示与该用户的私聊（没有时自动创建） |
-| `lark send-image <chat_id> <路径>` / `lark send-file <chat_id> <路径>` | 发送图片 / 文件（本地文件自动上传；同样支持 `--root`、`--reply`） |
+| `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染；`![说明](src)` 里写图片 key、http(s) 地址或相对当前目录的路径时，自动上传并在正文里显示；`--attach <路径,...>` 把文件放进消息的附件区），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重）。凡是要发往或读取 `<chat_id>` 的命令（`send`、`send-image`、`send-file`、`schedule`、`history`），都可以写 `user:<user_id>` 表示与该用户的私聊（没有时自动创建） |
+| `lark send-image <chat_id> <路径>` / `send-file` / `send-video` / `send-audio` | 发送图片 / 文件 / MP4 视频（`--cover <图片>` 指定封面） / 语音（Ogg/Opus，即客户端录音的格式）；本地文件自动上传，时长从文件读取；同样支持 `--root`、`--reply` |
 | `lark schedule <chat_id> <text> --at <时间>` / `lark scheduled <chat_id>` | 定时发送（`--at 10m`、`--at "2026-10-15 09:30"`，`--md`；每个会话同时只能有一条待发）/ 列出待发的定时消息（`--cancel`、`--reschedule` 配合 `--at`） |
 | `lark translate <文本>` | 翻译文本（`--to en`，默认 zh）；`--msg` 时参数是消息 id，翻译这些消息 |
-| `lark forward <msg_id> <chat_id...>` | 把一条消息转发到一个或多个会话 |
-| `lark group info <chat_id>` / `create <群名>` / `add` / `remove` / `rename` | 群信息（群主、人数、描述、我的身份、发言权限，`--json`）、建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述 |
+| `lark forward <msg_id> <chat_id...>` | 把一条消息转发到一个或多个会话（`--thread` 时 `msg_id` 是话题根消息，转发整个话题） |
+| `lark group info <chat_id>` / `create <群名>` / `add` / `remove` / `rename` | 群信息（群主、人数、描述、我的身份、发言权限，`--json`）、建群（`--members`、`--desc`、`--topic` 建话题群）、拉人、移出、改群名或描述；`nickname <chat_id> [昵称]` 设置或清除我的群昵称，`admins` / `admin <chat_id> <user_id...>`（`--remove <ids>`）查看与设置管理员，`moderation <chat_id> anyone\|admins\|whitelist`（`--add` / `--remove`）设置发言权限，`requests <chat_id>` 列出入群申请（`--approve` / `--reject <ids>` 处理），`link <chat_id>`（`--days`、`--forever`）取入群分享链接 |
 | `lark pin <chat_id> <msg_id>` / `lark pins <chat_id>` | Pin 消息（`--remove` 取消） / 列出会话里被 Pin 的消息 |
 | `lark shortcut [chat_id,...]` | 在会话列表里置顶会话（`--remove` 取消，不带参数列出已置顶的） |
-| `lark tags [标签]` | 会话标签（分组）：列出标签，或列出某标签里的会话 |
+| `lark tags [标签]` | 会话标签（分组）：列出标签，或列出某标签里的会话；`--create <名字>`、`--rename <新名字>`、`--delete`、`--add` / `--remove <chat_id,...>` 管理标签（只影响自己） |
+| `lark mute <chat_id...>` | 会话免打扰（只影响自己）；`--remove` 恢复提醒，`--at-all` 连 @所有人 一起屏蔽或恢复 |
 | `lark flag <msg_id...>` / `lark flags` | 标记消息（`--chat` 标记会话，`--remove` 取消） / 列出我的标记 |
 | `lark recall <msg_id...>` / `lark edit <msg_id> <text>` | 撤回消息 / 编辑自己发的文本或富文本消息（`--links`、`--rich`） |
 | `lark react <msg_id> <表情>` / `lark reactions <msg_id...>` | 加表情回复（如 `THUMBSUP`、`DONE`，`--remove` 去掉） / 查看消息上的表情 |
@@ -45,7 +46,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark listen` | 常驻：长连接收消息入库；断线重连后自动补收断线期间的消息（含话题回复）；对方撤回或编辑消息时同步更新本地库；表情变化记日志 |
 | `lark listen --agent`（或 `bun run agent`） | 常驻：收消息并接本地 coding agent 自动回复 |
 | `lark messages <chat_id>` | 读本地消息记录（`--anchor` 只看话题，空串只看主会话） |
-| `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`） |
+| `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`；`--order desc` 新的在前，`--reactions` 同时列出表情回复） |
 | `lark get <msg_id...>` | 按 id 取消息（可跨会话；`--save` 入库，`--json`） |
 | `lark thread <root_id>` | 拉取一个话题：根消息加最近的回复（`--count`、`--save`、`--json`） |
 | `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
@@ -87,11 +88,11 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 | 分组 | 包含 |
 |---|---|
 | `local` | 只读本机数据：`auth status`、`config`、`chats`、`sessions`、`messages`、`permissions`（查看） |
-| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group info`、`reactions`、`read-status`、`pins`、`flags`、`tags`、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
-| `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`schedule`、`forward`，以及 `scheduled` 的取消与改时间 |
-| `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read` |
-| `organize` | 只影响自己的整理：`flag`，以及 `shortcut` 的置顶与取消 |
-| `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` |
+| `query` | 只读飞书数据：`auth check`、`history`、`get`、`thread`、`search`、`search-messages`、`search-users`、`search-bots`、`chat-search`、`chat-list`、`unread`、`members`、`users`、`user`、`group` 的 `info` / `admins` / `requests`（列出）、`reactions`、`read-status`、`pins`、`flags`、`tags`（列出）、`translate`、`message-link`、`self-chat`、`download`，以及 `scheduled`、`shortcut` 的列出 |
+| `outbound` | 发出新消息：`send`、`send-image`、`send-file`、`send-video`、`send-audio`、`schedule`、`forward`，以及 `scheduled` 的取消与改时间 |
+| `modify` | 改动已有消息或别人看得见的状态：`recall`、`edit`、`react`、`pin`、`read`、`group nickname` |
+| `organize` | 只影响自己的整理：`flag`、`mute`，以及 `shortcut` 的置顶与取消、`tags` 的增删改 |
+| `manage` | 群管理：`group` 的 `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`，以及 `requests` 的同意与拒绝 |
 | `system` | 账号与进程级：`auth` 的 `qr` / `import`、`listen`、`api`、`permissions` 的 `edit` / `clear` |
 
 读写混用的命令按动作细分，名字写作 `命令.动作`（如 `group.add`、`scheduled.cancel`、`auth.qr`）；`lark permissions` 列出全部名字与归属。
@@ -142,6 +143,8 @@ const mentions = await client.unreadMentions(); // 未读的 @我；unreadChats(
 const hits = await client.searchMessages('月报', { since: Date.now() - 7 * 86_400_000, atIds: [client.auth.userId] }); // 跨会话搜消息；另有 attachmentTypes、chatType、senderTypes
 const people = await client.searchUsers('同事', { chatted: true }); // 另有 searchBots、searchChats、userProfile(userId)、chatList()、chatInfo(chatId)
 const dm = await client.directChat('<user_id>'); // 与某人的私聊（没有时自动创建）
+await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // 另有 { video, name, cover? } 与 { audio }（Ogg/Opus）
+await client.setMuted(['<chat_id>'], true); // 另有 setGroupNickname、chatAdmins / updateAdmins、setPostPermission、joinRequests / handleJoinRequest、chatShareLink、forwardThread、createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
 
@@ -153,7 +156,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 **权限**：`LarkClient.create` 的 `permissions` 选项开启与命令行同一套[命令权限](#命令权限)，不传时不检查，与以前一致。
 
 - `true`：用凭证旁 `permissions.json` 里这个账号的规则，没有则用 `LARKX_ALLOW` / `LARKX_DENY`；每次调用时重新读取，改了规则不用重启。也可以直接传 `{ allow, deny }`。
-- 每个公开方法归到一个同名的权限项上（按最接近的命令归类，如 `addMembers` → `group.add`、`sendMessage` 按内容归到 `send` / `send-image` / `send-file`、`api` 与 `gatewayPost` → `api`），不允许时抛 `PermissionDenied`（带 `permission`、`group`、`rule`）。
+- 每个公开方法归到一个同名的权限项上（按最接近的命令归类，如 `addMembers` → `group.add`、`sendMessage` 按内容归到 `send` / `send-image` / `send-file` / `send-video` / `send-audio`、`api` 与 `gatewayPost` → `api`），不允许时抛 `PermissionDenied`（带 `permission`、`group`、`rule`）。
 - 只检查调用方直接调的那一层：方法内部再调其他方法（如发送时内部调网关）不再检查；传给方法的回调（如长连接的 `onMessage`）不算在内，回调里的调用照常检查。
 - 独立函数 `uploadImage`、`uploadFile`、`downloadMessageResource` 不经过客户端，不受权限控制。
 - `PERMISSIONS`、`GROUPS`、`decide`、`loadRules`、`saveAccountRules` 也一并导出，可用来做自己的权限界面。

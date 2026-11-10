@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { create, fromBinary, type Message, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from './auth.js';
-import { HttpError, NetworkError, request, USER_AGENT } from './http.js';
+import { HttpError, NetworkError, raiseForStatus, request, USER_AGENT } from './http.js';
 import { accessKey, longRequestId, requestCid, requestId } from './ids.js';
 import { getLogger } from './log.js';
-import { uploadFile, uploadImage } from './media.js';
+import { mp4DurationMs, oggOpusDurationMs, uploadFile, uploadImage } from './media.js';
 import {
   authorize,
   checkSource,
@@ -12,6 +14,7 @@ import {
   type PermissionSource,
 } from './permissions.js';
 import {
+  buildAudioMessagePacket,
   buildCreateChatPacket,
   buildFileMessagePacket,
   buildGroupInfoPacket,
@@ -22,12 +25,14 @@ import {
   buildSearchPacket,
   buildSendMessagePacket,
   buildUserInfoPacket,
+  buildVideoMessagePacket,
   decodeGroupInfoResponse,
   decodePutChatResponse,
   decodePutMessageResponse,
   decodeSearchResponse,
   decodeUserInfoResponse,
   type EditableContent,
+  type MarkdownPart,
   type RichBlock,
   richTextOf,
   type SearchHit,
@@ -89,9 +94,23 @@ export type MessageContent =
   | { text: string; links?: boolean }
   | { blocks: RichBlock[]; text: string }
   | { html: string; title?: string }
-  | { markdown: string; title?: string }
+  /**
+   * Markdown; `![alt](src)` images whose src is an image key (img_…) or an http(s) URL are uploaded
+   * and shown inline, and with imageDir, so are relative paths under it (absolute paths and `..`
+   * are refused). attachments are files shown in the message's attachment zone.
+   */
+  | {
+      markdown: string;
+      title?: string;
+      imageDir?: string;
+      attachments?: { data: Uint8Array; name: string }[];
+    }
   | { image: Uint8Array; name?: string }
-  | { file: Uint8Array; name: string };
+  | { file: Uint8Array; name: string }
+  /** MP4 video; the duration is read from the file when omitted, cover is an optional image. */
+  | { video: Uint8Array; name: string; cover?: Uint8Array; durationMs?: number }
+  /** Voice message: an Ogg / Opus file (what the client records); duration read from the file. */
+  | { audio: Uint8Array; durationMs?: number };
 
 /**
  * The server accepted the send request but no message id came back, so delivery cannot be
@@ -187,6 +206,8 @@ const SEARCH_ENTITY_BOT = 2;
 const SEARCH_ENTITY_GROUP = 3;
 const SEARCH_ENTITY_MESSAGE = 5;
 const unhighlight = (s: unknown) => String(s ?? '').replace(/<\/?h>/g, '');
+/** `![alt](src)` in Markdown. */
+const MD_IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\s]+)\)/g;
 
 /** Criteria for searching people; the flags narrow the results, leaving them off does not. */
 export interface UserSearchOptions {
@@ -307,6 +328,8 @@ export interface ChatInfo {
   admin: boolean;
   owner: boolean;
   muted: boolean;
+  /** @all messages do not notify me either. */
+  muteAtAll: boolean;
   public: boolean;
   crossTenant: boolean;
   /** Who may post: anyone, only admins, or a whitelist. */
@@ -314,6 +337,44 @@ export interface ChatInfo {
 }
 
 const POST_TYPES = { 1: 'anyone', 2: 'admins', 3: 'whitelist' } as const;
+const POST_TYPE_VALUES = { anyone: 1, admins: 2, whitelist: 3 } as const;
+export type PostType = keyof typeof POST_TYPE_VALUES;
+
+/** A request to join a group (someone applying, or a member inviting someone that needs approval). */
+export interface JoinRequest {
+  /** The person who would join. */
+  userId: string;
+  /** Who invited them; empty when they applied themselves. */
+  inviterId: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected' | 'unknown';
+  /** Time of the request (s). */
+  time: number;
+  /** How they found the group: share, invitation, qrcode, search, link, ... */
+  via: string;
+}
+
+// chats.ApplyStatus
+const APPLY_APPROVED = 1;
+const APPLY_REFUSED = 2;
+const APPLY_STATUS = { 1: 'approved', 2: 'rejected', 3: 'pending' } as const;
+// chats.ApplyWays
+const APPLY_WAYS: Record<number, string> = {
+  1: 'share',
+  2: 'invitation',
+  3: 'qrcode',
+  4: 'search',
+  5: 'department',
+  6: 'link',
+  7: 'team',
+  8: 'calendar',
+};
+// entities.ChatSetting.Field
+const SETTING_IS_REMIND = 1;
+const SETTING_MUTE_AT_ALL = 6;
+// feed.FeedGroup.FeedGroupType.NORMAL; UpdateFeedGroupsRequest.UpdateFieldType.BASE
+const FEED_GROUP_NORMAL = 1;
+const FEED_GROUP_FIELD_BASE = 1;
 
 /** Picks the value for locale from `{default_val, i18n_vals}` (either key spelling). */
 function localized(v: Dict, locale: string): string {
@@ -812,14 +873,59 @@ export class LarkClient {
         target,
         requestId,
       );
-    else if ('markdown' in content)
-      pkt = buildMarkdownMessagePacket(content.markdown, target, requestId, content.title ?? '');
-    else if ('blocks' in content)
+    else if ('video' in content) {
+      const durationMs = content.durationMs ?? mp4DurationMs(content.video) ?? 0;
+      const file = await uploadFile(this.auth, chatId, content.video, content.name);
+      const cover = content.cover ? await uploadImage(this.auth, content.cover, 'cover.jpg') : '';
+      pkt = buildVideoMessagePacket(file, durationMs, cover, target, requestId);
+    } else if ('audio' in content) {
+      const durationMs = content.durationMs ?? oggOpusDurationMs(content.audio);
+      if (durationMs === null) throw new Error('语音消息要用 Ogg/Opus 文件(读不出时长)');
+      const file = await uploadFile(this.auth, chatId, content.audio, 'voice.opus');
+      // The server keeps whole seconds and truncates (1980 ms shows as 1 s), so round here
+      const seconds = Math.max(1, Math.round(durationMs / 1000));
+      pkt = buildAudioMessagePacket(file.key, seconds * 1000, target, requestId);
+    } else if ('markdown' in content) {
+      const parts = await this.markdownParts(content.markdown, content.imageDir);
+      const attachments: string[] = [];
+      for (const f of content.attachments ?? [])
+        attachments.push((await uploadFile(this.auth, chatId, f.data, f.name)).key);
+      pkt = buildMarkdownMessagePacket(parts, target, requestId, content.title ?? '', attachments);
+    } else if ('blocks' in content)
       pkt = buildRichMessagePacket(content.blocks, content.text, target, requestId);
     else if ('html' in content)
       pkt = buildPostMessagePacket(content.html, target, requestId, content.title ?? '');
     else pkt = buildSendMessagePacket(content.text, target, requestId, content.links ?? false);
     return { pkt, cid: target.cid };
+  }
+
+  /**
+   * Splits Markdown at its images and uploads them (see MessageContent): image keys are used as is,
+   * URLs are downloaded, and relative paths are read under imageDir; other images stay as text.
+   */
+  private async markdownParts(markdown: string, imageDir?: string): Promise<MarkdownPart[]> {
+    const parts: MarkdownPart[] = [];
+    let pos = 0;
+    for (const m of markdown.matchAll(MD_IMAGE_RE)) {
+      const src = m[2] as string;
+      let key: string | null = null;
+      if (/^img_[\w-]+$/.test(src)) key = src;
+      else if (/^https?:\/\//.test(src)) {
+        const res = raiseForStatus(await request(src, { timeoutMs: 60_000 }));
+        const data = new Uint8Array(await res.arrayBuffer());
+        key = await uploadImage(this.auth, data, src.split(/[?#]/)[0]?.split('/').pop() || 'image');
+      } else if (imageDir) {
+        if (isAbsolute(src) || src.split(/[\\/]/).includes('..'))
+          throw new Error(`Markdown 里的图片只能用相对路径: ${src}`);
+        key = await uploadImage(this.auth, new Uint8Array(readFileSync(join(imageDir, src))), src);
+      }
+      if (key === null) continue;
+      if (m.index > pos) parts.push({ md: markdown.slice(pos, m.index) });
+      parts.push({ imageKey: key });
+      pos = m.index + m[0].length;
+    }
+    if (pos < markdown.length || !parts.length) parts.push({ md: markdown.slice(pos) });
+    return parts;
   }
 
   /**
@@ -1072,22 +1178,22 @@ export class LarkClient {
     const filter: Dict = {};
     if (o.memberIds?.length) filter.chatMemberIds = o.memberIds;
     if (o.sort) filter.sortType = GROUP_SORT[o.sort];
-    const limit = o.limit ?? 20;
-    // The server has no mode filter, so filter here and fetch a little more to fill the page
-    const hits = await this.universalSearch(
+    // The server has no mode filter: skipping other modes while picking keeps paging until enough
+    return this.universalSearch(
       SEARCH_ENTITY_GROUP,
       'GROUP_CHAT',
       query,
       { groupChatFilter: filter },
-      o.mode ? limit * 3 : limit,
+      o.limit ?? 20,
       (r, meta): ChatHit | null => {
         const m = (meta.groupChatMeta ?? {}) as Dict;
-        if (!m.id) return null;
+        const mode = TOPIC_MODES.has(enumToInt(m.mode ?? 0)) ? 'topic' : 'group';
+        if (!m.id || (o.mode && mode !== o.mode)) return null;
         return {
           chatId: String(m.id),
           name: unhighlight(r.titleHighlighted),
           description: String(m.description ?? ''),
-          mode: TOPIC_MODES.has(enumToInt(m.mode ?? 0)) ? 'topic' : 'group',
+          mode,
           memberCount: Number(m.userCount ?? 0),
           member: m.isMember === true,
           public: m.isPublicV2 === true,
@@ -1096,7 +1202,6 @@ export class LarkClient {
         };
       },
     );
-    return hits.filter((h) => !o.mode || h.mode === o.mode).slice(0, limit);
   }
 
   /**
@@ -1245,6 +1350,7 @@ export class LarkClient {
       admin: chat.isAdmin === true || (ownerId !== '' && ownerId === this.auth.userId),
       owner: ownerId !== '' && ownerId === this.auth.userId,
       muted: chat.isRemind === false,
+      muteAtAll: (chat.userSetting as Dict | undefined)?.isMuteAtAll === true,
       public: chat.isPublicV2 === true || chat.isPublic === true,
       crossTenant: chat.isCrossTenant === true,
       postType: POST_TYPES[enumToInt(chat.postType ?? 0) as 1 | 2 | 3] ?? 'unknown',
@@ -1402,6 +1508,149 @@ export class LarkClient {
       ...(o.name !== undefined ? { name: o.name } : {}),
       ...(o.description !== undefined ? { description: o.description } : {}),
       updateFields: fields,
+    });
+  }
+
+  /**
+   * Turn notifications for chats off (muted = true) or back on; with atAll, @all messages are
+   * muted / unmuted as well. Only affects me.
+   */
+  async setMuted(chatIds: string[], muted: boolean, o: { atAll?: boolean } = {}): Promise<void> {
+    for (const chatId of chatIds)
+      await this.api('chats.PatchChatSettingRequest', {
+        chatId,
+        chatSetting: { isRemind: !muted, ...(o.atAll ? { isMuteAtAll: muted } : {}) },
+        updateChatSettingField: o.atAll
+          ? [SETTING_IS_REMIND, SETTING_MUTE_AT_ALL]
+          : [SETTING_IS_REMIND],
+      });
+  }
+
+  /** Set my nickname in a group (members see it instead of my name); an empty string clears it. */
+  async setGroupNickname(chatId: string, nickname: string): Promise<void> {
+    await this.api('chatters.PutGroupNicknameRequest', { chatId, nickname });
+  }
+
+  /** Group admins (user ids, in the order the client lists them); the owner is not included. */
+  async chatAdmins(chatId: string): Promise<string[]> {
+    const resp = await this.api('chats.PullChatAdminUsersRequest', { chatId });
+    return ((resp.adminUsers ?? []) as Dict[])
+      .sort((a, b) => int(a.orderWeight, 0) - int(b.orderWeight, 0))
+      .map((u) => String(u.userId));
+  }
+
+  /** Add and remove group admins (owner only). */
+  async updateAdmins(chatId: string, add: string[], remove: string[] = []): Promise<void> {
+    await this.api('chats.PatchChatAdminUsersRequest', {
+      chatId,
+      toAddUserIds: add,
+      toDelUserIds: remove,
+    });
+  }
+
+  /**
+   * Who may post in a group (owner or admin only); with 'whitelist', add / remove adjust the members
+   * allowed to post.
+   */
+  async setPostPermission(
+    chatId: string,
+    type: PostType,
+    o: { add?: string[]; remove?: string[] } = {},
+  ): Promise<void> {
+    await this.api('chats.PatchChatPostUserRequest', {
+      chatId,
+      postType: POST_TYPE_VALUES[type],
+      toAddUserIds: o.add ?? [],
+      toDelUserIds: o.remove ?? [],
+    });
+  }
+
+  /** Requests to join a group, newest first (owner or admin only); at most max. */
+  async joinRequests(chatId: string, max = 200): Promise<JoinRequest[]> {
+    const out: JoinRequest[] = [];
+    let cursor = '0';
+    while (out.length < max) {
+      const resp = await this.api('chats.PullAddChatChatterApplyRequest', { chatId, cursor });
+      const applies = (resp.applies ?? []) as Dict[];
+      for (const x of applies)
+        out.push({
+          userId: String(x.inviteeId ?? ''),
+          inviterId: String(x.inviterId ?? ''),
+          reason: String(x.reason ?? ''),
+          status: APPLY_STATUS[enumToInt(x.status ?? 0) as 1 | 2 | 3] ?? 'unknown',
+          time: int(x.time, 0),
+          via: APPLY_WAYS[enumToInt(x.applyWays ?? 0)] ?? String(enumToInt(x.applyWays ?? 0)),
+        });
+      const next = String(resp.nextCursor ?? '');
+      if (!applies.length || !next || next === cursor) break;
+      cursor = next;
+    }
+    return out.sort((a, b) => b.time - a.time).slice(0, max);
+  }
+
+  /** Approve or reject someone's request to join a group (owner or admin only). */
+  async handleJoinRequest(chatId: string, userId: string, approve: boolean): Promise<void> {
+    await this.api('chats.PatchAddChatChatterApplyRequest', {
+      chatId,
+      inviteeId: userId,
+      status: approve ? APPLY_APPROVED : APPLY_REFUSED,
+    });
+  }
+
+  /**
+   * A link others can open to join the group: valid for days (the client offers 7, 30 and 365) or
+   * forever; expireTime is in seconds, 0 for a link that never expires.
+   */
+  async chatShareLink(
+    chatId: string,
+    o: { days?: number; forever?: boolean } = {},
+  ): Promise<{ url: string; expireTime: number }> {
+    const resp = await this.api('chats.PullChatLinkTokenRequest', {
+      chatId,
+      expiredDay: o.days ?? 7,
+      isUnlimited: o.forever === true,
+    });
+    const url = String(resp.sharedUrl ?? '');
+    if (!url) throw new Error('拿不到群分享链接: 响应里没有链接');
+    return { url, expireTime: resp.isUnlimited ? 0 : int(resp.expireTime, 0) };
+  }
+
+  /** Create a feed tag, optionally with chats in it; returns the tag id. Only affects me. */
+  async createFeedGroup(name: string, chatIds: string[] = []): Promise<string> {
+    const resp = await this.api('feed.CreateFeedGroupRequest', {
+      feedGroup: { name, type: FEED_GROUP_NORMAL },
+      feedGroupItems: chatIds.map((id) => ({ feedCardId: id, feedCardType: CARD_CHAT })),
+    });
+    const id = (resp.feedGroup as Dict | undefined)?.id;
+    if (id === undefined) throw new Error('建标签失败: 响应里没有标签 id');
+    return String(id);
+  }
+
+  async renameFeedGroup(groupId: string, name: string): Promise<void> {
+    await this.api('feed.UpdateFeedGroupsRequest', {
+      feedGroups: [{ id: groupId, name, type: FEED_GROUP_NORMAL }],
+      feedGroupsUpdateFields: { [groupId]: { fields: [FEED_GROUP_FIELD_BASE] } },
+    });
+  }
+
+  /** Delete a feed tag; the chats in it stay in the chat list. */
+  async deleteFeedGroup(groupId: string): Promise<void> {
+    await this.api('feed.UpdateFeedGroupsRequest', { deletedGroups: [{ id: groupId }] });
+  }
+
+  async addToFeedGroup(groupId: string, chatIds: string[]): Promise<void> {
+    await this.api('feed.UpdateFeedGroupsRequest', {
+      feedGroupItems: chatIds.map((id) => ({ feedCardId: id, feedCardType: CARD_CHAT, groupId })),
+    });
+  }
+
+  async removeFromFeedGroup(groupId: string, chatIds: string[]): Promise<void> {
+    await this.api('feed.UpdateFeedGroupsRequest', {
+      deletedFeedGroupItems: chatIds.map((id) => ({
+        feedCardId: id,
+        feedCardType: CARD_CHAT,
+        groupId,
+      })),
     });
   }
 
@@ -1579,6 +1828,24 @@ export class LarkClient {
       chatIds,
       messageId,
       cids: Object.fromEntries(chatIds.map((id) => [id, requestCid()])),
+    });
+    const out = new Map<string, string>();
+    for (const [chatId, m] of Object.entries((resp.messages ?? {}) as Record<string, Dict>))
+      if (m.id) out.set(chatId, String(m.id));
+    return out;
+  }
+
+  /**
+   * Forward a whole thread (its root message and replies) to these chats; recipients see it as one
+   * thread card. Returns chat id → new message id; chats where forwarding failed are left out.
+   */
+  async forwardThread(rootId: string, chatIds: string[]): Promise<Map<string, string>> {
+    const [root] = await this.getMessages([rootId]);
+    if (!root) throw new Error(`找不到话题根消息: ${rootId}`);
+    const resp = await this.api('thread.PutThreadShareRequest', {
+      channelId: root.chat_id,
+      threadId: rootId,
+      targets: chatIds.map((chatId) => ({ toChat: { chatId } })),
     });
     const out = new Map<string, string>();
     for (const [chatId, m] of Object.entries((resp.messages ?? {}) as Record<string, Dict>))
@@ -2225,7 +2492,15 @@ const METHOD_PERMISSIONS: {
   gatewayPost: 'api',
   api: 'api',
   sendMessage: (_chatId, content) =>
-    'image' in content ? 'send-image' : 'file' in content ? 'send-file' : 'send',
+    'image' in content
+      ? 'send-image'
+      : 'file' in content
+        ? 'send-file'
+        : 'video' in content
+          ? 'send-video'
+          : 'audio' in content
+            ? 'send-audio'
+            : 'send',
   sendMsg: 'send',
   sendRich: 'send',
   sendPost: 'send',
@@ -2234,6 +2509,7 @@ const METHOD_PERMISSIONS: {
   rescheduleMessage: 'scheduled.reschedule',
   cancelScheduledMessage: 'scheduled.cancel',
   forwardMessage: 'forward',
+  forwardThread: 'forward',
   search: 'search',
   createChat: 'search',
   getGroupName: 'search',
@@ -2246,6 +2522,19 @@ const METHOD_PERMISSIONS: {
   userProfile: 'user',
   chatList: 'chat-list',
   chatInfo: 'group.info',
+  setMuted: 'mute',
+  setGroupNickname: 'group.nickname',
+  chatAdmins: 'group.admins',
+  updateAdmins: 'group.admin',
+  setPostPermission: 'group.moderation',
+  joinRequests: 'group.requests',
+  handleJoinRequest: 'group.approve',
+  chatShareLink: 'group.link',
+  createFeedGroup: 'tags.edit',
+  renameFeedGroup: 'tags.edit',
+  deleteFeedGroup: 'tags.edit',
+  addToFeedGroup: 'tags.edit',
+  removeFromFeedGroup: 'tags.edit',
   directChat: 'search',
   messageLink: 'message-link',
   selfChat: 'self-chat',
@@ -2259,8 +2548,8 @@ const METHOD_PERMISSIONS: {
   pinMessage: 'pin',
   unpinMessage: 'pin',
   chatPins: 'pins',
-  feedGroups: 'tags',
-  feedGroupChats: 'tags',
+  feedGroups: 'tags.list',
+  feedGroupChats: 'tags.list',
   shortcuts: 'shortcut.list',
   addShortcuts: 'shortcut.add',
   removeShortcuts: 'shortcut.remove',

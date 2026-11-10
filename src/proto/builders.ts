@@ -181,31 +181,61 @@ function fillRichBlocks(blocks: RichBlock[], innerText: string): RichTextInit {
  * it as Markdown (same as the md tag in Open Platform rich text), so headings, lists, code blocks,
  * quotes, bold/italic and links all display; innerText is the source text.
  */
-function fillMarkdown(markdown: string): RichTextInit {
+function fillMarkdown(markdown: string | MarkdownPart[]): RichTextInit {
+  const parts = typeof markdown === 'string' ? [{ md: markdown }] : markdown;
   const rt = emptyRichText();
-  rt.elements.dictionary['1'] = {
-    tag: 49,
-    childIds: [],
-    property: bin('entities.RichTextElement.MarkdownProperty', { content: markdown }, true),
-  };
-  rt.elementIds.push('1');
-  rt.markdownIds = ['1'];
-  rt.innerText = markdown;
+  rt.markdownIds = [];
+  parts.forEach((part, n) => {
+    const i = String(n + 1);
+    rt.elements.dictionary[i] =
+      'md' in part
+        ? {
+            tag: 49,
+            childIds: [],
+            property: bin('entities.RichTextElement.MarkdownProperty', { content: part.md }, true),
+          }
+        : {
+            tag: 2,
+            childIds: [],
+            property: bin(
+              'entities.RichTextElement.ImageProperty',
+              { originKey: part.imageKey, token: part.imageKey },
+              true,
+            ),
+          };
+    rt.elementIds.push(i);
+    if ('md' in part) rt.markdownIds?.push(i);
+  });
+  rt.innerText = parts.map((p) => ('md' in p ? p.md : '[图片]')).join('');
   rt.version = 1;
   return rt;
 }
 
-/** Markdown rich text (POST) message. */
+/**
+ * A piece of a Markdown message: Markdown text, or an uploaded image placed between the texts
+ * (same as mixing md and img tags in Open Platform rich text).
+ */
+export type MarkdownPart = { md: string } | { imageKey: string };
+
+/**
+ * Markdown rich text (POST) message; attachments are uploaded file keys shown in the message's
+ * attachment zone.
+ */
 export function buildMarkdownMessagePacket(
-  markdown: string,
+  markdown: string | MarkdownPart[],
   t: Target,
   requestId: string,
   title = '',
+  attachments: string[] = [],
 ) {
   return putMessage(
     2,
     t,
-    { ...(title ? { title } : {}), richText: fillMarkdown(markdown) },
+    {
+      ...(title ? { title } : {}),
+      richText: fillMarkdown(markdown),
+      ...(attachments.length ? { attachments } : {}),
+    },
     requestId,
   );
 }
@@ -327,6 +357,39 @@ export function buildFileMessagePacket(
     { fileKey: file.key, fileName: file.name, fileSize: BigInt(file.size), fileMime: file.mime },
     requestId,
   );
+}
+
+/** Video message (MEDIA): the uploaded file plus duration (ms) and an optional cover image key. */
+export function buildVideoMessagePacket(
+  file: { key: string; name: string; size: number; mime: string },
+  durationMs: number,
+  coverKey: string,
+  t: Target,
+  requestId: string,
+) {
+  return putMessage(
+    15,
+    t,
+    {
+      fileKey: file.key,
+      fileName: file.name,
+      fileSize: BigInt(file.size),
+      fileMime: file.mime,
+      duration: durationMs,
+      ...(coverKey ? { imageKey: coverKey } : {}),
+    },
+    requestId,
+  );
+}
+
+/** Voice message (AUDIO): the uploaded Ogg / Opus file's key and its duration (ms). */
+export function buildAudioMessagePacket(
+  key: string,
+  durationMs: number,
+  t: Target,
+  requestId: string,
+) {
+  return putMessage(7, t, { audioKey: key, audioDuration: durationMs }, requestId);
 }
 
 export function buildCreateChatPacket(userId: string, requestId: string) {

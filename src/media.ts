@@ -157,3 +157,65 @@ export async function uploadFile(
     mime: d.mimetype || 'application/octet-stream',
   };
 }
+
+const ascii = (data: Uint8Array, at: number, n: number) =>
+  String.fromCharCode(...data.subarray(at, at + n));
+
+/**
+ * Duration (ms) of an MP4 / MOV file, read from its moov → mvhd box (no decoding); null when the
+ * box cannot be found.
+ */
+export function mp4DurationMs(data: Uint8Array): number | null {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  /** Payload range [start, end) of the first box of this type inside [from, to). */
+  const box = (from: number, to: number, type: string): [number, number] | null => {
+    for (let p = from; p + 8 <= to; ) {
+      let size = view.getUint32(p);
+      let header = 8;
+      if (size === 1) {
+        if (p + 16 > to) return null;
+        size = Number(view.getBigUint64(p + 8));
+        header = 16;
+      } else if (size === 0) size = to - p;
+      if (size < header || p + size > to) return null;
+      if (ascii(data, p + 4, 4) === type) return [p + header, p + size];
+      p += size;
+    }
+    return null;
+  };
+  const moov = box(0, data.length, 'moov');
+  const mvhd = moov && box(moov[0], moov[1], 'mvhd');
+  if (!mvhd || mvhd[1] - mvhd[0] < 20) return null;
+  const s = mvhd[0];
+  // mvhd version 0: 32-bit creation/modification times; version 1: 64-bit
+  const [timescale, duration] =
+    data[s] === 1
+      ? [view.getUint32(s + 20), Number(view.getBigUint64(s + 24))]
+      : [view.getUint32(s + 12), view.getUint32(s + 16)];
+  return timescale && duration ? Math.round((duration / timescale) * 1000) : null;
+}
+
+/**
+ * Duration (ms) of an Ogg / Opus file: the last page's granule position (48 kHz samples) minus the
+ * pre-skip in OpusHead; null when the data is not Ogg / Opus.
+ */
+export function oggOpusDurationMs(data: Uint8Array): number | null {
+  if (data.length < 47 || ascii(data, 0, 4) !== 'OggS') return null;
+  let head = -1;
+  for (let p = 28; p + 12 <= Math.min(data.length, 512); p++)
+    if (ascii(data, p, 8) === 'OpusHead') {
+      head = p;
+      break;
+    }
+  if (head < 0) return null;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const preSkip = view.getUint16(head + 10, true);
+  for (let p = data.length - 27; p >= 0; p--) {
+    if (data[p] !== 0x4f || ascii(data, p, 4) !== 'OggS') continue;
+    const granule = view.getBigUint64(p + 6, true);
+    // -1 marks a page on which no packet ends
+    if (granule === 0xffffffffffffffffn) continue;
+    return Math.max(0, Math.round((Number(granule) - preSkip) / 48));
+  }
+  return null;
+}

@@ -12,6 +12,7 @@ import {
   decide,
   GROUPS,
   guardMethods,
+  isPermission,
   loadRules,
   PERMISSIONS,
   type Permission,
@@ -74,6 +75,18 @@ describe('权限目录', () => {
     expect(permissionFor('group', ['add', 'c1', 'u1'])).toBe('group.add');
     expect(permissionFor('permissions', [])).toBe('permissions.show');
     expect(permissionFor('send-image', ['c1', 'a.png'])).toBe('send-image');
+    expect(permissionFor('tags', [])).toBe('tags.list');
+    expect(permissionFor('tags', ['周会', '--add', 'c1'])).toBe('tags.edit');
+    expect(permissionFor('tags', ['--create', '周会'])).toBe('tags.edit');
+    expect(permissionFor('group', ['requests', 'c1'])).toBe('group.requests');
+    expect(permissionFor('group', ['requests', 'c1', '--approve', 'u1'])).toBe('group.approve');
+  });
+
+  test('group 的每个动作都落到登记过的权限项上', () => {
+    const actions = cmd('group').positionals?.[0]?.choices ?? [];
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions)
+      expect(isPermission(permissionFor('group', [action, 'c1', 'x']))).toBe(true);
   });
 
   test('越具体的规则越优先，同一级 deny 优先，都没命中则允许', () => {
