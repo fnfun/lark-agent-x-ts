@@ -282,4 +282,41 @@ describe('云文档', () => {
       '# 季度计划\n\n- 目标\n  - 增长\n  - ~~留存~~\n- 风险\n',
     );
   });
+
+  test('幻灯片按页读出文本框里的文字：去掉行标记字符，每行一段，页按 slides 的顺序', async () => {
+    const box = (text: string, marked: boolean) => ({
+      data: {
+        type: 'shape',
+        shape: {
+          text: {
+            content: {
+              apool: {
+                numToAttrib: marked
+                  ? { 0: ['author', 'u'], 1: ['lmkr', '1'] }
+                  : { 0: ['author', 'u'] },
+              },
+              initialAttributedTexts: { text: { 0: text } },
+            },
+          },
+        },
+      },
+    });
+    const { docs } = fake(() => ({
+      code: 0,
+      data: {
+        block_sequence: ['D'],
+        block_map: {
+          D: { data: { type: 'presentation', title: '季度回顾', slides: ['s2', 's1'] } },
+          s1: { data: { type: 'slide', children: ['a', 'b'] } },
+          s2: { data: { type: 'slide', children: ['c'] } },
+          a: box('*要点', true),
+          b: box('*增长\n*留存', true),
+          c: box('*开头', false),
+        },
+      },
+    }));
+    expect((await docs.fetchSlides('https://t.example.com/slides/D')).markdown).toBe(
+      '# 季度回顾\n\n## 第 1 页\n\n*开头\n\n## 第 2 页\n\n要点\n\n增长\n\n留存\n',
+    );
+  });
 });

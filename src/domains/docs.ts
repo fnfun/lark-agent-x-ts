@@ -37,12 +37,16 @@
  *   `collab_client_vars.nodes`, each `{id, text: [{text}], children, finish, ...}` under the title;
  *   mindnotes are created by importing a FreeMind (.mm) file. Editing one goes through the
  *   collaborative channel and is not supported yet.
+ * - A slides deck reads like a docx (`GET slide/pages/client_vars`, same block map): the deck
+ *   block lists its `slides`, each slide's children are shapes whose `shape.text.content` is an
+ *   attributed text; lines carrying the `lmkr` attribute start with a placeholder `*`. Decks are
+ *   created by importing .pptx.
  * - Exporting an online document: `POST export/create/` (JSON: token, type, file_extension), poll
  *   `export/result/<ticket>`, then download the result's file token. Sheets export to xlsx only
  *   (csv needs a sub-sheet).
  */
 import type { WebRequest, WebSession } from '../web.js';
-import { type BlockMap, docxToMarkdown } from './docx-markdown.js';
+import { attributedText, type BlockMap, docxToMarkdown } from './docx-markdown.js';
 
 /** Drive object types (the `type` of explorer nodes). */
 export const DOC_TYPES = {
@@ -51,6 +55,7 @@ export const DOC_TYPES = {
   sheet: 3,
   base: 8,
   mindnote: 11,
+  slides: 30,
   file: 12,
   docx: 22,
 } as const;
@@ -70,13 +75,16 @@ const URL_TYPES: Record<string, DocType> = {
   sheets: 'sheet',
   base: 'base',
   mindnotes: 'mindnote',
+  slides: 'slides',
   file: 'file',
   folder: 'folder',
 };
 
 /** A Docs / Drive link → what it names; a bare object token takes type (docx by default). */
 export function docRef(urlOrToken: string, type: DocType = 'docx'): DocRef {
-  const m = /\/(docx|docs|doc|sheets|base|mindnotes|file|folder)\/([A-Za-z0-9]+)/.exec(urlOrToken);
+  const m = /\/(docx|docs|doc|sheets|base|mindnotes|slides|file|folder)\/([A-Za-z0-9]+)/.exec(
+    urlOrToken,
+  );
   return m
     ? { type: URL_TYPES[m[1] as string] as DocType, token: m[2] as string }
     : { type, token: urlOrToken.trim() };
@@ -150,6 +158,19 @@ export function check(body: unknown, what: string): Dict {
   return b;
 }
 
+/**
+ * A slide text box's text: its attributed content without the line markers (lines carrying the
+ * `lmkr` attribute start with a placeholder character).
+ */
+function slideText(text: unknown): string {
+  const content = (text as Dict | undefined)?.content as Dict | undefined;
+  if (!content) return '';
+  const pool = ((content.apool as Dict | undefined)?.numToAttrib ?? {}) as Record<string, [string]>;
+  const marked = Object.values(pool).some((a) => a[0] === 'lmkr');
+  const plain = attributedText(content).trim();
+  return marked ? plain.replace(/^\*/gm, '') : plain;
+}
+
 const toFile = (n: Dict): DriveFile => ({
   token: String(n.token ?? ''),
   objToken: String(n.obj_token ?? n.token ?? ''),
@@ -194,6 +215,7 @@ const IMPORT_TYPES: Record<string, string> = {
   xls: 'sheet',
   csv: 'sheet',
   mm: 'mindnote',
+  pptx: 'slides',
 };
 export const IMPORTABLE = Object.keys(IMPORT_TYPES);
 
@@ -639,12 +661,43 @@ export class Docs {
   async fetch(urlOrToken: string): Promise<DocContent> {
     if (/\/wiki\//.test(urlOrToken)) throw new Error('知识库链接要先解析成文档(Wiki.resolve)再读');
     const objToken = docToken(urlOrToken);
+    const { blocks, root } = await this.blocks('/space/api/docx/pages/client_vars', objToken);
+    return { objToken, ...docxToMarkdown(blocks as BlockMap, root) };
+  }
+
+  /**
+   * A slides deck as Markdown: the title (a plain string on the deck block), then `## 第 n 页` per
+   * slide with the text of its text boxes, one paragraph per line.
+   */
+  async fetchSlides(urlOrToken: string): Promise<DocContent> {
+    const objToken = docRef(urlOrToken, 'slides').token;
+    const { blocks } = await this.blocks('/space/api/slide/pages/client_vars', objToken);
+    const deck = (blocks[objToken]?.data ?? {}) as Dict;
+    const title = String(deck.title ?? '');
+    const parts = [`# ${title}`];
+    ((deck.slides ?? []) as string[]).forEach((id, i) => {
+      parts.push('', `## 第 ${i + 1} 页`);
+      for (const child of ((blocks[id]?.data as Dict | undefined)?.children ?? []) as string[]) {
+        const text = slideText(
+          ((blocks[child]?.data as Dict | undefined)?.shape as Dict | undefined)?.text,
+        );
+        for (const line of text.split('\n')) if (line.trim()) parts.push('', line);
+      }
+    });
+    return { objToken, title, markdown: `${parts.join('\n')}\n` };
+  }
+
+  /** All blocks of a docx or slides deck from its client_vars, paging by cursor. */
+  private async blocks(
+    path: string,
+    id: string,
+  ): Promise<{ blocks: Record<string, Dict>; root: string }> {
     const blocks: Record<string, Dict> = {};
     let root = '';
     let cursor = '';
     for (let page = 0; page < 100; page++) {
-      const body = (await this.web.json('GET', '/space/api/docx/pages/client_vars', {
-        query: { id: objToken, mode: 7, limit: 239, ...(cursor ? { cursor } : {}) },
+      const body = (await this.web.json('GET', path, {
+        query: { id, mode: 7, limit: 239, ...(cursor ? { cursor } : {}) },
       })) as Dict;
       if (body.code !== 0) throw new Error(`读取文档失败: ${String(body.msg ?? body.code)}`);
       const data = (body.data ?? {}) as Dict;
@@ -653,7 +706,7 @@ export class Docs {
       cursor = String(data.cursor ?? '');
       if (!data.has_more || !cursor) break;
     }
-    return { objToken, ...docxToMarkdown(blocks as BlockMap, root) };
+    return { blocks, root };
   }
 
   /** A mindnote as a Markdown outline: the title as `# title`, topics as nested list items. */
