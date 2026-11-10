@@ -136,6 +136,8 @@ New documents are created via "import Markdown" first, without depending on the 
 
 Prerequisite: v0.3's protocol pipeline extension must be able to extract the event create/update/delete requests from the Calendar app.
 
+**Status (2026-11-10, blocked).** On the gateway, the legacy `calendars.GetUserPrimaryCalendarRequest` and `calendars.ListCalendarListRequest` work and `calendarevents.ListCalendarEventsRequest` answers (the test calendar has no events, so event parsing cannot be checked). Creating, editing and deleting events need the `calendar.v1` commands the calendar web app uses (`3101 SaveEvent`, `3105 DeleteEvent`, from its own cmd map); every `calendar.v1` command answers "command not found" for this account, whether sent with the calendar app's id (166462), other client versions or the regional gateway host (`internal-api-lark-api-sg`). Without event writes there is no way to create test events either, so nothing was built for this version.
+
 ### v0.6: Collaborative editing: docs, sheets, Base
 
 Before starting, evaluate the collaborative-editing channel: which frames editing uses, whether only deltas can be sent, how conflicts are handled. Depending on the findings, choose one:
@@ -149,10 +151,14 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Sheets: sheet list and info, reading/writing ranges, CSV import/export, find and replace, inserting/deleting rows and columns, creating spreadsheets.
 - Base: create/read/update/delete for tables, fields, and records, view list and filters, record search, attachments, data queries. Dashboards, forms, automations, roles, and app mode are large and little used, and are not in this version.
 
+**Status (2026-11-10, not started).** Needs documents with content to study the collaborative-editing channel; Markdown import, the way to create them, is refused by the server (see v0.4).
+
 ### v0.7: Mail + Approval
 
 - Mail: list mail, read messages and threads, search, send, reply, forward, drafts, folders and labels, move and mark, trash, inbox rules, signatures and templates, share to a chat, `mail watch` to listen for new mail (whether it can reuse long-lived connection pushes is to be confirmed).
 - Approval: my pending and completed items, instance details, approval definitions I can start, start, approve, reject, transfer, add approvers, return, CC, remind, withdraw.
+
+**Status (2026-11-10, blocked).** Mail: the test account has mail settings but no connected mailbox or tenant mail domain (`mails.ListConnectedEmailAccountsRequest`, `mails.GetTenantDomainsRequest` return nothing), so there is nothing to read or send. Approval returns 404 on the test tenant.
 
 ### v0.8: Meeting records, Minutes, meeting notes, OKR, Attendance
 
@@ -161,12 +167,16 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - OKR: cycle list and details, create, update, delete, reorder, weights, and alignment for objectives and key results, progress records, comments, metrics.
 - Attendance: my clock-in records.
 
+**Status (2026-11-10, not started).** The Minutes and OKR pages open on the test tenant, but the account has no meetings, minutes or OKRs to read, and their APIs have not been traced. Attendance returns 404 on the test tenant.
+
 ### v0.9: Slides, Whiteboard, Mindnotes, Miaoda
 
 - Slides: create, read, add/delete/replace pages, history, media. Editing likewise depends on v0.6's findings on the collaborative-editing channel.
 - Whiteboard: export as image, read nodes, update.
 - Mindnotes: read, create nodes.
 - Miaoda: first confirm the authentication method from v0.3's availability table. Scope is limited to app list and details, creation, HTML publishing and share links, cloud generation sessions, logs and metrics, environment variables, collaborators and roles, app database and files, automations. Developer-facing parts such as git credentials and OpenAPI keys are out.
+
+**Status (2026-11-10, not started).** Slides, Whiteboard and Mindnotes edit through the collaborative-editing channel (see v0.6). Miaoda has no entry on Lark (international).
 
 ## Risks
 
