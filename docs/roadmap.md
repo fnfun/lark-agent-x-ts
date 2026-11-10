@@ -154,7 +154,10 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Sheets: sheet list and info, reading/writing ranges, CSV import/export, find and replace, inserting/deleting rows and columns, creating spreadsheets.
 - Base: create/read/update/delete for tables, fields, and records, view list and filters, record search, attachments, data queries. Dashboards, forms, automations, roles, and app mode are large and little used, and are not in this version.
 
-**Status (2026-11-10, not started).** Needs documents with content to study the collaborative-editing channel; Markdown import, the way to create them, is refused by the server (see v0.4).
+**Status (2026-11-11, Base done, docs and sheets in progress).** The channel is usable over plain HTTP: `POST /space/api/rce/messages` carries the same `USER_CHANGES` messages the web app sends over its WebSocket, with a client-chosen member id and no ticket, and the server answers `ACCEPT_COMMIT`. Message shapes were read off the web apps' own traffic in a headless Chrome (DevTools protocol) on resources created for the test, then replayed over HTTP.
+
+- Base, done on both accounts: `lark base tables/fields/records/add/set/rm/field-add` and the library's `Base` (text, number, single and multi select with new options created on the fly, date, checkbox and URL cells). Details at the top of `src/domains/base.ts`.
+- Not done for Base: views and filters, record search, attachments, deleting fields and tables, other field types (people, links, lookups, formulas are read as text).
 
 ### v0.7: Mail + Approval
 

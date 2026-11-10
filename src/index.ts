@@ -40,6 +40,16 @@ export {
   type UserSearchOptions,
 } from './client.js';
 export {
+  Base,
+  type BaseField,
+  type BaseRecord,
+  type BaseTable,
+  type CellInput,
+  FIELD_TYPES,
+  type FieldType,
+  type SelectOption,
+} from './domains/base.js';
+export {
   Calendar,
   type CalendarEvent,
   type CalendarInfo,

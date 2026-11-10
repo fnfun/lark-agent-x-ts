@@ -80,6 +80,9 @@ export const PERMISSIONS = {
   'wiki.spaces': 'query',
   'wiki.ls': 'query',
   'wiki.get': 'query',
+  'base.tables': 'query',
+  'base.fields': 'query',
+  'base.records': 'query',
   'cal.calendars': 'query',
   'cal.agenda': 'query',
   unread: 'query',
@@ -121,6 +124,9 @@ export const PERMISSIONS = {
   'doc.rename': 'modify',
   'doc.resolve': 'modify',
   'wiki.rename': 'modify',
+  'base.add': 'modify',
+  'base.set': 'modify',
+  'base.field-add': 'modify',
   read: 'modify',
 
   flag: 'organize',
@@ -156,6 +162,7 @@ export const PERMISSIONS = {
   'doc.rm': 'destroy',
   'doc.comment-rm': 'destroy',
   'wiki.rm': 'destroy',
+  'base.rm': 'destroy',
   'cal.delete': 'destroy',
 
   'auth.qr': 'system',
