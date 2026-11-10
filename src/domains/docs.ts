@@ -33,6 +33,10 @@
  *   `box/upload/finish/`. Passing an existing `file_token` to either path uploads a new version of
  *   that file (how Markdown files are overwritten). Downloading is
  *   `box/stream/download/all/<file token>/`.
+ * - A mindnote's topics are `GET mindnote/v2/client_vars` (token, member_id) →
+ *   `collab_client_vars.nodes`, each `{id, text: [{text}], children, finish, ...}` under the title;
+ *   mindnotes are created by importing a FreeMind (.mm) file. Editing one goes through the
+ *   collaborative channel and is not supported yet.
  * - Exporting an online document: `POST export/create/` (JSON: token, type, file_extension), poll
  *   `export/result/<ticket>`, then download the result's file token. Sheets export to xlsx only
  *   (csv needs a sub-sheet).
@@ -189,6 +193,7 @@ const IMPORT_TYPES: Record<string, string> = {
   xlsx: 'sheet',
   xls: 'sheet',
   csv: 'sheet',
+  mm: 'mindnote',
 };
 export const IMPORTABLE = Object.keys(IMPORT_TYPES);
 
@@ -649,5 +654,29 @@ export class Docs {
       if (!data.has_more || !cursor) break;
     }
     return { objToken, ...docxToMarkdown(blocks as BlockMap, root) };
+  }
+
+  /** A mindnote as a Markdown outline: the title as `# title`, topics as nested list items. */
+  async fetchMindnote(urlOrToken: string): Promise<DocContent> {
+    const objToken = docRef(urlOrToken, 'mindnote').token;
+    const body = check(
+      await this.web.json('GET', '/space/api/mindnote/v2/client_vars', {
+        // The server wants a member id here; any number does.
+        query: { token: objToken, member_id: 1 },
+      }),
+      '读取思维笔记',
+    );
+    const data = ((body.data as Dict | undefined)?.data ?? {}) as Dict;
+    const title = String(data.title ?? '');
+    const lines: string[] = [];
+    const walk = (nodes: Dict[], depth: number) => {
+      for (const n of nodes) {
+        const text = ((n.text ?? []) as Dict[]).map((t) => String(t.text ?? '')).join('');
+        lines.push(`${'  '.repeat(depth)}- ${n.finish === true ? `~~${text}~~` : text}`);
+        walk((n.children ?? []) as Dict[], depth + 1);
+      }
+    };
+    walk((((data.collab_client_vars ?? {}) as Dict).nodes ?? []) as Dict[], 0);
+    return { objToken, title, markdown: `${[`# ${title}`, '', ...lines].join('\n').trim()}\n` };
   }
 }

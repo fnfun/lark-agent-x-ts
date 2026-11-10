@@ -260,4 +260,26 @@ describe('云文档', () => {
       file_token: 'F2',
     });
   });
+
+  test('思维笔记读成大纲：标题作一级标题，主题按层级缩进成列表，已完成的划掉', async () => {
+    const node = (text: string, children: unknown[] = [], finish = false) => ({
+      text: [{ text, type: 1 }],
+      children,
+      finish,
+    });
+    const { docs } = fake(() => ({
+      code: 0,
+      data: {
+        data: {
+          title: '季度计划',
+          collab_client_vars: {
+            nodes: [node('目标', [node('增长'), node('留存', [], true)]), node('风险')],
+          },
+        },
+      },
+    }));
+    expect((await docs.fetchMindnote('https://t.example.com/mindnotes/Mn1')).markdown).toBe(
+      '# 季度计划\n\n- 目标\n  - 增长\n  - ~~留存~~\n- 风险\n',
+    );
+  });
 });

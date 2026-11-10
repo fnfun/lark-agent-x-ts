@@ -491,12 +491,14 @@ const writeDoc: Command = {
 
 const fetch: Command = {
   name: 'fetch',
-  help: '读文档(docx),输出 Markdown',
+  help: '读文档,输出 Markdown(docx 全文;思维笔记为大纲列表)',
   access: 'doc.fetch',
   positionals: [DOC_ARG],
-  options: [JSON_OPTION],
+  options: [TYPE_OPTION, JSON_OPTION],
   async run(a) {
-    const d = await docs().fetch((await ref(a)).token);
+    const r = await ref(a);
+    const d =
+      r.type === 'mindnote' ? await docs().fetchMindnote(r.token) : await docs().fetch(r.token);
     if (a.json) printJson(d);
     else process.stdout.write(d.markdown);
     return 0;

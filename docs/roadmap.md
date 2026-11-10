@@ -187,7 +187,7 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Mindnotes: read, create nodes.
 - Miaoda: first confirm the authentication method from v0.3's availability table. Scope is limited to app list and details, creation, HTML publishing and share links, cloud generation sessions, logs and metrics, environment variables, collaborators and roles, app database and files, automations. Developer-facing parts such as git credentials and OpenAPI keys are out.
 
-**Status (2026-11-11, not started).** Slides, Whiteboard and Mindnotes edit through the collaborative-editing channel (see v0.6); their message shapes, like docx's (`POST /space/api/docx/blocks/user_change` with per-block OT ops), need to be observed in the web app, which is waiting for the Feishu test account to log in again. Mindnotes do not export (`mm` and `png` answer "extension mismatch"). Miaoda has no entry on Lark (international), so it is skipped.
+**Status (2026-11-11, not started).** Slides, Whiteboard and Mindnotes edit through the collaborative-editing channel (see v0.6); their message shapes, like docx's (`POST /space/api/docx/blocks/user_change` with per-block OT ops), need to be observed in the web app, which is waiting for the Feishu test account to log in again. Mindnotes, done on the Lark account as far as creating and reading: `doc import <file.mm>` makes one from a FreeMind file (the root topic becomes the title) and `doc fetch` reads one as a Markdown outline (`mindnote/v2/client_vars`); they do not export (`mm` and `png` answer "extension mismatch"), and editing one is not supported yet (its sync code is in a chunk not traced). Miaoda has no entry on Lark (international), so it is skipped.
 
 ## Risks
 
