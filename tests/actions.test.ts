@@ -5,7 +5,10 @@ import { type Dict, toDict } from '../src/proto/dict.js';
 import { larkType, protoType } from '../src/proto/registry.js';
 import { newClient } from './helpers.js';
 
-/** 拦截网关请求：解出 cmd 与请求体（按给定的 lark 类型），返回空响应。 */
+/**
+ * Intercepts gateway requests: decodes cmd and the request body (as the given lark type) and
+ * returns an empty response.
+ */
 function capture(c: ReturnType<typeof newClient>, reqType: string) {
   const seen: { cmd: number; body: Dict }[] = [];
   c.gatewayPost = async (pkt) => {
@@ -50,7 +53,8 @@ describe('撤回、编辑与表情', () => {
       [900010, 7000000000000000002n, 2],
     ]);
     const rt = (s: { body: Dict }) => (s.body.content as Dict).richText as Dict;
-    expect(extractRichText(rt(seen[0] as { body: Dict }))).toBe('改过的 '); // 链接元素不计入纯文本摘要
+    // Link elements do not count toward the plain-text summary
+    expect(extractRichText(rt(seen[0] as { body: Dict }))).toBe('改过的 ');
     expect(rt(seen[0] as { body: Dict }).anchorIds).toEqual(['2']);
     expect(extractRichText(rt(seen[1] as { body: Dict }))).toBe('结论：周五上线');
     expect(seen.every((s) => typeof s.body.cid === 'string' && s.body.cid.length === 10)).toBe(

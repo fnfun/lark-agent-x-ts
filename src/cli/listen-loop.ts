@@ -7,11 +7,11 @@ import { errorText } from './format.js';
 const logger = getLogger('larkx.cli');
 
 export interface ListenLoopOptions {
-  /** 补收 since（毫秒）之后、没经长连接收到的消息。 */
+  /** Backfills messages after since (ms) that did not arrive over the long-lived connection. */
   missed: (since: number) => Promise<LarkMessage[]>;
-  /** 表情变化（可选）。 */
+  /** Reaction changes (optional). */
   onReaction?: ReactionHandler;
-  /** 断线后多久重连，默认 10 秒。 */
+  /** Delay before reconnecting after a disconnect; defaults to 10 seconds. */
   retryMs?: number;
   signal?: AbortSignal;
 }
@@ -27,9 +27,11 @@ const sleep = (ms: number, signal?: AbortSignal) =>
   });
 
 /**
- * 常驻接收：断线后重连，重新连上时补收断线期间的消息。
- * 推送与补收共用一条队列串行交给 onMessage：同一条消息两边都到时，入库去重不会撞上并发插入。
- * 凭证失效（AuthExpired）抛出；signal 中止时返回。
+ * Long-running receive: reconnects after a disconnect and, once reconnected, backfills the messages
+ * from the disconnected period.
+ * Pushes and backfill share one queue that hands messages to onMessage serially: when the same
+ * message arrives both ways, deduplication on save never runs into concurrent inserts.
+ * Throws on expired credentials (AuthExpired); returns when signal aborts.
  */
 export async function keepListening(
   c: LarkClient,
@@ -52,7 +54,8 @@ export async function keepListening(
       logger.warning(`补收断线期间的消息失败: ${errorText(e)}`);
     }
   };
-  // 断线时刻往前留一个心跳超时：连接可能在被发现之前就已经断了
+  // Back the disconnect time off by one heartbeat timeout: the connection may have dropped
+  // before it was noticed
   let disconnectedAt: number | undefined;
   let pending = Promise.resolve();
   const onOpen = () => {

@@ -5,9 +5,11 @@ import { loadConfig } from '../config.js';
 import { contentDataJson, type LarkMessage } from '../proto/decoders.js';
 
 /**
- * 本地存储（与原项目 SQLAlchemy 模型同表同列，Python 版写下的库可以直接沿用）：
- * messages（消息）、chats（会话名与最新 position）、agent_sessions（数字人的 agent 会话）。
- * 连接串沿用原项目的 SQLAlchemy 写法：`sqlite:///相对路径`、`sqlite:////绝对路径`、`mysql+pymysql://user:pass@host:3306/db`。
+ * Local storage (same tables and columns as the original's SQLAlchemy models, so a database written
+ * by the Python version can be reused as is): messages, chats (chat name and latest position),
+ * agent_sessions (the digital twin's agent sessions).
+ * Connection strings follow the original's SQLAlchemy form: `sqlite:///relative/path`,
+ * `sqlite:////absolute/path`, `mysql+pymysql://user:pass@host:3306/db`.
  */
 
 export interface MessageRow {
@@ -53,16 +55,16 @@ export interface AgentSessionRow {
 
 type Dialect = 'sqlite' | 'mysql';
 
-/** 被撤回的消息在库里的内容。 */
+/** The stored content of a recalled message. */
 export const RECALLED = '[已撤回]';
 
-/** SQLAlchemy 风格连接串 → Bun.SQL 连接串与方言。 */
+/** SQLAlchemy-style connection string → Bun.SQL connection string and dialect. */
 export function parseStorageUrl(url: string): { dialect: Dialect; url: string } {
   const sqlite = /^sqlite:\/\/\/(.*)$/.exec(url);
   if (sqlite) {
     const path = sqlite[1] as string;
     if (!path || path === ':memory:') return { dialect: 'sqlite', url: ':memory:' };
-    // sqlite:///rel → 相对当前目录；sqlite:////abs → 绝对路径
+    // sqlite:///rel → relative to the current directory; sqlite:////abs → absolute path
     return { dialect: 'sqlite', url: `sqlite://${resolve(path)}` };
   }
   const mysql = /^mysql(?:\+\w+)?:\/\/(.*)$/.exec(url);
@@ -70,15 +72,17 @@ export function parseStorageUrl(url: string): { dialect: Dialect; url: string } 
   throw new Error(`不支持的存储连接串: ${url}(支持 sqlite:/// 与 mysql://)`);
 }
 
-/** SQLAlchemy 写 DateTime 的格式：本地时间 `YYYY-MM-DD HH:MM:SS.ffffff`。 */
+/** The format SQLAlchemy writes DateTime in: local time `YYYY-MM-DD HH:MM:SS.ffffff`. */
 export function nowStamp(d = new Date()): string {
   const p = (n: number, w = 2) => String(n).padStart(w, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds() * 1000, 6)}`;
 }
 
 /**
- * 读出的行统一成 SQLite 下的形态：MySQL 驱动把 DATETIME 按本机时区解析成 Date（本地时间分量即库里的字面值），
- * 格式化回 `YYYY-MM-DD HH:MM:SS[.ffffff]`；BIGINT 若以 bigint 返回则转成 number（时间戳与位置都在安全整数内）。
+ * Normalizes rows read back to their SQLite shape: the MySQL driver parses DATETIME into a Date in
+ * the local time zone (its local-time components are the literal value in the database), so format
+ * it back to `YYYY-MM-DD HH:MM:SS[.ffffff]`; BIGINT returned as bigint becomes number (timestamps
+ * and positions are within the safe integer range).
  */
 function normalizeRow<T>(row: T): T {
   const out: Record<string, unknown> = {};
@@ -211,10 +215,11 @@ export class Storage {
     this.sql = new SQL(parsed.url);
   }
 
-  /** 首次使用时建表（已存在则跳过）。 */
+  /** Creates the tables on first use (skipped if they exist). */
   private init(): Promise<void> {
     this.ready ??= (async () => {
-      // 与 pysqlite 默认一致：库被其他进程（listen / send / niuma）占用时最多等 5 秒
+      // Same as the pysqlite default: wait up to 5 seconds while another process (listen / send /
+      // niuma) holds the database
       if (this.dialect === 'sqlite') await this.sql.unsafe('PRAGMA busy_timeout = 5000');
       for (const ddl of SCHEMA[this.dialect]) await this.sql.unsafe(ddl);
     })();
@@ -226,7 +231,9 @@ export class Storage {
   }
 
   /**
-   * 保存一条消息；返回是否视作首次入库。`lark send` 先落的记录没有 position，WS 回显到达时用回显补全并视作首次入库。
+   * Saves a message; returns whether it counts as newly saved. A record written first by
+   * `lark send` has no position; when the WS echo arrives, the echo fills it in and it counts as
+   * newly saved.
    */
   async saveMessage(msg: LarkMessage, o: SaveOptions = {}): Promise<boolean> {
     await this.init();
@@ -266,7 +273,10 @@ export class Storage {
     });
   }
 
-  /** 本地已有的消息被撤回：内容换成"[已撤回]"。返回本地是否有这条（且之前没标过）。 */
+  /**
+   * A locally stored message was recalled: replace its content with `RECALLED`. Returns whether
+   * the message exists locally (and wasn't marked before).
+   */
   async markRecalled(msgId: string, chatId: string): Promise<boolean> {
     await this.init();
     return this.sql.begin(async (tx) => {
@@ -281,7 +291,10 @@ export class Storage {
     });
   }
 
-  /** 本地已有的消息被编辑：换成新内容。返回是否有更新（本地没有这条或内容没变时为 false）。 */
+  /**
+   * A locally stored message was edited: replace it with the new content. Returns whether anything
+   * was updated (false when the message isn't stored locally or the content is unchanged).
+   */
   async reviseMessage(msg: LarkMessage): Promise<boolean> {
     await this.init();
     const content = msg.content || '';
@@ -346,7 +359,10 @@ export class Storage {
     );
   }
 
-  /** 某会话（anchor 不为 undefined 时限定话题，空串=仅主会话流）最近 limit 条，按时间升序。 */
+  /**
+   * The latest `limit` messages of a chat (a defined anchor restricts to that thread; empty
+   * string = main chat stream only), in ascending time order.
+   */
   async getMessages(
     chatId: string,
     o: { anchor?: string | undefined; limit?: number; beforeTs?: number } = {},
@@ -373,7 +389,10 @@ export class Storage {
     return rows<MessageRow>(await this.sql`SELECT * FROM messages WHERE msg_id = ${msgId}`);
   }
 
-  /** 本地已有的该会话最大 position（chats.last_position）；没有记录时为 -1（会话 position 从 0 起，0 也是一条消息）。 */
+  /**
+   * The highest position stored locally for the chat (chats.last_position); -1 when there is no
+   * record (chat positions start at 0, and 0 is a message too).
+   */
   async lastPosition(chatId: string): Promise<number> {
     await this.init();
     const [chat] = (await this
@@ -384,7 +403,7 @@ export class Storage {
     return chat?.last_position ? Number(chat.last_position) : -1;
   }
 
-  /** 该会话里最近有消息的话题（anchor），按最近消息时间从新到旧。 */
+  /** Threads (anchors) in the chat with recent messages, newest latest message first. */
   async recentAnchors(chatId: string, limit = 20): Promise<string[]> {
     await this.init();
     const found = (await this.sql`SELECT anchor, MAX(create_time) AS t FROM messages

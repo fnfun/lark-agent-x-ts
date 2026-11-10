@@ -9,13 +9,16 @@ import { getRegion, type Region, urls, webOrigin } from './region.js';
 
 const logger = getLogger('larkx.auth');
 
-/** 凭证缺失或已被服务端注销，需要重新登录。 */
+/** Credentials are missing or have been revoked by the server; log in again. */
 export class AuthExpired extends Error {}
 
 const nowSeconds = () => Date.now() / 1000;
 const ageHours = (savedAt: number) => (savedAt ? (nowSeconds() - savedAt) / 3600 : -1).toFixed(1);
 
-/** 凭证：`<LARKX_HOME>/credentials.json`，格式与原项目一致（可直接沿用 Python 版登录得到的凭证）。 */
+/**
+ * Credentials: `<LARKX_HOME>/credentials.json`, in the same format as the original project
+ * (credentials obtained by logging in with the Python version can be reused as is).
+ */
 export class LarkAuth {
   region: Region;
   cookies: Record<string, string> = {};
@@ -35,7 +38,7 @@ export class LarkAuth {
     if (!existsSync(this.path)) return false;
     try {
       const data = JSON.parse(readFileSync(this.path, 'utf8')) as Record<string, unknown>;
-      // 引入区域之前保存的凭证都是飞书的
+      // Credentials saved before regions were introduced are all Feishu
       this.region = getRegion(String(data.region || 'feishu'));
       this.cookies = (data.cookies as Record<string, string>) ?? {};
       this.savedAt = Number(data.saved_at ?? 0);
@@ -75,7 +78,10 @@ export class LarkAuth {
     return Object.keys(this.cookies).length > 0;
   }
 
-  /** 换上新登录拿到的 cookie；旧账号/旧区域派生出的 app_key 等一并作废后重新抓取。 */
+  /**
+   * Switch to cookies from a fresh login; app_key and the like derived from the old account/region
+   * are discarded and fetched again.
+   */
   async adoptCookies(cookies: Record<string, string>, region: Region): Promise<[boolean, string]> {
     this.region = region;
     this.cookies = cookies;
@@ -104,7 +110,10 @@ export class LarkAuth {
     return msg;
   }
 
-  /** 联网校验：能换到长连接 ticket 即有效。fetchProfile 时顺带补全 user_id、app_key、web_app_id。 */
+  /**
+   * Online validation: valid if a long-lived connection ticket can be obtained. With fetchProfile,
+   * also fills in user_id, app_key and web_app_id.
+   */
   async validate(fetchProfile = false): Promise<[boolean, string]> {
     if (!this.hasCredentials) return [false, '无凭证,请先 lark auth import'];
     if (!this.deviceId) this.deviceId = this.cookies.passport_web_did ?? '';
@@ -155,7 +164,8 @@ export class LarkAuth {
     }
     if (!this.appKey || !this.webAppId) {
       try {
-        // 页面会 302 到租户子域名并在途中下发 cookie，要像浏览器一样带着它们跟随重定向
+        // The page 302s to the tenant subdomain and sets cookies along the way; follow the
+        // redirects carrying them, like a browser
         const res = await new CookieJar(this.cookies).fetch(urls.messengerPage(this.region), {
           headers: ua,
         });
@@ -185,7 +195,7 @@ export class LarkAuth {
     return msg;
   }
 
-  /** 长连接 ticket；拿不到说明凭证已失效。 */
+  /** Long-lived connection ticket; failing to get one means the credentials are no longer valid. */
   async getTicket(): Promise<string> {
     const res = await request(urls.ticket(this.region), {
       params: { local_device_id: this.deviceId },
@@ -220,7 +230,10 @@ export const QR_STATUS_NAMES: Record<number, string> = {
   5: '已过期',
 };
 
-/** 扫码登录：init 拿二维码 token，轮询到登录完成后把会话 cookie 交给 LarkAuth。 */
+/**
+ * QR-code login: init gets the QR code token; after polling until login completes, the session
+ * cookies are handed to LarkAuth.
+ */
 export class QrLogin {
   private readonly jar = new CookieJar();
   private flowKey = '';
@@ -259,7 +272,10 @@ export class QrLogin {
     });
   }
 
-  /** 轮询扫码状态，直到登录完成（true）、取消/出错/过期（false）或超时。 */
+  /**
+   * Poll the QR scan status until login completes (true), is cancelled/fails/expires (false), or
+   * times out.
+   */
   async wait(
     timeoutS = 180,
     intervalS = 2,

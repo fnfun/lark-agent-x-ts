@@ -1,7 +1,8 @@
-"""用原项目（fork 版）的 Python 实现生成对照样本：tests/fixtures/parity.json。
+"""Generate the parity fixtures (tests/fixtures/parity.json) with the fork's Python implementation.
 
-全部用合成数据，不含任何真实消息。TS 测试逐项比对解码摘要、入库格式、推送解析、发送包字节与响应解码。
-用法（在装有 larkx 的 Python 环境里）：
+Synthetic data only, no real messages. The TS tests compare, item by item, decoded summaries, the
+local database format, push parsing, send-packet bytes and response decoding.
+Usage (in a Python environment with larkx installed):
     python scripts/gen-parity-fixtures.py <LarkAgentX 仓库路径>
 """
 import base64
@@ -137,7 +138,7 @@ for c in contents:
     c['summary'] = summary
     c['content_data'] = dumps(data) if data is not None else None
 
-# 推送帧
+# Push frame
 pmr = P.PushMessagesRequest()
 m1 = pmr.messages['7000000000000000001']
 m1.id = '7000000000000000001'
@@ -175,7 +176,7 @@ for msg in decoders.decode_push_messages(raw):
 
 
 def normalized(pkt_obj, typ):
-    """把随机生成的 cid / searchSession 清掉再比字节。"""
+    """Clear the randomly generated cid / searchSession before comparing bytes."""
     req = typ()
     req.ParseFromString(pkt_obj.payload)
     if hasattr(req, 'cid'):
