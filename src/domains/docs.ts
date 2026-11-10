@@ -621,8 +621,9 @@ export class Docs {
     };
   }
 
-  /** A docx as Markdown, paging through all blocks. */
+  /** A docx (link or object token; resolve wiki links with Wiki.resolve) as Markdown, paging through all blocks. */
   async fetch(urlOrToken: string): Promise<DocContent> {
+    if (/\/wiki\//.test(urlOrToken)) throw new Error('知识库链接要先解析成文档(Wiki.resolve)再读');
     const objToken = docToken(urlOrToken);
     const blocks: Record<string, Dict> = {};
     let root = '';

@@ -82,6 +82,7 @@ export {
   Tasks,
   type TaskUpdate,
 } from './domains/task.js';
+export { Wiki, type WikiNode, type WikiSpace, wikiToken } from './domains/wiki.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
 export {

@@ -13,6 +13,7 @@ import {
   type FileData,
   IMPORTABLE,
 } from '../domains/docs.js';
+import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
 import { type Command, type CommandGroup, err, out, s } from './common.js';
@@ -22,7 +23,7 @@ const web = () => new WebSession(new LarkAuth());
 const docs = () => new Docs(web());
 const JSON_OPTION: Option = { name: 'json', kind: 'flag' };
 const TYPES = Object.keys(DOC_TYPES) as DocType[];
-const DOC_ARG = { name: 'doc', help: '文档链接,或 obj_token(配合 --type)' };
+const DOC_ARG = { name: 'doc', help: '文档链接(含知识库链接),或 obj_token(配合 --type)' };
 const TYPE_OPTION: Option = {
   name: 'type',
   kind: 'string',
@@ -30,8 +31,13 @@ const TYPE_OPTION: Option = {
   default: 'docx',
   help: '给的是裸 token 时它的类型(链接自带类型)',
 };
-const ref = (a: Record<string, unknown>): DocRef =>
-  docRef(String(a.doc), String(a.type) as DocType);
+/** The document a command names: a link (wiki links are resolved to their document) or a token. */
+const ref = (a: Record<string, unknown>): Promise<DocRef> => {
+  const input = String(a.doc);
+  return /\/wiki\//.test(input)
+    ? new Wiki(web()).resolve(input)
+    : Promise.resolve(docRef(input, String(a.type ?? 'docx') as DocType));
+};
 const failures = (what: string, total: number, failed: Map<string, string>) => {
   for (const [t, why] of failed) err(`${what} ${t} 失败: ${why}`);
   out(`已${what} ${total - failed.size} 个`);
@@ -134,7 +140,7 @@ const rename: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      await docs().rename(ref(a), (a.name as string[]).join(' '));
+      await docs().rename(await ref(a), (a.name as string[]).join(' '));
       out('已改名');
       return 0;
     }),
@@ -165,7 +171,7 @@ const cp: Command = {
   ],
   run: (a) =>
     guarded(async () => {
-      const f = await docs().copy(ref(a), {
+      const f = await docs().copy(await ref(a), {
         ...(a.name ? { name: String(a.name) } : {}),
         ...(a.folder ? { folder: String(a.folder) } : {}),
       });
@@ -258,7 +264,7 @@ const exportCmd: Command = {
   ],
   run: (a) =>
     guarded(async () => {
-      const file = await docs().export(ref(a), a.format ? { format: String(a.format) } : {});
+      const file = await docs().export(await ref(a), a.format ? { format: String(a.format) } : {});
       out(`已保存 ${save(file, s(a.out))}`);
       return 0;
     }),
@@ -271,7 +277,7 @@ const comments: Command = {
   positionals: [DOC_ARG],
   options: [TYPE_OPTION, JSON_OPTION],
   async run(a) {
-    const list = await new DocComments(web()).list(ref(a));
+    const list = await new DocComments(web()).list(await ref(a));
     if (a.json) {
       printJson(list);
       return 0;
@@ -293,7 +299,7 @@ const comment: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      const c = await new DocComments(web()).add(ref(a), (a.text as string[]).join(' '));
+      const c = await new DocComments(web()).add(await ref(a), (a.text as string[]).join(' '));
       out(`已评论 comment_id=${c.id}`);
       return 0;
     }),
@@ -308,7 +314,7 @@ const reply: Command = {
   run: (a) =>
     guarded(async () => {
       const r = await new DocComments(web()).reply(
-        ref(a),
+        await ref(a),
         String(a.comment_id),
         (a.text as string[]).join(' '),
       );
@@ -325,7 +331,7 @@ const resolve: Command = {
   options: [TYPE_OPTION, { name: 'reopen', kind: 'flag', help: '重新打开' }],
   run: (a) =>
     guarded(async () => {
-      await new DocComments(web()).resolve(ref(a), String(a.comment_id), !a.reopen);
+      await new DocComments(web()).resolve(await ref(a), String(a.comment_id), !a.reopen);
       out(a.reopen ? '已重新打开' : '已解决');
       return 0;
     }),
@@ -339,7 +345,7 @@ const commentRm: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      await new DocComments(web()).remove(ref(a), String(a.comment_id));
+      await new DocComments(web()).remove(await ref(a), String(a.comment_id));
       out('已删除');
       return 0;
     }),
@@ -353,7 +359,7 @@ const sharing: Command = {
   options: [TYPE_OPTION, JSON_OPTION],
   async run(a) {
     const perms = new DocPermissions(web());
-    const r = ref(a);
+    const r = await ref(a);
     const [settings, people] = [await perms.sharing(r), await perms.collaborators(r)];
     if (a.json) {
       printJson({ ...settings, collaborators: people });
@@ -373,7 +379,7 @@ const setLink: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      await new DocPermissions(web()).setLinkShare(ref(a), String(a.scope) as LinkShare);
+      await new DocPermissions(web()).setLinkShare(await ref(a), String(a.scope) as LinkShare);
       out(`链接分享已改为 ${String(a.scope)}`);
       return 0;
     }),
@@ -414,10 +420,10 @@ const fetch: Command = {
   name: 'fetch',
   help: '读文档(docx),输出 Markdown',
   access: 'doc.fetch',
-  positionals: [{ name: 'doc', help: '文档链接或 obj_token' }],
+  positionals: [DOC_ARG],
   options: [JSON_OPTION],
   async run(a) {
-    const d = await docs().fetch(String(a.doc));
+    const d = await docs().fetch((await ref(a)).token);
     if (a.json) printJson(d);
     else process.stdout.write(d.markdown);
     return 0;
