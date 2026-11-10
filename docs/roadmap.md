@@ -154,12 +154,13 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Sheets: sheet list and info, reading/writing ranges, CSV import/export, find and replace, inserting/deleting rows and columns, creating spreadsheets.
 - Base: create/read/update/delete for tables, fields, and records, view list and filters, record search, attachments, data queries. Dashboards, forms, automations, roles, and app mode are large and little used, and are not in this version.
 
-**Status (2026-11-11, Base done, docs and sheets in progress).** The channel is usable over plain HTTP: `POST /space/api/rce/messages` carries the same `USER_CHANGES` messages the web app sends over its WebSocket, with a client-chosen member id and no ticket, and the server answers `ACCEPT_COMMIT`. Message shapes were read off the web apps' own traffic in a headless Chrome (DevTools protocol) on resources created for the test, then replayed over HTTP.
+**Status (2026-11-11, Base and sheets done, docs waiting).** The channel is usable over plain HTTP: `POST /space/api/rce/messages` carries the same `USER_CHANGES` messages the web app sends over its WebSocket, with a client-chosen member id and no ticket, and the server answers `ACCEPT_COMMIT`. Message shapes were read off the web apps' own traffic in a headless Chrome (DevTools protocol) on resources created for the test, then replayed over HTTP.
 
 - Base, done on both accounts: `lark base tables/fields/records/add/set/rm/field-add` and the library's `Base` (text, number, single and multi select with new options created on the fly, date, checkbox and URL cells). Details at the top of `src/domains/base.ts`.
 - Not done for Base: views and filters, record search, attachments, deleting fields and tables, other field types (people, links, lookups, formulas are read as text).
 - Sheets, done on the Lark account (the Feishu account's session was revoked mid-way, see below): `lark sheet tabs/read/write/append` and the library's `Sheets`. Writes go through `v2/sheet/user_changes` (a protobuf of cell actions); reads export .xlsx and parse it, since the page's cell blocks use an undocumented encoding. Details at the top of `src/domains/sheet.ts`.
 - Not done for Sheets: writing formulas (the web app sends a parsed form the server does not recompute), inserting and deleting rows and columns, styles, find and replace, adding tabs.
+- Docs (docx editing) not done: commits go to `POST /space/api/docx/blocks/user_change` (`{member_id, uuid, page_id, change_map: {block id: {id, version, payload: {ops}}}}`), but the per-block op format has to be observed in the web app; waiting for the Feishu test account to log in again (see the caution below) so the Lark account is not put at the same risk. Reading a docx as Markdown already works (v0.4), also through the server's own export (`doc export --format md`).
 - Caution: observing the web apps in a headless browser with the Feishu test account's cookies got that session revoked by the server; the account had to log in again.
 
 ### v0.7: Mail + Approval
@@ -176,7 +177,7 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - OKR: cycle list and details, create, update, delete, reorder, weights, and alignment for objectives and key results, progress records, comments, metrics.
 - Attendance: my clock-in records.
 
-**Status (2026-11-10, not started).** The Minutes and OKR pages open on the test tenant, but the account has no meetings, minutes or OKRs to read, and their APIs have not been traced. Attendance returns 404 on the test tenant.
+**Status (2026-11-11, blocked by missing data).** Minutes' web APIs live under `/minutes/api` (`GET space/list` with `size` and `space_name`, `GET search` with `query`, then per minute `base_info_v2`, `subtitles_v2`, `summaries_v2` keyed by `objectToken`); list and search answer code 0 on the Lark test account, but neither test account has any minutes, and making one means uploading audio or video (out of scope), so the detail shapes cannot be checked and nothing was built. OKRs are visible to the whole organization by default, so creating a test OKR would show up for others; no OKR data to read either. Attendance is Feishu-only on the test tenants (404 on Lark), so it is skipped under the "both platforms" rule.
 
 ### v0.9: Slides, Whiteboard, Mindnotes, Miaoda
 
@@ -185,7 +186,7 @@ Scope (picked by how often agents use them; everything else falls back to passth
 - Mindnotes: read, create nodes.
 - Miaoda: first confirm the authentication method from v0.3's availability table. Scope is limited to app list and details, creation, HTML publishing and share links, cloud generation sessions, logs and metrics, environment variables, collaborators and roles, app database and files, automations. Developer-facing parts such as git credentials and OpenAPI keys are out.
 
-**Status (2026-11-10, not started).** Slides, Whiteboard and Mindnotes edit through the collaborative-editing channel (see v0.6). Miaoda has no entry on Lark (international).
+**Status (2026-11-11, not started).** Slides, Whiteboard and Mindnotes edit through the collaborative-editing channel (see v0.6); their message shapes, like docx's (`POST /space/api/docx/blocks/user_change` with per-block OT ops), need to be observed in the web app, which is waiting for the Feishu test account to log in again. Mindnotes do not export (`mm` and `png` answer "extension mismatch"). Miaoda has no entry on Lark (international), so it is skipped.
 
 ## Risks
 

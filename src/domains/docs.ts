@@ -80,7 +80,7 @@ export function docRef(urlOrToken: string, type: DocType = 'docx'): DocRef {
 
 /** Formats each type exports to, the first being the default. */
 export const EXPORT_FORMATS: Partial<Record<DocType, string[]>> = {
-  docx: ['docx', 'pdf'],
+  docx: ['docx', 'pdf', 'md'],
   doc: ['docx', 'pdf'],
   sheet: ['xlsx'],
 };
