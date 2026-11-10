@@ -20,7 +20,7 @@ Use Bun as the runtime and bundle into a single-file executable with `bun build 
 | Cross-compilation | One machine produces all platforms; Linux arm64 and x64-baseline were tested and run in a Debian container; the default x64 build requires AVX2 and fails with `Illegal instruction` in environments without it (e.g. Rosetta translation), so x64 always uses the `baseline` target |
 | Startup time | `lark config` 0.05s (Python version 0.43s) |
 | Memory while listening (long-running) | About 47–62MB (Python version about 24–37MB) |
-| Protocol assets | Building the registry from the full definitions (11,000 types) takes 102ms and about +110MB of memory, so long-running processes load only the trimmed core subset (41KB, 7ms, process about 74MB); the full definitions are loaded on demand only when `lark api` needs them |
+| Protocol assets | Building the registry from the full definitions (11,000 types) takes 102ms and about +110MB of memory, so long-running processes load only the trimmed core subset (41KB, 7ms, process about 74MB); the full definitions are loaded on demand only when `lark api` needs them. Since 2026-11-10 the full definitions also cover the versioned namespaces (about 14,000 types, about 220ms and +140MB) |
 | Network latency | `lark read` about 3.3s, `auth check` about 8s, mostly network round trips to the Feishu gateway, unrelated to the language |
 
 ## Alternatives

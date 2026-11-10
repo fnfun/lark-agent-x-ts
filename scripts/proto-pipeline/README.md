@@ -17,7 +17,7 @@ export LARK_BASE_BUNDLES=1242.<hash>,1181.<hash>,9174.<hash>,9373.<hash>   # if 
 ```bash
 bun run proto:fetch   # 1. resolve the webpack chunk map (base bundles are downloaded from the CDN automatically if missing) → work/chunk_map.json
                       # 2. download all lazy-loaded chunks concurrently (360+, about 13MB) → work/chunks/
-bun run proto:build   # 3. extract the schema registry and the cmd mapping → work/schemas_all.json, work/cmd_map.json
+bun run proto:build   # 3. extract the schema registry and the cmd mapping → work/schemas_all.json, work/cmd_map.json, work/namespaces.json
                       # 4. generate .proto files → out/<namespace>.proto and out/lark_all.proto, which compiles as a whole
                       # 5. generate the API quick-reference table out/cmd_table.md and assets/cmd_map.json
                       # 6. compile with buf → assets/proto.binpb, assets/lark_all.binpb, assets/core.binpb
@@ -29,7 +29,7 @@ Directories can be overridden with environment variables: `LARK_WORK_DIR` (input
 ## Outputs
 
 - `assets/proto.binpb`: `proto/proto.proto` (the hand-written core protocol: gateway packets, long-lived connection frames, message content, etc.). To change protocol details, edit this .proto and rerun step 6.
-- `assets/lark_all.binpb`: the full gateway definitions (about 11,000 types), loaded only when `lark api` uses a type outside the core subset.
+- `assets/lark_all.binpb`: the full gateway definitions (about 14,000 registered types), loaded only when a type outside the core subset is needed (`lark api`, and features built on such types). Newer namespaces are registered with an array (`["todo","v1"]`, `["search","common"]`); extraction records them in `work/namespaces.json`, and generation nests them in the merged file (`message todo { message v1 { ... } }`) so their full names match the cmd map (`todo.v1.CreateServerTasksRequest`). Versions before 2026-11-10 missed these namespaces (all of `im.v1`, `todo.v1`, `calendar.v1`, `media.v1`, `feed.v1`, ...).
 - `assets/core.binpb`: the core subset, the only thing long-running processes load; its scope is set by `CORE_REQUESTS` / `CORE_TYPES` in `build-assets.ts`. Add new gateway requests there when a new feature uses them.
 
 If you only changed `proto/proto.proto` or the scope of the core subset, there's no need to rerun the earlier steps: just run `bun scripts/proto-pipeline/build-assets.ts`. Without `out/lark_all.proto` it keeps the existing `assets/lark_all.binpb` and rebuilds only `proto.binpb` and `core.binpb`.

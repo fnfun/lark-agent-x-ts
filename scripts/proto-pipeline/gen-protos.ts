@@ -70,15 +70,21 @@ class ProtoGen {
   genEnum(name: string, body: JsObject, indent: number): void {
     const pad = '    '.repeat(indent);
     this.lines.push(`${pad}enum ${sanitizeIdent(name)} {`);
-    const values = obj(body.get('values'));
-    const hasZero = [...values.values()].some((v) => {
+    const isZero = (v: JsValue | undefined) => {
       const x = intLike(v);
       return x === 0 || x === false;
-    });
+    };
+    // proto3 needs the zero value first; some newer enums list it later
+    const values = new Map(
+      [...obj(body.get('values'))].sort(([, a], [, b]) => Number(isZero(b)) - Number(isZero(a))),
+    );
+    const hasZero = [...values.values()].some(isZero);
+    // The injected name must not clash with a real value (one enum already has X_UNSPECIFIED = 1)
+    let zeroName = `${sanitizeIdent(name).toUpperCase()}_UNSPECIFIED`;
+    if ([...values.keys()].some((v) => sanitizeIdent(v) === zeroName))
+      zeroName = `${sanitizeIdent(name).toUpperCase()}_INJECTED_ZERO`;
     if (!hasZero)
-      this.lines.push(
-        `${pad}    ${sanitizeIdent(name).toUpperCase()}_UNSPECIFIED = 0;  // injected: proto3 requires a zero value`,
-      );
+      this.lines.push(`${pad}    ${zeroName} = 0;  // injected: proto3 requires a zero value`);
     for (const [vn, vv] of values)
       this.lines.push(`${pad}    ${sanitizeIdent(vn)} = ${pyStr(intLike(vv))};`);
     this.lines.push(`${pad}}`);
@@ -164,12 +170,18 @@ const schemas = (await Bun.file(join(WORK_DIR, 'schemas_all.json')).json()) as R
   string,
   string
 >;
+const nsPath = join(WORK_DIR, 'namespaces.json');
+const multiNs = (existsSync(nsPath) ? (JSON.parse(readFileSync(nsPath, 'utf8')) as string[]) : [])
+  .slice()
+  .sort((a, b) => b.length - a.length);
 const byNs = new Map<string, Map<string, JsObject>>();
 const parseErrors: [string, string][] = [];
 for (const [fullName, body] of Object.entries(schemas)) {
-  const dot = fullName.indexOf('.');
-  const ns = fullName.slice(0, dot);
-  const name = fullName.slice(dot + 1);
+  // The longest multi-segment namespace that prefixes the key (todo.v1.Todo is Todo in todo.v1);
+  // otherwise the namespace is the first segment
+  const multi = multiNs.find((n) => fullName.startsWith(`${n}.`));
+  const ns = multi ?? fullName.slice(0, fullName.indexOf('.'));
+  const name = fullName.slice(ns.length + 1);
   let parsed: JsValue;
   try {
     parsed = new JsParser(body).parseValue();
@@ -220,12 +232,42 @@ const merged = [
   '// Auto-generated from Feishu web-client-next worklet schema registry (2026-07-25)',
   '',
 ];
-for (const ns of sortedNs) {
-  const gen = new ProtoGen(ns, allNs, true);
-  merged.push(`message ${sanitizeIdent(ns)} {`);
-  gen.genAll(byNs.get(ns) as Map<string, JsObject>, 1);
-  merged.push(...gen.lines, '}', '');
+// Each namespace is wrapped as a message, nested by path (todo.v1 inside todo), so full names stay
+// lark.todo.v1.X as in the cmd map and references resolve by protobuf scoping
+interface NsNode {
+  ns?: string;
+  children: Map<string, NsNode>;
 }
+const root: NsNode = { children: new Map() };
+for (const ns of sortedNs) {
+  let node = root;
+  for (const seg of ns.split('.')) {
+    if (!node.children.has(seg)) node.children.set(seg, { children: new Map() });
+    node = node.children.get(seg) as NsNode;
+  }
+  node.ns = ns;
+}
+const emit = (seg: string, node: NsNode, depth: number) => {
+  const pad = '    '.repeat(depth);
+  merged.push(`${pad}message ${sanitizeIdent(seg)} {`);
+  if (node.ns) {
+    const gen = new ProtoGen(node.ns, allNs, true);
+    gen.genAll(byNs.get(node.ns) as Map<string, JsObject>, depth + 1);
+    merged.push(...gen.lines);
+  }
+  for (const [child, n] of [...node.children].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    // A type registered under the same name already holds this namespace's types (basic.v1.auth)
+    if (node.ns && byNs.get(node.ns)?.has(child)) {
+      console.log(`skipped namespace ${n.ns}: same name as a type in ${node.ns}`);
+      continue;
+    }
+    emit(child, n, depth + 1);
+  }
+  merged.push(`${pad}}`);
+  if (depth === 0) merged.push('');
+};
+for (const [seg, node] of [...root.children].sort(([a], [b]) => (a < b ? -1 : 1)))
+  emit(seg, node, 0);
 writeFileSync(join(OUT_DIR, 'lark_all.proto'), merged.join('\n'));
 console.log('written merged lark_all.proto');
 

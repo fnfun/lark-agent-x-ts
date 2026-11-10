@@ -7,7 +7,8 @@ import { readText, WORK_DIR } from './common.js';
  * Step 3: extract the schema registry and the cmd map from all chunks → work/schemas_all.json,
  * work/cmd_map.json.
  */
-const REG = /register\("([a-zA-Z0-9_.]+)","([a-zA-Z0-9_.]+)",\{/g;
+// Namespaces are written as a string ("todo") or, for newer ones, as an array (["todo","v1"])
+const REG = /register\((?:"([a-zA-Z0-9_.]+)"|\[((?:"[a-zA-Z0-9_]+",?)+)\]),"([a-zA-Z0-9_.]+)",\{/g;
 const CMD = /"(-?\d+(?:\|[A-Za-z0-9_.]*)+)"/g;
 
 /**
@@ -39,7 +40,8 @@ function extractRegs(src: string): [string, string, string][] {
       }
       i += 1;
     }
-    out.push([m[1] as string, m[2] as string, src.slice(start, i + 1)]);
+    const ns = m[1] ?? (m[2] as string).replaceAll('"', '').split(',').join('.');
+    out.push([ns, m[3] as string, src.slice(start, i + 1)]);
   }
   return out;
 }
@@ -72,6 +74,17 @@ await Bun.write(
   pyDumps(Object.fromEntries(sorted.map((r) => [`${r.ns}.${r.name}`, r.body])), { indent: 1 }),
 );
 await Bun.write(join(WORK_DIR, 'cmd_map.json'), pyDumps(Object.fromEntries(cmdMap), { indent: 1 }));
+// Multi-segment namespaces (registered as arrays): schemas_all.json keys alone cannot tell where
+// such a namespace ends and the type name begins
+await Bun.write(
+  join(WORK_DIR, 'namespaces.json'),
+  pyDumps(
+    [...new Set([...allRegs.values()].map((r) => r.ns))].filter((ns) => ns.includes('.')).sort(),
+    {
+      indent: 1,
+    },
+  ),
+);
 
 const nsCount = new Map<string, number>();
 for (const r of allRegs.values()) nsCount.set(r.ns, (nsCount.get(r.ns) ?? 0) + 1);
