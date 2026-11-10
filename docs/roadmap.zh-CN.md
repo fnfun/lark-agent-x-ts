@@ -122,7 +122,10 @@
 
 新建文档先用"导入 Markdown"实现，不依赖协同通道。
 
-**进展（2026-11-10，进行中）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（云盘首页预载的代码块；路径是租户域名下的 `/space/api/...`，上传走单独的云盘域名）。已确认：写操作要带 `X-CSRFToken` 请求头，值取自 `/space/api/user/` 下发的 `_csrf_token` cookie（`WebSession` 现在会自动带，并支持表单与 multipart 请求体）；`POST /space/api/explorer/create/` 带 `type=22` 新建 docx；`GET /space/api/docx/pages/client_vars` 返回 docx 的块结构；上传（`box/stream/upload/all`）与导入（`import/create`、`import/result`）的请求。卡点：在测试文档上试探删除接口被权限策略拒绝，测试账号里留下了一篇测试文档，删除命令暂时没有。
+**进展（2026-11-10，部分完成）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（预载和按需加载的代码块；路径是租户域名下的 `/space/api/...`）。已完成并在真实账号上用专为测试新建、测完移进回收站的文档和文件夹实测：`lark doc search/ls/create/rm/fetch` 与库的 `Docs`；`WebSession` 会带云文档的 csrf，并支持表单与 multipart 请求体。接口的实际行为写在 `src/domains/docs.ts` 文件头。
+
+- `doc fetch` 只读标题和每个块的纯文本：造不出有内容的测试文档——上传成功后的 Markdown 导入（`import/create`）在试过的各种编码下都回"invalid param"——所以标题、列表、表格等的写法没有核对。
+- 未做：Markdown 导入，改名 / 移动 / 复制，评论，权限，文件上传下载，历史版本，知识库（空间、节点树）与 Markdown 文件。
 
 ### v0.5：日历
 

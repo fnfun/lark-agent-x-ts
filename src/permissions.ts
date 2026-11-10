@@ -30,7 +30,7 @@ export const GROUPS = {
   modify: '改动已有消息或别人看得见的状态(撤回、编辑、表情、Pin、标已读)',
   organize: '只影响自己的整理(标记、会话置顶、免打扰、会话标签)',
   manage: '群管理(建群、拉人、移出、改群名、管理员、发言权限、入群审批、分享链接)',
-  destroy: '删除(任务、任务清单等),删了别人也看不到',
+  destroy: '删除(任务、任务清单、云文档等),删了别人也看不到',
   system: '账号与进程级操作(登录、常驻接收、调任意网关或网页接口、改权限)',
 } as const;
 
@@ -67,6 +67,9 @@ export const PERMISSIONS = {
   'task.get': 'query',
   'task.comments': 'query',
   'task.lists': 'query',
+  'doc.search': 'query',
+  'doc.ls': 'query',
+  'doc.fetch': 'query',
   unread: 'query',
   members: 'query',
   users: 'query',
@@ -107,6 +110,7 @@ export const PERMISSIONS = {
   mute: 'organize',
   'tags.edit': 'organize',
   'task.list-create': 'organize',
+  'doc.create': 'organize',
   'shortcut.add': 'organize',
   'shortcut.remove': 'organize',
 
@@ -121,6 +125,7 @@ export const PERMISSIONS = {
 
   'task.delete': 'destroy',
   'task.list-delete': 'destroy',
+  'doc.rm': 'destroy',
 
   'auth.qr': 'system',
   'auth.import': 'system',

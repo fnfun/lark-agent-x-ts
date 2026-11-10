@@ -52,6 +52,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark download <msg_id> -o <path>` | Download the image/file in a message (fetched from the server if the message isn't in the local database) |
 | `lark api <type_name> '<json>'` | Call any gateway API (type names are listed in `assets/cmd_map.json`) |
 | `lark task <action>` | Tasks: `list` (`--done`, `--all`), `search <keyword>`, `get <guid...>` (description, due, assignees, followers, lists, parent), `subtasks <guid>`, `create <title>` (`--desc`, `--due`, `--all-day`, `--assignees`, `--followers`, `--parent`, `--list`), `update <guid>` (`--title`, `--desc`, `--due` (`none` clears it), `--assignees` / `--followers` replace the list), `complete <guid...>` (`--reopen`), `delete <guid...>`, `comment <guid> <text>`, `comments <guid>`, task lists `lists` / `list-create <name>` / `list-delete <guid>`; `--json` where it lists. `lark task -h` lists them all |
+| `lark doc <action>` | Docs and Drive: `search <keyword>`, `ls [folder]` (My Space or a folder; the first column is the node token), `create <name>` (`--type docx\|doc\|sheet\|base\|mindnote\|folder`, `--folder`), `rm <token...>` (to the trash), `fetch <url\|obj_token>` (a docx's title and the plain text of its blocks); `--json` where it lists |
 | `lark web <METHOD> <path> ['<json>']` | Call a web app's API on the tenant domain with the login cookies (e.g. `lark web GET /space/api/user/`; `--query '<json>'`); the app's entry page is opened first so its cookies are set. Which apps work is listed at the top of `src/web.ts` |
 | `lark chats` / `lark sessions` | Chat list / agent session table |
 | `lark search <keyword>` | Search users/group chats |
@@ -90,12 +91,12 @@ Every command can be allowed or denied individually or by group, to limit what t
 | Group | Contains |
 |---|---|
 | `local` | Read-only local data: `auth status`, `config`, `chats`, `sessions`, `messages`, `permissions` (view) |
-| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info` / `admins` / `requests` (listing), `task` listing and reading (`list`, `search`, `get`, `subtasks`, `comments`, `lists`), `reactions`, `read-status`, `pins`, `flags`, `tags` (listing), `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
+| `query` | Read-only Feishu data: `auth check`, `history`, `get`, `thread`, `search`, `search-messages`, `search-users`, `search-bots`, `chat-search`, `chat-list`, `unread`, `members`, `users`, `user`, `group info` / `admins` / `requests` (listing), `task` listing and reading (`list`, `search`, `get`, `subtasks`, `comments`, `lists`), `doc search` / `ls` / `fetch`, `reactions`, `read-status`, `pins`, `flags`, `tags` (listing), `translate`, `message-link`, `self-chat`, `download`, plus listing with `scheduled` and `shortcut` |
 | `outbound` | Sending new messages: `send`, `send-image`, `send-file`, `send-video`, `send-audio`, `schedule`, `forward`, `task create` / `comment` (assignees and followers are notified), plus cancelling and rescheduling with `scheduled` |
 | `modify` | Changing existing messages or state that others can see: `recall`, `edit`, `react`, `pin`, `read`, `group nickname`, `task update` / `complete` |
-| `organize` | Organizing that only affects yourself: `flag`, `mute`, `task list-create`, plus pinning and unpinning with `shortcut` and editing with `tags` |
+| `organize` | Organizing that only affects yourself: `flag`, `mute`, `task list-create`, `doc create`, plus pinning and unpinning with `shortcut` and editing with `tags` |
 | `manage` | Group chat management: `group`'s `create` / `add` / `remove` / `rename` / `admin` / `moderation` / `link`, and approving or rejecting with `requests` |
-| `destroy` | Deleting: `task delete`, `task list-delete` (gone for everyone involved) |
+| `destroy` | Deleting: `task delete`, `task list-delete` (gone for everyone involved), `doc rm` (to the trash) |
 | `system` | Account and process level: `auth`'s `qr` / `import`, `listen`, `api`, `web`, `permissions`'s `edit` / `clear` |
 
 Commands that mix reads and writes are split by action, named `command.action` (e.g. `group.add`, `scheduled.cancel`, `auth.qr`); `lark permissions` lists all names and the groups they belong to.
@@ -163,7 +164,7 @@ await guarded.recallMessage('<msg_id>').catch((e) => e instanceof PermissionDeni
 - `true`: uses this account's rules from `permissions.json` next to the credentials, or `LARKX_ALLOW` / `LARKX_DENY` if there are none; they are re-read on every call, so rule changes don't need a restart. You can also pass `{ allow, deny }` directly.
 - Every public method maps to a permission item of the same name (classified under the closest command, e.g. `addMembers` → `group.add`, `sendMessage` → `send` / `send-image` / `send-file` / `send-video` / `send-audio` depending on the content, `api` and `gatewayPost` → `api`); when not allowed, it throws `PermissionDenied` (with `permission`, `group`, `rule`).
 - Only the layer the caller calls directly is checked: other methods called internally by a method (e.g. the gateway call made while sending) aren't checked again; callbacks passed to a method (e.g. the long-lived connection's `onMessage`) don't count, and calls made inside a callback are checked as usual.
-- The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource`, and `WebSession` (web app APIs: `new WebSession(auth).json('GET', '/space/api/user/')`), don't go through the client and aren't subject to permission control.
+- The standalone functions `uploadImage`, `uploadFile`, and `downloadMessageResource`, and `WebSession` (web app APIs: `new WebSession(auth).json('GET', '/space/api/user/')`) with `Docs` built on it (`new Docs(new WebSession(auth))`), don't go through the client and aren't subject to permission control.
 - Domain clients built on a client (`new Tasks(client)`) follow its permission setting: each method is checked as `task.<action>`, and the gateway calls they make inside are not checked again as `api`.
 - `PERMISSIONS`, `GROUPS`, `decide`, `loadRules`, and `saveAccountRules` are exported as well, so you can build your own permissions UI.
 

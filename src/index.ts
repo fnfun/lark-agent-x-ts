@@ -40,6 +40,15 @@ export {
   type UserSearchOptions,
 } from './client.js';
 export {
+  DOC_TYPES,
+  type DocContent,
+  type DocHit,
+  Docs,
+  type DocType,
+  type DriveFile,
+  docToken,
+} from './domains/docs.js';
+export {
   type NewTask,
   type Task,
   type TaskComment,
