@@ -32,6 +32,11 @@ const ENTRY_PAGES: [string, string][] = [
   ['/mail', '/mail'],
 ];
 const DEFAULT_ENTRY = '/next/messenger/';
+/**
+ * Writes to Docs need the X-CSRFToken header, taken from the _csrf_token cookie that
+ * /space/api/user/ sets.
+ */
+const CSRF = { prefix: '/space/', cookie: '_csrf_token', bootstrap: '/space/api/user/' };
 const LOGIN_PATH = '/accounts/page/login';
 
 export interface WebRequest {
@@ -39,6 +44,12 @@ export interface WebRequest {
   query?: Record<string, string | number | boolean> | undefined;
   /** A JSON body (sent as application/json). */
   json?: unknown;
+  /** A form body (sent as application/x-www-form-urlencoded). */
+  form?: Record<string, string | number | boolean> | undefined;
+  /** A multipart body (file uploads). */
+  multipart?: FormData | undefined;
+  /** Send to this origin instead of the tenant's (e.g. Drive's upload host). */
+  origin?: string | undefined;
   headers?: Record<string, string> | undefined;
 }
 
@@ -84,20 +95,31 @@ export class WebSession {
    */
   async request(method: string, path: string, o: WebRequest = {}): Promise<Response> {
     await this.warm(ENTRY_PAGES.find(([prefix]) => path.startsWith(prefix))?.[1] ?? DEFAULT_ENTRY);
-    const url = new URL(path, await this.origin());
+    const tenant = await this.origin();
+    const url = new URL(path, o.origin ?? tenant);
     for (const [k, v] of Object.entries(o.query ?? {})) url.searchParams.set(k, String(v));
-    const origin = url.origin;
+    const headers: Record<string, string> = {
+      'user-agent': USER_AGENT,
+      accept: 'application/json, text/plain, */*',
+      origin: tenant,
+      referer: `${tenant}/`,
+    };
+    if (method !== 'GET' && path.startsWith(CSRF.prefix))
+      headers['x-csrftoken'] = await this.csrfToken();
+    let body: RequestInit['body'];
+    if (o.json !== undefined) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(o.json);
+    } else if (o.form) {
+      headers['content-type'] = 'application/x-www-form-urlencoded';
+      body = new URLSearchParams(
+        Object.entries(o.form).map(([k, v]) => [k, String(v)] as [string, string]),
+      ).toString();
+    } else if (o.multipart) body = o.multipart;
     const res = await this.jar.fetch(url.toString(), {
       method,
-      headers: {
-        'user-agent': USER_AGENT,
-        accept: 'application/json, text/plain, */*',
-        origin,
-        referer: `${origin}/`,
-        ...(o.json === undefined ? {} : { 'content-type': 'application/json' }),
-        ...(o.headers ?? {}),
-      },
-      ...(o.json === undefined ? {} : { body: JSON.stringify(o.json) }),
+      headers: { ...headers, ...(o.headers ?? {}) },
+      ...(body === undefined ? {} : { body }),
     });
     if (new URL(res.url).pathname.startsWith(LOGIN_PATH))
       throw new AuthExpired('网页登录态已失效,请重新登录(lark auth qr)');
@@ -117,6 +139,12 @@ export class WebSession {
     if (b && b.code === 5 && /login/i.test(String(b.msg ?? '')))
       throw new AuthExpired('网页登录态已失效,请重新登录(lark auth qr)');
     return body;
+  }
+
+  /** Docs' CSRF token: the _csrf_token cookie, fetched once when missing. */
+  private async csrfToken(): Promise<string> {
+    if (!this.jar.cookies[CSRF.cookie]) await this.request('GET', CSRF.bootstrap);
+    return this.jar.cookies[CSRF.cookie] ?? '';
   }
 
   private async page(url: string): Promise<Response> {

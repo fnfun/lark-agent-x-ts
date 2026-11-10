@@ -122,6 +122,8 @@
 
 新建文档先用"导入 Markdown"实现，不依赖协同通道。
 
+**进展（2026-11-10，进行中）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（云盘首页预载的代码块；路径是租户域名下的 `/space/api/...`，上传走单独的云盘域名）。已确认：写操作要带 `X-CSRFToken` 请求头，值取自 `/space/api/user/` 下发的 `_csrf_token` cookie（`WebSession` 现在会自动带，并支持表单与 multipart 请求体）；`POST /space/api/explorer/create/` 带 `type=22` 新建 docx；`GET /space/api/docx/pages/client_vars` 返回 docx 的块结构；上传（`box/stream/upload/all`）与导入（`import/create`、`import/result`）的请求。卡点：在测试文档上试探删除接口被权限策略拒绝，测试账号里留下了一篇测试文档，删除命令暂时没有。
+
 ### v0.5：日历
 
 - 日程：今日或指定范围的议程、详情、搜索。

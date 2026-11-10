@@ -122,6 +122,8 @@ Acceptance: `bun test` (fake server); read-only queries on a real account; write
 
 New documents are created via "import Markdown" first, without depending on the collaborative-editing channel.
 
+**Status (2026-11-10, in progress).** Docs' web API paths and request shapes come from the Docs web app's JavaScript (the drive page's preloaded chunks; paths are `/space/api/...` on the tenant, uploads go to a separate Drive host). Found so far: writes need the `X-CSRFToken` header from the `_csrf_token` cookie set by `/space/api/user/` (now sent by `WebSession`, which also sends form and multipart bodies); `POST /space/api/explorer/create/` with `type=22` creates a docx; `GET /space/api/docx/pages/client_vars` returns a docx's blocks; the upload (`box/stream/upload/all`) and import (`import/create`, `import/result`) requests. Blocked: trying candidate delete endpoints on the test document was refused by the permission policy, so a test document is left in the test account and no delete command exists yet.
+
 ### v0.5: Calendar
 
 - Events: agenda for today or a given range, details, search.

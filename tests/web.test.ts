@@ -21,7 +21,22 @@ beforeAll(() => {
       if (url.pathname === '/tenant-home' || url.pathname === '/okr/') return new Response('ok');
       if (url.pathname === '/drive/home/')
         return new Response('docs', { headers: { 'set-cookie': 'sl_session=app; Path=/' } });
-      if (url.pathname === '/space/api/user/') return Response.json({ code: 0, data: { cookie } });
+      if (url.pathname === '/space/api/user/')
+        return Response.json(
+          { code: 0, data: { cookie } },
+          { headers: { 'set-cookie': '_csrf_token=t0k; Path=/' } },
+        );
+      if (url.pathname === '/space/api/explorer/create/')
+        return req.text().then((body) =>
+          Response.json({
+            code: 0,
+            data: {
+              csrf: req.headers.get('x-csrftoken'),
+              type: req.headers.get('content-type'),
+              body,
+            },
+          }),
+        );
       if (url.pathname === '/space/api/expired')
         return Response.json({ code: 5, msg: 'Login Required' });
       if (url.pathname === '/okr/api/broken')
@@ -50,6 +65,17 @@ describe('网页接口', () => {
     expect(body.data.cookie).toContain('sl_session=app');
     await web.json('GET', '/space/api/user/');
     expect(seen.filter((p) => p === '/drive/home/')).toHaveLength(1);
+  });
+
+  test('云文档的写请求带上 X-CSRFToken：没有 _csrf_token 时先调 /space/api/user/ 拿到；表单按 urlencoded 发', async () => {
+    const body = (await session().json('POST', '/space/api/explorer/create/', {
+      form: { name: '周报', type: 22 },
+    })) as { data: { csrf: string; type: string; body: string } };
+    expect(body.data).toEqual({
+      csrf: 't0k',
+      type: 'application/x-www-form-urlencoded',
+      body: 'name=%E5%91%A8%E6%8A%A5&type=22',
+    });
   });
 
   test('被踢到登录页、或接口回 code=5 Login Required，都按凭证失效处理', async () => {
