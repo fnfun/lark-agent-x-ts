@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { LarkAuth } from '../src/auth.js';
 import { parse } from '../src/cli/args.js';
 import { COMMANDS } from '../src/cli/commands.js';
+import { COMMAND_GROUPS } from '../src/cli/groups.js';
 import { PermissionEditor } from '../src/cli/permissions-editor.js';
 import { LarkClient } from '../src/client.js';
 import {
@@ -60,7 +61,7 @@ const permissionFor = (name: string, argv: string[]): Permission => {
 
 describe('权限目录', () => {
   test('每个权限项都对应一个命令，分组名不和命令名重名', () => {
-    const names = new Set(COMMANDS.map((c) => c.name));
+    const names = new Set([...COMMANDS, ...COMMAND_GROUPS].map((c) => c.name));
     for (const p of Object.keys(PERMISSIONS))
       expect(names.has(p.split('.')[0] as string)).toBe(true);
     for (const g of Object.keys(GROUPS)) expect(names.has(g)).toBe(false);
@@ -80,6 +81,14 @@ describe('权限目录', () => {
     expect(permissionFor('tags', ['--create', '周会'])).toBe('tags.edit');
     expect(permissionFor('group', ['requests', 'c1'])).toBe('group.requests');
     expect(permissionFor('group', ['requests', 'c1', '--approve', 'u1'])).toBe('group.approve');
+  });
+
+  test('命令组的每个子命令都落到登记过的权限项上', () => {
+    for (const g of COMMAND_GROUPS)
+      for (const sub of g.subcommands) {
+        const p = typeof sub.access === 'string' ? sub.access : sub.access({});
+        expect([g.name, sub.name, isPermission(p)]).toEqual([g.name, sub.name, true]);
+      }
   });
 
   test('group 的每个动作都落到登记过的权限项上', () => {

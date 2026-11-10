@@ -39,6 +39,14 @@ export {
   type UserProfile,
   type UserSearchOptions,
 } from './client.js';
+export {
+  type NewTask,
+  type Task,
+  type TaskComment,
+  type TaskList,
+  Tasks,
+  type TaskUpdate,
+} from './domains/task.js';
 export { HttpError, NetworkError } from './http.js';
 export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
 export {

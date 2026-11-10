@@ -607,6 +607,7 @@ export class LarkClient {
     if (source) {
       checkSource(auth, source);
       guardMethods(client, METHOD_PERMISSIONS, (p) => authorize(auth, source, p));
+      client.permissionSource = source;
     }
     return client;
   }
@@ -819,6 +820,12 @@ export class LarkClient {
       cid: o.cid || requestCid(),
     };
   }
+
+  /**
+   * Where permission rules come from when checks are enabled (LarkClient.create's permissions);
+   * domain clients built on this client (Tasks, ...) check their own methods against it.
+   */
+  permissionSource: PermissionSource | undefined;
 
   /** Interval between send retries (ms); the n-th retry waits n times this. */
   sendRetryDelayMs = 1000;

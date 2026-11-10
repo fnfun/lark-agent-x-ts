@@ -101,12 +101,12 @@ Tasks (the first new domain done over the gateway, used to validate the foundati
 
 Acceptance: `bun test` (fake server); read-only queries on a real account; write operations only in a self-created test tasklist.
 
-**Status (2026-11-10, in progress, blocked on verification).**
+**Status (2026-11-10, done).**
 
-- Done: the pipeline extracts namespaces registered as arrays, so every `*.v1` definition is now available (`cmd_map.json` and the core assets are unchanged); the web login availability table (top of `src/web.ts`); `WebSession` and `lark web`; command groups in the CLI entry; helpers shared by command files in `src/cli/common.ts`.
-- Findings: most `todo.v1.*` cmds answer "command not found" on the gateway, while the older `todo.*` ones work (`todo.GetTaskCenterRequest` lists the task containers; `todo.QueryContainerTasksRequest` is asynchronous and only returns a query id). Approval and Attendance return 404 on the test tenant, and Miaoda has no entry on Lark (international).
-- Blocked: the test account has no tasks, docs or calendar data, so reads only return empty results; creating data and verifying writes needs writes on the real account, which the rules allow only for the self chat. Tasks, and every later domain, wait for a decision: allow writes on resources created for testing in the test account (a test task, doc, calendar event), deleted afterwards, or provide data to read.
-- Not done yet: the `destroy` permission group (added with the first destructive domain command) and the tasks commands.
+- Foundation: the pipeline extracts namespaces registered as arrays, so every `*.v1` definition is available (`cmd_map.json` and the core assets are unchanged); the web login availability table (top of `src/web.ts`); `WebSession` and `lark web`; command groups in the CLI entry; the `destroy` permission group; helpers shared by command files in `src/cli/common.ts`.
+- Tasks: `lark task list/search/get/subtasks/create/update/complete/delete/comment/comments/lists/list-create/list-delete` and the library's `Tasks`, all tested on the real account with tasks and lists created for the test and deleted afterwards. How the protocol behaves (which requests work, the commit encoding of edits, due times in seconds) is at the top of `src/domains/task.ts`.
+- Not done: listing the tasks inside a task list (no working request found; a task's lists show in `task get`), task attachments and reminders.
+- Findings for later versions: Approval and Attendance return 404 on the test tenant, and Miaoda has no entry on Lark (international); the test account has no docs or calendar data, so those versions create test resources to read and write.
 
 ### v0.4: Docs, Drive, Wiki (read + non-collaborative writes)
 
