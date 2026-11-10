@@ -67,14 +67,14 @@ describe('网页接口', () => {
     expect(seen.filter((p) => p === '/drive/home/')).toHaveLength(1);
   });
 
-  test('云文档的写请求带上 X-CSRFToken：没有 _csrf_token 时先调 /space/api/user/ 拿到；表单按 urlencoded 发', async () => {
+  test('云文档的写请求带上 X-CSRFToken：没有 _csrf_token 时先调 /space/api/user/ 拿到；表单按 urlencoded 发，数组值重复键', async () => {
     const body = (await session().json('POST', '/space/api/explorer/create/', {
-      form: { name: '周报', type: 22 },
+      form: { name: '周报', type: 22, ids: ['a', 'b'] },
     })) as { data: { csrf: string; type: string; body: string } };
     expect(body.data).toEqual({
       csrf: 't0k',
       type: 'application/x-www-form-urlencoded',
-      body: 'name=%E5%91%A8%E6%8A%A5&type=22',
+      body: 'name=%E5%91%A8%E6%8A%A5&type=22&ids=a&ids=b',
     });
   });
 

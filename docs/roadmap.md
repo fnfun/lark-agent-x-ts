@@ -124,7 +124,8 @@ New documents are created via "import Markdown" first, without depending on the 
 
 **Status (2026-11-10, partly done).** Docs' web API paths and request shapes come from the Docs web app's JavaScript (preloaded and lazily loaded chunks; paths are `/space/api/...` on the tenant). Done and tested on both test accounts (Lark and Feishu) with documents and folders created for the test and moved to the trash afterwards: `lark doc search/ls/create/import/rm/fetch` and the library's `Docs`; `fetch` converts a docx to Markdown (checked by importing Markdown and reading it back); `WebSession` sends Docs' CSRF token and form / multipart bodies. How the API behaves is at the top of `src/domains/docs.ts`, the block format at the top of `src/domains/docx-markdown.ts`.
 
-- Not done: rename / move / copy, comments, permissions, file upload and download, version history, Wiki (spaces, node tree) and Markdown files.
+- Added on 2026-11-11, tested the same way on both accounts: `rename`, `mv`, `cp`, `trash` / `restore`, `upload` (blocks for files over 4 MB) / `download`, `export` (docx → docx / pdf, sheet → xlsx), comments (`comments` / `comment` / `reply` / `resolve` / `comment-rm`, library `DocComments`) and sharing (`sharing` / `set-link`, library `DocPermissions`). Widening a test document's link scope was blocked by the session's safety check, so `set-link` was only checked by setting the scope it already had. Comment and permission details are at the top of `src/domains/doc-comments.ts` and `src/domains/doc-permissions.ts`.
+- Not done: comments anchored to text and version history (both live in the docx editor's own bundle, studied with v0.6), adding or removing collaborators (involves other people), Wiki (spaces, node tree) and Markdown files.
 
 ### v0.5: Calendar
 

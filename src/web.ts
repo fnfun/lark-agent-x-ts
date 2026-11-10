@@ -44,8 +44,8 @@ export interface WebRequest {
   query?: Record<string, string | number | boolean> | undefined;
   /** A JSON body (sent as application/json). */
   json?: unknown;
-  /** A form body (sent as application/x-www-form-urlencoded). */
-  form?: Record<string, string | number | boolean> | undefined;
+  /** A form body (sent as application/x-www-form-urlencoded); an array repeats its key. */
+  form?: Record<string, string | number | boolean | readonly string[]> | undefined;
   /** A multipart body (file uploads). */
   multipart?: FormData | undefined;
   /** Send to this origin instead of the tenant's (e.g. Drive's upload host). */
@@ -113,7 +113,9 @@ export class WebSession {
     } else if (o.form) {
       headers['content-type'] = 'application/x-www-form-urlencoded';
       body = new URLSearchParams(
-        Object.entries(o.form).map(([k, v]) => [k, String(v)] as [string, string]),
+        Object.entries(o.form).flatMap(([k, v]) =>
+          (Array.isArray(v) ? v : [v]).map((x) => [k, String(x)] as [string, string]),
+        ),
       ).toString();
     } else if (o.multipart) body = o.multipart;
     const res = await this.jar.fetch(url.toString(), {

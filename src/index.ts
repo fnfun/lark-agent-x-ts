@@ -47,14 +47,31 @@ export {
   type NewEvent,
 } from './domains/calendar.js';
 export {
+  type CommentReply,
+  type DocComment,
+  DocComments,
+} from './domains/doc-comments.js';
+export {
+  type Collaborator,
+  DocPermissions,
+  LINK_SHARE,
+  type LinkShare,
+  type Sharing,
+} from './domains/doc-permissions.js';
+export {
   DOC_TYPES,
   type DocContent,
   type DocHit,
+  type DocRef,
   Docs,
   type DocType,
   type DriveFile,
+  docRef,
   docToken,
+  EXPORT_FORMATS,
+  type FileData,
   IMPORTABLE,
+  type TrashedFile,
 } from './domains/docs.js';
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
 export {

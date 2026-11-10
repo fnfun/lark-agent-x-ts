@@ -124,7 +124,8 @@
 
 **进展（2026-11-10，部分完成）。** 云文档网页接口的路径和请求格式取自云文档网页应用的 JS（预载和按需加载的代码块；路径是租户域名下的 `/space/api/...`）。已完成并在两个测试账号（Lark 与飞书）上用专为测试新建、测完移进回收站的文档和文件夹实测：`lark doc search/ls/create/import/rm/fetch` 与库的 `Docs`；`fetch` 把 docx 转成 Markdown（导入 Markdown 再读回来核对过）；`WebSession` 会带云文档的 csrf，并支持表单与 multipart 请求体。接口的实际行为写在 `src/domains/docs.ts` 文件头，块格式写在 `src/domains/docx-markdown.ts` 文件头。
 
-- 未做：改名 / 移动 / 复制，评论，权限，文件上传下载，历史版本，知识库（空间、节点树）与 Markdown 文件。
+- 2026-11-11 补上，同样在两个账号上实测：`rename`、`mv`、`cp`、`trash` / `restore`、`upload`（超过 4MB 分块）/ `download`、`export`（docx 导出 docx / pdf，表格导出 xlsx）、评论（`comments` / `comment` / `reply` / `resolve` / `comment-rm`，库的 `DocComments`）和分享（`sharing` / `set-link`，库的 `DocPermissions`）。把测试文档的链接范围放宽被会话的安全检查拦下，`set-link` 只用"设成当前值"验证过。评论和权限的细节写在 `src/domains/doc-comments.ts`、`src/domains/doc-permissions.ts` 文件头。
+- 未做：划词评论和历史版本（都在 docx 编辑器自己的代码包里，放到 v0.6 一起研究）、增删协作者（涉及他人）、知识库（空间、节点树）与 Markdown 文件。
 
 ### v0.5：日历
 
