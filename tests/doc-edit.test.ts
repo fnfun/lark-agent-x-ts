@@ -222,4 +222,65 @@ describe('Markdown 写入文档', () => {
     expect(op?.action.oi).toMatchObject({ initialAttributedTexts: { text: { 0: '要核对' } } });
     expect(Object.keys(commits[0] as Dict)).toEqual(['a']);
   });
+
+  test('单独成行的图片：先建空 token 的图片块（尺寸取自文件头），再挂在该块上传，最后写回 token；读不到图片时什么都不写', async () => {
+    // A 3×2 PNG header is enough for the size; the body is never decoded.
+    const png = new Uint8Array(33);
+    png.set([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0,
+      3, 0, 0, 0, 2,
+    ]);
+    const commits: Record<
+      string,
+      { version: number; payload: { ops: { p: unknown[]; action: Dict }[] } }
+    >[] = [];
+    const uploads: WebRequest[] = [];
+    const web = {
+      origin: async () => 'https://tenant.feishu.cn',
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.endsWith('client_vars'))
+          return {
+            code: 0,
+            data: { block_map: { D: { version: 1, data: { children: ['old'] } } } },
+          };
+        if (path.endsWith('/user/')) return { code: 0, data: { suid: 'u1' } };
+        if (path.includes('upload')) {
+          uploads.push(o);
+          return { code: 0, data: { file_token: 'F1' } };
+        }
+        commits.push((o.json as { change_map: (typeof commits)[number] }).change_map);
+        return { code: 0, data: { type: 'ACCEPT_COMMIT' } };
+      },
+    } as unknown as WebSession;
+    const editor = new DocEditor(web);
+    await editor.append('D', '![红色 **方块**](a/red.png)', {
+      loadImage: async (src) => ({ data: png, name: src.split('/').pop() as string }),
+    });
+    const [created, token] = commits;
+    const imageId = created?.D?.payload.ops[0]?.action.li as string;
+    expect(created?.[imageId]?.payload.ops[0]?.action.oi).toMatchObject({
+      image: { token: '', width: 3, height: 2, mimeType: 'image/png', name: 'red.png' },
+    });
+    expect(uploads[0]?.query).toMatchObject({
+      mount_point: 'docx_image',
+      mount_node_token: imageId,
+    });
+    expect(JSON.parse(String(uploads[0]?.query?.['ext[extra]']))).toEqual({
+      drive_route_token: 'D',
+    });
+    expect(token?.[imageId]).toMatchObject({
+      version: 1,
+      payload: { ops: [{ p: ['image', 'token'], action: { od: '', oi: 'F1' } }] },
+    });
+
+    commits.length = 0;
+    await expect(
+      editor.overwrite('D', '![x](missing.png)', {
+        loadImage: async () => {
+          throw new Error('读取图片失败');
+        },
+      }),
+    ).rejects.toThrow('读取图片失败');
+    expect(commits).toHaveLength(0);
+  });
 });

@@ -219,3 +219,55 @@ export function oggOpusDurationMs(data: Uint8Array): number | null {
   }
   return null;
 }
+
+/** An image's type and pixel size from its header (PNG, JPEG, GIF, WebP); null for others. */
+export function imageInfo(
+  data: Uint8Array,
+): { mimeType: string; width: number; height: number } | null {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const at = (i: number, sig: number[]) => sig.every((b, k) => data[i + k] === b);
+  if (data.length >= 24 && at(0, [0x89, 0x50, 0x4e, 0x47]))
+    return { mimeType: 'image/png', width: view.getUint32(16), height: view.getUint32(20) };
+  if (data.length >= 10 && at(0, [0x47, 0x49, 0x46]))
+    return {
+      mimeType: 'image/gif',
+      width: view.getUint16(6, true),
+      height: view.getUint16(8, true),
+    };
+  if (data.length >= 30 && at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50])) {
+    const kind = String.fromCharCode(...data.subarray(12, 16));
+    if (kind === 'VP8X')
+      return {
+        mimeType: 'image/webp',
+        width: 1 + (view.getUint32(24, true) & 0xffffff),
+        height: 1 + (view.getUint32(27, true) & 0xffffff),
+      };
+    if (kind === 'VP8 ')
+      return {
+        mimeType: 'image/webp',
+        width: view.getUint16(26, true) & 0x3fff,
+        height: view.getUint16(28, true) & 0x3fff,
+      };
+    if (kind === 'VP8L') {
+      const b = view.getUint32(21, true);
+      return { mimeType: 'image/webp', width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 };
+    }
+  }
+  if (data.length >= 4 && at(0, [0xff, 0xd8])) {
+    // Walk the JPEG segments to a start-of-frame marker (C0..CF except C4, C8, CC).
+    let i = 2;
+    while (i + 9 < data.length) {
+      if (data[i] !== 0xff) return null;
+      const marker = data[i + 1] as number;
+      const len = view.getUint16(i + 2);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker))
+        return {
+          mimeType: 'image/jpeg',
+          height: view.getUint16(i + 5),
+          width: view.getUint16(i + 7),
+        };
+      i += 2 + len;
+    }
+  }
+  return null;
+}

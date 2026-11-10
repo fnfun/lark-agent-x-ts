@@ -5,7 +5,8 @@
  * Supported: headings (#..######), paragraphs (consecutive lines join with a space), bullet,
  * ordered (with its number as `seq`) and to-do items nested by indentation, quotes (one block per
  * line), fenced code with a language, dividers, and inline bold, italic, strikethrough, code and
- * links, and tables (each cell a text block). Images are kept as plain text.
+ * links, tables (each cell a text block), and images on a line of their own (`![alt](src)`, which
+ * the editor uploads). Images inside a paragraph are kept as text.
  */
 
 /** A run of text with its inline styles. */
@@ -26,6 +27,8 @@ export interface BlockSpec {
   language?: string;
   /** Table cells by row, for tables. */
   rows?: Run[][][];
+  /** Where an image comes from (a local path or a URL), for images. */
+  src?: string;
   children: BlockSpec[];
 }
 
@@ -158,6 +161,17 @@ export function parseMarkdown(markdown: string): BlockSpec[] {
       blocks.push({
         type: 'table',
         rows: rows.map((r) => Array.from({ length: width }, (_, c) => parseInline(r[c] ?? ''))),
+        children: [],
+      });
+      continue;
+    }
+    const image = /^\s*!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)\s*$/.exec(line);
+    if (image) {
+      flush();
+      blocks.push({
+        type: 'image',
+        src: image[2] as string,
+        runs: parseInline(image[1] ?? ''),
         children: [],
       });
       continue;

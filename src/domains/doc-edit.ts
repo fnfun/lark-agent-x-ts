@@ -11,6 +11,10 @@
  *   `{p: ["children", index], action: {li: <block id>}}`; removing one: `{..., action: {ld: id}}`.
  * - A table is one block with `rows_id`, `columns_id`, `column_set` (widths) and `cell_set` (row id +
  *   column id → `{merge_info, block_id}`); each cell is a `table_cell` block holding a text block.
+ * - An image block is created with an empty `image.token`; the file is then uploaded mounted on that
+ *   block (point `docx_image`, node = block id, extra `drive_route_token` = the doc) and the token
+ *   set with `{p: ["image", "token"], action: {od: "", oi: <file token>}}`. Uploading before the
+ *   block exists answers "mount node not exist", mounting on the document "relation mismatch".
  * - Block ids are "dox" + the document's two-letter operation id + random letters and digits, 27
  *   characters long; the operation id comes from the document token (unscrambled when the token
  *   does not start with "dox").
@@ -18,6 +22,9 @@
  *   is the whole attributed text (pool + changeset), so replacing keeps each character's attributes.
  * - The reply's `data.type` is ACCEPT_COMMIT with the blocks' new versions.
  */
+import { readFile } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
+import { imageInfo } from '../media.js';
 import type { WebSession } from '../web.js';
 import { check, Docs } from './docs.js';
 import {
@@ -124,15 +131,72 @@ function blockData(spec: BlockSpec, parent: string, children: string[], author: 
   };
 }
 
+/** An image file for an image block. */
+export interface ImageFile {
+  data: Uint8Array;
+  name: string;
+}
+
+export interface AppendOptions {
+  /** Where relative image paths start (the current directory by default). */
+  baseDir?: string;
+  /** Loads an image by its Markdown source; by default URLs are fetched and paths read. */
+  loadImage?: (src: string) => Promise<ImageFile>;
+}
+
+async function defaultLoadImage(src: string, baseDir: string): Promise<ImageFile> {
+  if (/^https?:\/\//i.test(src)) {
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`下载图片失败(${res.status}): ${src}`);
+    return {
+      data: new Uint8Array(await res.arrayBuffer()),
+      name: basename(new URL(src).pathname) || 'image',
+    };
+  }
+  const path = resolve(baseDir, decodeURI(src));
+  try {
+    return { data: new Uint8Array(await readFile(path)), name: basename(path) };
+  } catch (e) {
+    throw new Error(
+      `读取图片失败: ${path}(${(e as NodeJS.ErrnoException).code ?? (e as Error).message})`,
+    );
+  }
+}
+
+interface Prepared {
+  specs: BlockSpec[];
+  images: Map<BlockSpec, ImageFile>;
+}
+
 export class DocEditor {
   constructor(readonly web: WebSession) {}
 
   /** Append Markdown at the end of a docx; returns how many top-level blocks were added. */
-  async append(docToken: string, markdown: string): Promise<number> {
-    const page = await this.page(docToken);
+  async append(docToken: string, markdown: string, o: AppendOptions = {}): Promise<number> {
+    return this.insert(docToken, await this.prepare(markdown, o));
+  }
+
+  /** Parses Markdown and loads its images, so a missing image fails before anything is written. */
+  private async prepare(markdown: string, o: AppendOptions): Promise<Prepared> {
     const specs = parseMarkdown(markdown);
+    const load =
+      o.loadImage ?? ((src: string) => defaultLoadImage(src, o.baseDir ?? process.cwd()));
+    const images = new Map<BlockSpec, ImageFile>();
+    const collect = async (list: BlockSpec[]) => {
+      for (const spec of list) {
+        if (spec.type === 'image') images.set(spec, await load(spec.src ?? ''));
+        await collect(spec.children);
+      }
+    };
+    await collect(specs);
+    return { specs, images };
+  }
+
+  private async insert(docToken: string, { specs, images }: Prepared): Promise<number> {
     if (!specs.length) return 0;
+    const page = await this.page(docToken);
     const author = await this.me();
+    const pending: { id: string; file: ImageFile }[] = [];
     const changes: Record<string, Dict> = {};
     const put = (id: string, data: Dict) => {
       changes[id] = { id, version: 0, payload: { ops: [{ p: [], action: { oi: data } }] } };
@@ -159,6 +223,31 @@ export class DocEditor {
         );
         return id;
       }
+      if (spec.type === 'image') {
+        const file = images.get(spec) as ImageFile;
+        const info = imageInfo(file.data);
+        if (!info)
+          throw new Error(`不认识的图片格式: ${spec.src ?? ''}(支持 PNG、JPEG、GIF、WebP)`);
+        pending.push({ id, file });
+        put(id, {
+          ...common('image', parent, author),
+          area_comments: null,
+          align: 'center',
+          image: {
+            token: '',
+            mimeType: info.mimeType,
+            size: file.data.length,
+            width: info.width,
+            height: info.height,
+            name: file.name,
+            crop: [0, 0, 0, 0],
+            rotation: 0,
+            scale: 1,
+            caption: { text: attributedText(spec.runs ?? [], author) },
+          },
+        });
+        return id;
+      }
       const kids = spec.children.map((c) => create(c, id));
       put(id, blockData(spec, parent, kids, author));
       return id;
@@ -175,11 +264,27 @@ export class DocEditor {
       },
     };
     await this.commit(docToken, changes);
+    if (pending.length) {
+      const docs = new Docs(this.web);
+      const tokens: Record<string, Dict> = {};
+      for (const { id, file } of pending) {
+        const uploaded = await docs.upload(file.data, file.name, {
+          mount: { point: 'docx_image', node: id, extra: { drive_route_token: docToken } },
+        });
+        tokens[id] = {
+          id,
+          version: 1,
+          payload: { ops: [{ p: ['image', 'token'], action: { od: '', oi: uploaded.objToken } }] },
+        };
+      }
+      await this.commit(docToken, tokens);
+    }
     return ids.length;
   }
 
   /** Replace the body of a docx (everything below the title) with Markdown. */
-  async overwrite(docToken: string, markdown: string): Promise<number> {
+  async overwrite(docToken: string, markdown: string, o: AppendOptions = {}): Promise<number> {
+    const prepared = await this.prepare(markdown, o);
     const page = await this.page(docToken);
     if (page.children.length)
       await this.commit(docToken, {
@@ -194,7 +299,7 @@ export class DocEditor {
           },
         },
       });
-    return this.append(docToken, markdown);
+    return this.insert(docToken, prepared);
   }
 
   /**

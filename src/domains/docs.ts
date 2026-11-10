@@ -432,15 +432,23 @@ export class Docs {
   /**
    * Upload a local file into My Space or a folder (node token); returns the new Drive file. With
    * replace (a file token) the content becomes a new version of that file instead (its node token
-   * is not returned then).
+   * is not returned then). `mount` attaches the file to something else than a folder, e.g. an
+   * image to the docx block showing it (point `docx_image`, the block id, extra
+   * `{drive_route_token: <doc token>}`).
    */
   async upload(
     data: Uint8Array,
     fileName: string,
-    o: { folder?: string; replace?: string } = {},
+    o: {
+      folder?: string;
+      replace?: string;
+      mount?: { point: string; node: string; extra?: Record<string, string> };
+    } = {},
   ): Promise<DriveFile> {
-    const folder = o.folder || (await this.rootFolder());
+    const point = o.mount?.point ?? 'explorer';
+    const folder = o.mount?.node ?? (o.folder || (await this.rootFolder()));
     const version = o.replace ? { file_token: o.replace } : {};
+    const extra = o.mount?.extra ? JSON.stringify(o.mount.extra) : undefined;
     const host = uploadHost(await this.web.origin());
     let done: Dict;
     if (data.length <= DIRECT_UPLOAD_MAX) {
@@ -454,9 +462,10 @@ export class Docs {
             name: fileName,
             size: data.length,
             checksum: String(adler32(data)),
-            mount_point: 'explorer',
+            mount_point: point,
             mount_node_token: folder,
             ...version,
+            ...(extra ? { 'ext[extra]': extra } : {}),
           },
         }),
         '上传',
@@ -465,11 +474,12 @@ export class Docs {
       const prep = (check(
         await this.web.json('POST', '/space/api/box/upload/prepare/', {
           json: {
-            mount_point: 'explorer',
+            mount_point: point,
             mount_node_token: folder,
             name: fileName,
             size: data.length,
             ...version,
+            ...(extra ? { extra } : {}),
           },
         }),
         '上传',
@@ -499,7 +509,7 @@ export class Docs {
           json: {
             upload_id: uploadId,
             num_blocks: blocks,
-            mount_point: 'explorer',
+            mount_point: point,
             push_open_history_record: 0,
           },
           headers: { 'biz-ua-type': 'Web', 'biz-scene': 'file_upload' },

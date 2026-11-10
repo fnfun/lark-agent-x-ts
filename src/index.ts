@@ -61,7 +61,7 @@ export {
   type DocComment,
   DocComments,
 } from './domains/doc-comments.js';
-export { DocEditor } from './domains/doc-edit.js';
+export { type AppendOptions, DocEditor, type ImageFile } from './domains/doc-edit.js';
 export {
   type Collaborator,
   DocPermissions,

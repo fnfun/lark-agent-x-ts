@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { LarkAuth } from '../auth.js';
 import { DocComments } from '../domains/doc-comments.js';
 import { DocEditor } from '../domains/doc-edit.js';
@@ -449,6 +449,10 @@ async function markdownInput(a: Record<string, unknown>): Promise<string> {
   return await new Response(Bun.stdin.stream()).text();
 }
 
+/** Relative image paths start next to the --file Markdown (else in the current directory). */
+const imageBase = (a: Record<string, unknown>) =>
+  a.file ? { baseDir: dirname(String(a.file)) } : {};
+
 const EDIT_INPUT = {
   positionals: [
     DOC_ARG,
@@ -463,13 +467,13 @@ const EDIT_INPUT = {
 
 const append: Command = {
   name: 'append',
-  help: '在 docx 末尾追加 Markdown(标题、段落、列表、待办、引用、代码、分割线、行内样式和链接)',
+  help: '在 docx 末尾追加 Markdown(标题、段落、列表、待办、引用、代码、分割线、表格、单独成行的图片、行内样式和链接)',
   access: 'doc.append',
   ...EDIT_INPUT,
   run: (a) =>
     guarded(async () => {
       const r = await ref(a);
-      const n = await new DocEditor(web()).append(r.token, await markdownInput(a));
+      const n = await new DocEditor(web()).append(r.token, await markdownInput(a), imageBase(a));
       out(`已追加 ${n} 块`);
       return 0;
     }),
@@ -483,7 +487,7 @@ const writeDoc: Command = {
   run: (a) =>
     guarded(async () => {
       const r = await ref(a);
-      const n = await new DocEditor(web()).overwrite(r.token, await markdownInput(a));
+      const n = await new DocEditor(web()).overwrite(r.token, await markdownInput(a), imageBase(a));
       out(`已写入 ${n} 块`);
       return 0;
     }),
