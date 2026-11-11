@@ -193,7 +193,7 @@
 - 思维笔记：读、建节点。
 - 妙搭：先按 v0.3 的可用性表确认认证方式。范围限于应用列表与详情、创建、HTML 发布与分享链接、云端生成会话、日志与指标、环境变量、协作者与角色、应用数据库与文件、自动化。git 凭据、OpenAPI 密钥这类面向开发者的部分不做。
 
-**进展（2026-11-11，读取完成）。** 幻灯片在 Lark 账号上做了创建和读取：`doc import <文件.pptx>` 生成演示文稿，`doc fetch` 按页列出文字（`slide/pages/client_vars`，和 docx 同一种块结构）。画板是文档里的块，没有做到。幻灯片、画板、思维笔记的编辑走协同通道（见 v0.6）；它们和 docx（`POST /space/api/docx/blocks/user_change`，按块的 OT 操作）的消息格式都要在网页里观察，等飞书测试账号重新登录。思维笔记在 Lark 账号上做了创建和读取：`doc import <文件.mm>` 从 FreeMind 文件生成（根主题会变成标题），`doc fetch` 读成 Markdown 大纲（`mindnote/v2/client_vars`）；不能导出（`mm`、`png` 都回 extension mismatch），编辑暂不支持（同步代码在未追到的代码块里）。妙搭在 Lark 国际版没有入口，跳过。
+**进展（2026-11-11，读取完成；思维笔记也能加主题）。** 幻灯片在 Lark 账号上做了创建和读取：`doc import <文件.pptx>` 生成演示文稿，`doc fetch` 按页列出文字（`slide/pages/client_vars`，和 docx 同一种块结构）。画板是文档里的块，没有做到。幻灯片、画板、思维笔记的编辑走协同通道（见 v0.6）；它们和 docx（`POST /space/api/docx/blocks/user_change`，按块的 OT 操作）的消息格式都要在网页里观察，等飞书测试账号重新登录。思维笔记，两个账号都实测完成：`doc import <文件.mm>` 从 FreeMind 文件生成（根主题被去掉，它的子主题成为最外层；标题取导入名），`doc fetch` 读成 Markdown 大纲（`mindnote/v2/client_vars`），`doc append` 把 Markdown 大纲加为主题，加在末尾或 `--under` 某个主题下面（库的 `MindnoteEditor`；`POST mindnote/v2/user_changes`，对主题树做 json0 操作，在飞书账号上观察网页得到，细节写在 `src/domains/mindnote.ts` 文件头）。不能导出（`mm`、`png` 都回 extension mismatch）。妙搭在 Lark 国际版没有入口，跳过。
 
 ## 风险
 

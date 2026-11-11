@@ -36,8 +36,7 @@
  *   `box/stream/download/all/<file token>/`.
  * - A mindnote's topics are `GET mindnote/v2/client_vars` (token, member_id) →
  *   `collab_client_vars.nodes`, each `{id, text: [{text}], children, finish, ...}` under the title;
- *   mindnotes are created by importing a FreeMind (.mm) file. Editing one goes through the
- *   collaborative channel and is not supported yet.
+ *   mindnotes are created by importing a FreeMind (.mm) file and get topics with mindnote.ts.
  * - A slides deck reads like a docx (`GET slide/pages/client_vars`, same block map): the deck
  *   block lists its `slides`, each slide's children are shapes whose `shape.text.content` is an
  *   attributed text; lines carrying the `lmkr` attribute start with a placeholder `*`. Decks are

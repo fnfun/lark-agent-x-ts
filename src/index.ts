@@ -88,6 +88,7 @@ export {
 } from './domains/docs.js';
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
 export { type BlockSpec, parseMarkdown } from './domains/markdown-docx.js';
+export { MindnoteEditor } from './domains/mindnote.js';
 export { columnName, Sheets, type SheetTab } from './domains/sheet.js';
 export {
   type NewTask,

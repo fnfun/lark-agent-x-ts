@@ -15,6 +15,7 @@ import {
   type FileData,
   IMPORTABLE,
 } from '../domains/docs.js';
+import { MindnoteEditor } from '../domains/mindnote.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
@@ -475,12 +476,31 @@ const EDIT_INPUT = {
 
 const append: Command = {
   name: 'append',
-  help: '在 docx 末尾追加 Markdown(标题、段落、列表、待办、引用、代码、分割线、表格、单独成行的图片、行内样式和链接)',
+  help: '在 docx 末尾追加 Markdown(标题、段落、列表、待办、引用、代码、分割线、表格、单独成行的图片、行内样式和链接);给思维笔记追加 Markdown 大纲作为主题',
   access: 'doc.append',
   ...EDIT_INPUT,
+  options: [
+    ...EDIT_INPUT.options,
+    TYPE_OPTION,
+    {
+      name: 'under',
+      kind: 'string',
+      help: '思维笔记:加在文字为这个的主题下面(默认加在最外层末尾)',
+    },
+  ],
   run: (a) =>
     guarded(async () => {
       const r = await ref(a);
+      if (r.type === 'mindnote') {
+        const n = await new MindnoteEditor(web()).append(
+          r.token,
+          await markdownInput(a),
+          a.under === undefined ? {} : { under: String(a.under) },
+        );
+        out(`已追加 ${n} 个主题`);
+        return 0;
+      }
+      if (a.under !== undefined) throw new Error('--under 只用于思维笔记');
       const n = await new DocEditor(web()).append(r.token, await markdownInput(a), imageBase(a));
       out(`已追加 ${n} 块`);
       return 0;
