@@ -147,7 +147,7 @@ const flags = (a: Record<string, unknown>): CellStyle => {
 
 const style: Command = {
   name: 'style',
-  help: '设置单元格或区域的格式(加粗、斜体、下划线、删除线、颜色、填充色、对齐、字号)',
+  help: '设置单元格或区域的格式(加粗、斜体、下划线、删除线、颜色、填充色、对齐、字号、数字格式)',
   access: 'sheet.style',
   positionals: [SHEET_ARG, { name: 'range', help: '单元格或区域,如 C3 或 A1:C10' }],
   options: [
@@ -160,6 +160,7 @@ const style: Command = {
     { name: 'background', kind: 'string', help: '填充色,#rrggbb' },
     { name: 'align', kind: 'string', choices: ['left', 'center', 'right'] },
     { name: 'size', kind: 'int', help: '字号(磅)' },
+    { name: 'format', kind: 'string', help: '数字格式,Excel 写法,如 0.00% 或 #,##0' },
   ],
   run: (a) =>
     guarded(async () => {
@@ -169,9 +170,26 @@ const style: Command = {
         ...(a.background ? { background: String(a.background) } : {}),
         ...(a.align ? { align: String(a.align) as NonNullable<CellStyle['align']> } : {}),
         ...(a.size !== undefined ? { fontSize: Number(a.size) } : {}),
+        ...(a.format !== undefined ? { format: String(a.format) } : {}),
       };
       await new Sheets(web()).style(await token(a), String(a.range), s, tab(a));
       out('已设置');
+      return 0;
+    }),
+};
+
+const merge: Command = {
+  name: 'merge',
+  help: '合并单元格(保留左上角的内容);--undo 取消区域内的合并',
+  access: 'sheet.merge',
+  positionals: [SHEET_ARG, { name: 'range', help: '区域,如 A3:B4' }],
+  options: [TAB_OPTION, { name: 'undo', kind: 'flag', help: '取消合并' }],
+  run: (a) =>
+    guarded(async () => {
+      const s = new Sheets(web());
+      if (a.undo) await s.unmerge(await token(a), String(a.range), tab(a));
+      else await s.merge(await token(a), String(a.range), tab(a));
+      out(a.undo ? '已取消合并' : '已合并');
       return 0;
     }),
 };
@@ -269,7 +287,7 @@ const deleteCols = dimension(
 
 export const sheetGroup: CommandGroup = {
   name: 'sheet',
-  help: '电子表格:列工作表、增删工作表、读单元格、写单元格(含公式)、追加行、查找替换、设置格式、插入删除行列',
+  help: '电子表格:列工作表、增删工作表、读单元格、写单元格(含公式)、追加行、查找替换、设置格式、合并单元格、插入删除行列',
   subcommands: [
     tabs,
     read,
@@ -277,6 +295,7 @@ export const sheetGroup: CommandGroup = {
     append,
     replace,
     style,
+    merge,
     tabAdd,
     tabRm,
     insertRows,

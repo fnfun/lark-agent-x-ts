@@ -303,6 +303,26 @@ describe('表格', () => {
     expect(sent).toHaveLength(1);
   });
 
+  test('合并：先给左上角发不带值的设置，再按区域发合并（target 用 row_count / col_count）；取消合并发空列表；单个单元格不发', async () => {
+    const { sheets, sent, actions } = fakeSheets();
+    await sheets.merge('T', 'B4:A3');
+    expect(actions(0)).toEqual([
+      [4, 's1', { 1: 2, 3: 0 }, { style: null, dataValidation: null }],
+      [
+        9,
+        's1',
+        { 1: 2, 2: 2, 3: 0, 4: 2 },
+        [{ target: { row: 2, col: 0, row_count: 2, col_count: 2 } }],
+      ],
+    ]);
+    await sheets.unmerge('T', 'A3:B4');
+    expect(actions(1)).toEqual([[9, 's1', { 1: 2, 2: 2, 3: 0, 4: 2 }, []]]);
+    await expect(sheets.merge('T', 'C9')).rejects.toThrow('至少要两个单元格');
+    await sheets.style('T', 'E1', { format: '0.00%' });
+    expect(actions(2)[0]?.[3]).toMatchObject({ style: { formatter: { formatCached: '0.00%' } } });
+    expect(sent).toHaveLength(3);
+  });
+
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {
     expect(parseCells(['b2=a=b', 'C3='])).toEqual({ B2: 'a=b', C3: '' });
     expect(() => parseCells(['B2'])).toThrow('单元格=值');

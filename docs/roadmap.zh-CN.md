@@ -170,7 +170,8 @@
 - 电子表格也能查找替换（`lark sheet replace`，2026-11-11 起两个账号实测）：从导出的 .xlsx 读单元格，只写回改到的格子，跳过公式单元格（导出里即使显示计算结果也能认出是公式）。
 - 电子表格也能新增、删除工作表（`lark sheet tab-add/tab-rm`，2026-11-11 起两个账号实测）；删掉后约半分钟内页面里的工作表列表仍会列出它。
 - 电子表格也能设置格式（`lark sheet style`：加粗、斜体、下划线、删除线、字体颜色和填充色、对齐、字号；2026-11-11 起两个账号实测，在浏览器和导出的 .xlsx 里都核对过）。
-- 电子表格未做：边框、数字格式、合并单元格。
+- 电子表格也能设置数字格式（`style --format`）和合并单元格（`lark sheet merge`，`--undo` 取消），2026-11-11 起两个账号实测。
+- 电子表格未做：边框（另一种动作，以紧凑格式重写单元格的整套样式）。
 - 文档，两个账号都实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档历史记录，两个账号都实测完成（2026-11-11）：`lark doc history/history-fetch/revert` 与库的 `DocHistory`，列出 docx 的历史记录、读某条记录时的内容、还原到某条记录。接口是在飞书账号的无头浏览器里观察网页的历史记录面板得到的，再用 HTTP 重放验证；细节写在 `src/domains/doc-history.ts` 文件头。

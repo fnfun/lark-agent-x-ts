@@ -23,7 +23,12 @@
  *   colCount}}, no position field: `fontInfo.fontWeight` 700 / 400, `fontInfo.fontStyle` "italic" /
  *   "normal", `fontInfo.fontSize` "14pt", `textDecoration: {flag: 1 underline | 2 strikethrough,
  *   active}` where active false turns it on and true off, `foreColor` / `backColor` "#rrggbb",
- *   `hAlign` 0 left, 1 center, 2 right.
+ *   `hAlign` 0 left, 1 center, 2 right, `formatter.formatCached` a number format ("0%",
+ *   "¥#,##0.00", Excel's syntax).
+ * - Merging: action 9 over the range with JSON `[{target: {row, col, row_count, col_count}}]`, after
+ *   a cell set on its top-left cell with `{style: null, dataValidation: null}` (no value, which
+ *   keeps the cell's value); unmerging sends `[]` over the range. Borders use another action (74)
+ *   that rewrites whole cell styles in a compact columnar form, which this module does not send.
  * - Reading exports the sheet as .xlsx (the Docs export API) and parses it (xlsx.ts); the cell
  *   blocks embedded in the page use an undocumented columnar encoding.
  */
@@ -140,6 +145,7 @@ const ACTION = {
   deleteRows: 6,
   insertColumns: 7,
   deleteColumns: 8,
+  merge: 9,
   removeTab: 20,
   addTab: 22,
   style: 61,
@@ -158,6 +164,8 @@ export interface CellStyle {
   align?: 'left' | 'center' | 'right';
   /** Font size in points. */
   fontSize?: number;
+  /** Number format in Excel's syntax, e.g. "0.00%", "#,##0", "yyyy/MM/dd". */
+  format?: string;
 }
 
 const ALIGN = { left: 0, center: 1, right: 2 } as const;
@@ -183,6 +191,7 @@ export function styleParts(style: CellStyle): Record<string, unknown>[] {
   if (style.color !== undefined) parts.push({ foreColor: color(style.color) });
   if (style.background !== undefined) parts.push({ backColor: color(style.background) });
   if (style.align !== undefined) parts.push({ hAlign: ALIGN[style.align] });
+  if (style.format !== undefined) parts.push({ formatter: { formatCached: style.format } });
   return parts;
 }
 
@@ -199,6 +208,19 @@ function action(
     ...(where ? position(where) : []),
     ...(json === undefined ? [] : lenField(5, utf8(JSON.stringify(json)))),
   ]);
+}
+
+/** "C3" or "A1:C10" (either corner first) → top-left row and column (from 0) and size. */
+function area(range: string) {
+  const [from, to = from] = range.split(':') as [string, string?];
+  const [r0, c0] = cellIndex(from);
+  const [r1, c1] = cellIndex(to);
+  return {
+    row: Math.min(r0, r1),
+    col: Math.min(c0, c1),
+    rows: Math.abs(r1 - r0) + 1,
+    cols: Math.abs(c1 - c0) + 1,
+  };
 }
 
 const TAB_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -397,24 +419,46 @@ export class Sheets {
   ): Promise<number> {
     const parts = styleParts(style);
     if (!parts.length) throw new Error('没有要设置的样式');
-    const [from, to = from] = range.split(':') as [string, string?];
-    const [r0, c0] = cellIndex(from);
-    const [r1, c1] = cellIndex(to);
-    const target = {
-      type: 0,
-      row: Math.min(r0, r1),
-      col: Math.min(c0, c1),
-      rowCount: Math.abs(r1 - r0) + 1,
-      colCount: Math.abs(c1 - c0) + 1,
-    };
-    const state = await this.state(token);
-    const tab = o.sheet ? state.tabs.find((t) => t.name === o.sheet) : state.tabs[0];
-    if (!tab) throw new Error(`没有这个工作表: ${o.sheet ?? ''}`);
+    const r = area(range);
+    const target = { type: 0, row: r.row, col: r.col, rowCount: r.rows, colCount: r.cols };
+    const { state, tab } = await this.tab(token, o.sheet);
     return this.send(
       token,
       state.revision,
       parts.flatMap((s) => action(ACTION.style, tab.id, null, { style: s, target })),
     );
+  }
+
+  /** Merge a range ("A3:B4") into one cell, which keeps the top-left cell's value. */
+  async merge(token: string, range: string, o: { sheet?: string } = {}): Promise<number> {
+    const r = area(range);
+    if (r.rows * r.cols < 2) throw new Error(`合并至少要两个单元格: ${range}`);
+    const { state, tab } = await this.tab(token, o.sheet);
+    const target = { row: r.row, col: r.col, row_count: r.rows, col_count: r.cols };
+    return this.send(token, state.revision, [
+      ...action(
+        ACTION.setCell,
+        tab.id,
+        { row: r.row, col: r.col },
+        { style: null, dataValidation: null },
+      ),
+      ...action(ACTION.merge, tab.id, r, [{ target }]),
+    ]);
+  }
+
+  /** Split the merged cells within a range back into single cells. */
+  async unmerge(token: string, range: string, o: { sheet?: string } = {}): Promise<number> {
+    const r = area(range);
+    const { state, tab } = await this.tab(token, o.sheet);
+    return this.send(token, state.revision, action(ACTION.merge, tab.id, r, []));
+  }
+
+  /** The sheet's state and a tab by name (the first by default). */
+  private async tab(token: string, name?: string) {
+    const state = await this.state(token);
+    const tab = name ? state.tabs.find((t) => t.name === name) : state.tabs[0];
+    if (!tab) throw new Error(`没有这个工作表: ${name ?? ''}`);
+    return { state, tab };
   }
 
   /** Add a tab named `name` at position `at` (from 1; last by default); returns its id. */
