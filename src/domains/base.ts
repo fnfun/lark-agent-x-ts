@@ -367,24 +367,34 @@ export class Base {
   /**
    * A table's records in a view's order (the table's current view by default), up to limit.
    * `where` keeps records whose readable value equals the given text (for multi select: has that
-   * option); it filters the records read, locally.
+   * option), `search` those with the text in any field; both filter locally, over the whole
+   * table, before the limit applies.
    */
   async records(
     baseToken: string,
-    o: { table?: string; view?: string; limit?: number; where?: Record<string, string> } = {},
+    o: {
+      table?: string;
+      view?: string;
+      limit?: number;
+      where?: Record<string, string>;
+      search?: string;
+    } = {},
   ): Promise<BaseRecord[]> {
     const limit = o.limit ?? 500;
+    const where = Object.entries(o.where ?? {});
+    const filtering = where.length > 0 || Boolean(o.search);
     const t = await this.load(baseToken, o.table, Math.min(limit, 200), o.view);
+    const wanted = filtering ? t.recordCount : Math.min(limit, t.recordCount);
     const ids = [...t.firstIds];
     const cells = { ...t.records };
-    while (ids.length < Math.min(limit, t.recordCount)) {
+    while (ids.length < wanted) {
       const page = check(
         await this.web.json('GET', `/space/api/v1/bitable/${baseToken}/records`, {
           query: {
             tableID: t.id,
             viewID: t.viewId,
             offset: ids.length,
-            limit: Math.min(200, limit - ids.length),
+            limit: Math.min(200, wanted - ids.length),
           },
         }),
         '读取记录',
@@ -402,7 +412,7 @@ export class Base {
       seen.add(f.name);
       return key;
     });
-    const records = ids.slice(0, limit).map((id) => ({
+    const records = ids.slice(0, filtering ? ids.length : limit).map((id) => ({
       id,
       fields: Object.fromEntries(
         t.fields.map((f, i) => [
@@ -411,19 +421,28 @@ export class Base {
         ]),
       ),
     }));
-    const where = Object.entries(o.where ?? {});
     for (const [name] of where) if (!keys.includes(name)) throw new Error(`没有这个字段: ${name}`);
-    return records.filter((r) =>
-      where.every(([name, want]) => {
-        const v = r.fields[name];
-        const field = t.fields[keys.indexOf(name)];
-        return field?.type === FIELD_TYPES.multiselect
-          ? String(v ?? '')
-              .split(', ')
-              .includes(want)
-          : String(v ?? '') === want;
-      }),
-    );
+    const search = o.search?.toLowerCase();
+    return records
+      .filter(
+        (r) =>
+          where.every(([name, want]) => {
+            const v = r.fields[name];
+            const field = t.fields[keys.indexOf(name)];
+            return field?.type === FIELD_TYPES.multiselect
+              ? String(v ?? '')
+                  .split(', ')
+                  .includes(want)
+              : String(v ?? '') === want;
+          }) &&
+          (!search ||
+            Object.values(r.fields).some((v) =>
+              String(v ?? '')
+                .toLowerCase()
+                .includes(search),
+            )),
+      )
+      .slice(0, limit);
   }
 
   /** Add a record with these cell values (by field name or id); returns its id. */

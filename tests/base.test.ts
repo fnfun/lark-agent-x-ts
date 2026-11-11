@@ -251,4 +251,35 @@ describe('多维表格', () => {
     await expect(base.deleteField('B1', '不存在')).rejects.toThrow('没有这个字段');
     expect(commits).toHaveLength(1);
   });
+
+  test('搜索和筛选在整张表里找、找完再按 limit 截断；搜索不分大小写、任一字段含有即可', async () => {
+    const queries: Dict[] = [];
+    const web = {
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.endsWith('/clientvars'))
+          return { code: 0, data: { table: zip({ ...TABLE, recordCount: 3 }) } };
+        queries.push(o.query as Dict);
+        return {
+          code: 0,
+          data: {
+            records: zip({
+              groupList: [{ recordIDList: ['rec2', 'rec3'] }],
+              recordMap: {
+                rec2: { fldText: { value: [{ type: 'text', text: '月报' }] } },
+                rec3: { fldText: { value: [{ type: 'text', text: 'Q3 Review' }] } },
+              },
+            }),
+          },
+        };
+      },
+    } as unknown as WebSession;
+    const base = new Base(web);
+    expect((await base.records('B1', { search: 'review', limit: 1 })).map((r) => r.id)).toEqual([
+      'rec3',
+    ]);
+    expect(queries[0]).toMatchObject({ offset: 1, limit: 2 });
+    expect((await base.records('B1', { search: '报', limit: 1 })).map((r) => r.id)).toEqual([
+      'rec1',
+    ]);
+  });
 });

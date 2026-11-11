@@ -113,7 +113,12 @@ const records: Command = {
     {
       name: 'where',
       kind: 'string',
-      help: '只要 字段=值 的记录,多个条件用 ; 分隔(在读到的记录里本地筛选;多选字段为含有该选项)',
+      help: '只要 字段=值 的记录,多个条件用 ; 分隔(读完整张表后本地筛选;多选字段为含有该选项)',
+    },
+    {
+      name: 'search',
+      kind: 'string',
+      help: '只要任一字段含有这段文字的记录(不分大小写,本地查找)',
     },
     { name: 'limit', kind: 'int', default: 100 },
     JSON_OPTION,
@@ -123,6 +128,7 @@ const records: Command = {
       const t = await target(a);
       const list = await new Base(web()).records(t.token, {
         limit: Number(a.limit),
+        ...(a.search ? { search: String(a.search) } : {}),
         ...(t.table ? { table: t.table } : {}),
         ...(a.view ? { view: String(a.view) } : {}),
         ...(a.where
