@@ -104,6 +104,7 @@ export {
   Tasks,
   type TaskUpdate,
 } from './domains/task.js';
+export { WhiteboardEditor } from './domains/whiteboard.js';
 export { Wiki, type WikiNode, type WikiSpace, wikiToken } from './domains/wiki.js';
 export { type CellValue, cellIndex, readXlsx, type XlsxSheet } from './domains/xlsx.js';
 export { HttpError, NetworkError } from './http.js';

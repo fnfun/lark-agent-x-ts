@@ -40,10 +40,8 @@
  * - A whiteboard is a docx block (`type: "whiteboard"`, `token`) whose nodes are `GET
  *   whiteboard/block` (blockToken, reqVersion 1, clientVersion 14) → `data.nodes`, each `{id,
  *   info: {baseV2: {x, y, width, height}, textV2: {text}, compositeShape: {shapeType}, ...}}`.
- *   The web app edits them over its WebSocket (`/api/whiteboard/user_change` with JSON node
- *   operations); the HTTP route of that path (with member_id) answers "payload is nil" to the same
- *   JSON, so whiteboards are read only here. The server renders a preview of a board (JPEG, served
- *   as image/png) at `GET file/f/cdp-whiteboard-<token>~noop/`.
+ *   They are edited over the docs WebSocket (whiteboard.ts). The server renders a preview of a
+ *   board (JPEG, served as image/png) at `GET file/f/cdp-whiteboard-<token>~noop/`.
  * - A slides deck reads like a docx (`GET slide/pages/client_vars`, same block map): the deck
  *   block lists its `slides`, each slide's children are shapes whose `shape.text.content` is an
  *   attributed text; lines carrying the `lmkr` attribute start with a placeholder `*`. Decks are

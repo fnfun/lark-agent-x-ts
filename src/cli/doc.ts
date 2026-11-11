@@ -17,6 +17,7 @@ import {
 } from '../domains/docs.js';
 import { MindnoteEditor } from '../domains/mindnote.js';
 import { SlidesEditor } from '../domains/slides.js';
+import { WhiteboardEditor } from '../domains/whiteboard.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
@@ -597,6 +598,82 @@ const whiteboardImage: Command = {
     }),
 };
 
+const WB_TOKEN = { name: 'token', help: '画板 token' };
+const BOX_OPTIONS: Option[] = [
+  { name: 'x', kind: 'int', help: '左上角 x' },
+  { name: 'y', kind: 'int', help: '左上角 y' },
+  { name: 'width', kind: 'int' },
+  { name: 'height', kind: 'int' },
+];
+const boxOf = (a: Record<string, unknown>) =>
+  Object.fromEntries(
+    (['x', 'y', 'width', 'height'] as const)
+      .filter((k) => a[k] !== undefined)
+      .map((k) => [k, Number(a[k])]),
+  );
+
+const whiteboardAdd: Command = {
+  name: 'whiteboard-add',
+  help: '在画板上加一个带文字的矩形(默认 120×80,放在 0,0)',
+  access: 'doc.whiteboard-add',
+  positionals: [WB_TOKEN, { name: 'text', nargs: '+' }],
+  options: BOX_OPTIONS,
+  run: (a) =>
+    guarded(async () => {
+      const id = await new WhiteboardEditor(web()).addShape(
+        String(a.token),
+        (a.text as string[]).join(' '),
+        boxOf(a),
+      );
+      out(`已添加 node_id=${id}`);
+      return 0;
+    }),
+};
+
+const whiteboardText: Command = {
+  name: 'whiteboard-text',
+  help: '改画板上一个节点的文字',
+  access: 'doc.whiteboard-text',
+  positionals: [WB_TOKEN, { name: 'node_id' }, { name: 'text', nargs: '+' }],
+  run: (a) =>
+    guarded(async () => {
+      await new WhiteboardEditor(web()).setText(
+        String(a.token),
+        String(a.node_id),
+        (a.text as string[]).join(' '),
+      );
+      out('已修改');
+      return 0;
+    }),
+};
+
+const whiteboardMove: Command = {
+  name: 'whiteboard-move',
+  help: '移动画板上的节点或改大小(没给的保持不变)',
+  access: 'doc.whiteboard-move',
+  positionals: [WB_TOKEN, { name: 'node_id' }],
+  options: BOX_OPTIONS,
+  run: (a) =>
+    guarded(async () => {
+      await new WhiteboardEditor(web()).move(String(a.token), String(a.node_id), boxOf(a));
+      out('已修改');
+      return 0;
+    }),
+};
+
+const whiteboardRm: Command = {
+  name: 'whiteboard-rm',
+  help: '删除画板上的节点',
+  access: 'doc.whiteboard-rm',
+  positionals: [WB_TOKEN, { name: 'node_ids', nargs: '+' }],
+  run: (a) =>
+    guarded(async () => {
+      const n = await new WhiteboardEditor(web()).remove(String(a.token), a.node_ids as string[]);
+      out(`已删除 ${n} 个节点`);
+      return 0;
+    }),
+};
+
 const writeDoc: Command = {
   name: 'write',
   help: '用 Markdown 替换 docx 的正文(标题保留)',
@@ -736,6 +813,10 @@ export const doc: CommandGroup = {
     fetch,
     whiteboard,
     whiteboardImage,
+    whiteboardAdd,
+    whiteboardText,
+    whiteboardMove,
+    whiteboardRm,
     append,
     attach,
     writeDoc,
