@@ -19,7 +19,7 @@ import { MindnoteEditor } from '../domains/mindnote.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
-import { type Command, type CommandGroup, err, out, s } from './common.js';
+import { type Command, type CommandGroup, err, out, s, write } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
 
 const web = () => new WebSession(new LarkAuth());
@@ -252,7 +252,7 @@ const cat: Command = {
   positionals: [{ name: 'file', help: '文件链接或 file_token' }],
   run: (a) =>
     guarded(async () => {
-      process.stdout.write((await docs().download(docRef(String(a.file), 'file').token)).data);
+      write((await docs().download(docRef(String(a.file), 'file').token)).data);
       return 0;
     }),
 };
@@ -574,7 +574,7 @@ const fetch: Command = {
           ? await docs().fetchSlides(r.token)
           : await docs().fetch(r.token);
     if (a.json) printJson(d);
-    else process.stdout.write(d.markdown);
+    else write(d.markdown);
     return 0;
   },
 };
@@ -625,9 +625,7 @@ const historyFetch: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      process.stdout.write(
-        await new DocHistory(web()).markdown(await docxRef(a), Number(a.version)),
-      );
+      write(await new DocHistory(web()).markdown(await docxRef(a), Number(a.version)));
       return 0;
     }),
 };

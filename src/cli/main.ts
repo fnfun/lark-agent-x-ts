@@ -4,7 +4,7 @@ import { AuthExpired, LarkAuth } from '../auth.js';
 import { authorize, PermissionDenied } from '../permissions.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
-import type { Command, CommandGroup } from './common.js';
+import { type Command, type CommandGroup, write } from './common.js';
 import { errorText } from './format.js';
 import { COMMAND_GROUPS } from './groups.js';
 import { versionLine } from './version.js';
@@ -29,11 +29,11 @@ function topHelp(): string {
 async function main(argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   if (name === '-h' || name === '--help') {
-    process.stdout.write(`${topHelp()}\n`);
+    write(`${topHelp()}\n`);
     return 0;
   }
   if (name === '--version') {
-    process.stdout.write(`${versionLine()}\n`);
+    write(`${versionLine()}\n`);
     return 0;
   }
   const group = COMMAND_GROUPS.find((g) => g.name === name);
@@ -60,7 +60,7 @@ function groupHelp(g: CommandGroup): string {
 async function runGroup(g: CommandGroup, argv: string[]): Promise<number> {
   const [name, ...rest] = argv;
   if (name === undefined || name === '-h' || name === '--help') {
-    process.stdout.write(`${groupHelp(g)}\n`);
+    write(`${groupHelp(g)}\n`);
     return name === undefined ? 2 : 0;
   }
   const cmd = g.subcommands.find((c) => c.name === name);
@@ -81,7 +81,7 @@ async function runCommand(prog: string, cmd: Command, rest: string[]): Promise<n
     return await cmd.run(args);
   } catch (e) {
     if (e instanceof HelpRequested) {
-      process.stdout.write(`${e.message}\n`);
+      write(`${e.message}\n`);
       return 0;
     }
     if (e instanceof UsageError) {

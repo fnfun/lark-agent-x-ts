@@ -90,3 +90,13 @@ describe('参数解析（对齐 argparse）', () => {
     expect(() => parse('lark', send, ['-h'])).toThrow(HelpRequested);
   });
 });
+
+describe('命令行输出', () => {
+  test('输出接到 shell 管道时紧接着 process.exit 也不丢内容（Bun 的 process.stdout 会在 64KB 处截断）', () => {
+    const common = new URL('../src/cli/common.ts', import.meta.url).pathname;
+    const script = `import { write } from ${JSON.stringify(common)}; write('y'.repeat(400000)); write('尾'); process.exit(0);`;
+    const child = Bun.spawnSync(['sh', '-c', 'bun -e "$0" | wc -c', script]);
+    // 400000 ASCII bytes plus the three UTF-8 bytes of "尾".
+    expect(Number(child.stdout.toString().trim())).toBe(400003);
+  });
+});

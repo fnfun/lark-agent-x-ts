@@ -1,12 +1,13 @@
 import { HttpError } from '../http.js';
 import { PyFloat, pyBytesRepr, pyDumps } from '../pyjson.js';
+import { write } from './common.js';
 
 /**
  * The original's `_print_json`: indent 2, Chinese not escaped, unserializable values output as
  * Python `str()` (bytes as b'...').
  */
 export function printJson(obj: unknown): void {
-  process.stdout.write(
+  write(
     `${pyDumps(obj, {
       indent: 2,
       fallback: (o) =>
