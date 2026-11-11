@@ -75,6 +75,7 @@ function fake(
       if (path.endsWith('/clientvars'))
         return { code: 0, data: { table: zip(snapshots[Math.min(n++, snapshots.length - 1)]) } };
       if (path.endsWith('/client_vars/')) return { code: 0, data: { gzipSchema: zip(schema) } };
+      if (path.endsWith('/user/')) return { code: 0, data: { suid: 'u1' } };
       const data = (o.json as { data: Dict }).data;
       commits.push({ kind: (o.json as Dict).type, data, ops: unzip(data.operations) });
       return { code: 0, data: reply };
@@ -332,5 +333,38 @@ describe('多维表格', () => {
     await expect(base.attach('B1', 'rec2', '标题', [file])).rejects.toThrow('不是附件字段');
     await expect(base.attach('B1', 'recX', '附件', [file])).rejects.toThrow('找不到记录');
     expect(commits).toHaveLength(1);
+  });
+
+  test('视图：新建的表格视图排在最后、按表的字段顺序显示全部字段、owner 是自己；按名字删视图带上它的位置；只剩一个时不删', async () => {
+    const { base, commits } = fake();
+    const id = await base.addView('B1', '周报视图');
+    expect(firstAction(commits[0]?.ops[0])).toMatchObject({
+      action: 'data.addViewV2',
+      viewId: id,
+      data: {
+        type: 1,
+        index: 1,
+        total: 1,
+        name: '周报视图',
+        owner: 'u1',
+        property: { fields: TABLE.viewMap.vew1.property.fields },
+      },
+    });
+    await expect(base.deleteView('B1', 'vew1')).rejects.toThrow('至少要留一个视图');
+    const two = fake([
+      {
+        ...TABLE,
+        views: ['vew1', 'vew2'],
+        viewMap: { ...TABLE.viewMap, vew2: { name: '归档', property: { fields: [] } } },
+      },
+    ]);
+    await two.base.deleteView('B1', '归档');
+    expect(firstAction(two.commits[0]?.ops[0])).toMatchObject({
+      action: 'data.deleteView',
+      viewId: 'vew2',
+      data: { index: 1, total: 2 },
+    });
+    await expect(two.base.deleteView('B1', '没有')).rejects.toThrow('没有这个视图');
+    expect([commits.length, two.commits.length]).toEqual([1, 1]);
   });
 });

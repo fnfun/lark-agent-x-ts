@@ -270,6 +270,40 @@ const attach: Command = {
     }),
 };
 
+const viewAdd: Command = {
+  name: 'view-add',
+  help: '新建表格视图(显示全部字段)',
+  access: 'base.view-add',
+  positionals: [BASE_ARG, { name: 'name', nargs: '+' }],
+  options: [TABLE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      const id = await new Base(web()).addView(
+        t.token,
+        (a.name as string[]).join(' '),
+        t.table ? { table: t.table } : {},
+      );
+      out(`已新建 view_id=${id}`);
+      return 0;
+    }),
+};
+
+const viewRm: Command = {
+  name: 'view-rm',
+  help: '删除视图(按 view_id 或名字;至少留一个)',
+  access: 'base.view-rm',
+  positionals: [BASE_ARG, { name: 'view' }],
+  options: [TABLE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      await new Base(web()).deleteView(t.token, String(a.view), t.table ? { table: t.table } : {});
+      out('已删除');
+      return 0;
+    }),
+};
+
 const fieldRm: Command = {
   name: 'field-rm',
   help: '删除字段(按 field_id 或字段名;主字段不能删)',
@@ -323,7 +357,7 @@ const tableRm: Command = {
 
 export const baseGroup: CommandGroup = {
   name: 'base',
-  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、筛选、搜索),增删改记录,上传附件,增删字段和数据表',
+  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、筛选、搜索),增删改记录,上传附件,增删字段、视图和数据表',
   subcommands: [
     tables,
     fields,
@@ -335,6 +369,8 @@ export const baseGroup: CommandGroup = {
     rm,
     fieldAdd,
     fieldRm,
+    viewAdd,
+    viewRm,
     tableAdd,
     tableRm,
   ],

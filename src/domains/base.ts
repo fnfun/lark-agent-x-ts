@@ -30,8 +30,9 @@
  *   table's snapshot: a primary text field and a grid view) and DeleteTable (`base.deleteTable`,
  *   which moves it to the Base's trash). Both name the table's position among `base.tables` and
  *   among the sidebar's `base.blocks` (tables, dashboards, workflows). Removing a field is
- *   DeleteFields (`data.deleteField` with its position in the view). Read off the web app's traffic
- *   on 2026-11-11.
+ *   DeleteFields (`data.deleteField` with its position in the view); views are added and removed
+ *   with AddViewV2 (`data.addViewV2`: type 1 for a grid, its fields, the owner's user id) and
+ *   DeleteView (`data.deleteView`). Read off the web app's traffic on 2026-11-11.
  */
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { WebSession } from '../web.js';
@@ -631,6 +632,76 @@ export class Base {
       },
     ]);
     return fieldId;
+  }
+
+  /** Add a grid view at the end, showing the fields in the table's order; returns its id. */
+  async addView(baseToken: string, name: string, o: { table?: string } = {}): Promise<string> {
+    const t = await this.load(baseToken, o.table, 1);
+    const viewId = newId('vew', 7);
+    const me = check(await this.web.json('GET', '/space/api/user/'), '读取用户信息');
+    await this.commit(t, [
+      {
+        command: 'AddViewV2',
+        type: 2,
+        syncFlag: 0,
+        actions: [
+          {
+            action: 'data.addViewV2',
+            type: 2,
+            tableId: t.id,
+            viewId,
+            data: {
+              type: 1,
+              index: t.views.length,
+              name,
+              isPrivate: false,
+              property: {
+                rowHeightLevel: 1,
+                fields: t.fields.map((f) => f.id),
+                colInfos: {},
+                filterInfo: null,
+                sortInfo: [],
+                frozenColCount: 1,
+                group: [],
+                autoSort: false,
+                cardViewSetting: null,
+                colorInfo: null,
+              },
+              owner: String((me.data as Dict | undefined)?.suid ?? ''),
+              bizType: 0,
+              total: t.views.length,
+            },
+          },
+        ],
+      },
+    ]);
+    return viewId;
+  }
+
+  /** Remove a view (by id or name); a table keeps at least one. */
+  async deleteView(baseToken: string, view: string, o: { table?: string } = {}) {
+    const t = await this.load(baseToken, o.table, 1);
+    const index = t.views.findIndex((v) => v.id === view || v.name === view);
+    const target = t.views[index];
+    if (!target) throw new Error(`没有这个视图: ${view}`);
+    if (t.views.length === 1) throw new Error('数据表至少要留一个视图');
+    await this.commit(t, [
+      {
+        command: 'DeleteView',
+        type: 2,
+        syncFlag: 0,
+        actions: [
+          {
+            action: 'data.deleteView',
+            type: 2,
+            tableId: t.id,
+            viewId: target.id,
+            name: target.name,
+            data: { index, total: t.views.length, bizType: 0 },
+          },
+        ],
+      },
+    ]);
   }
 
   /** Remove a field (by id or name); the primary field cannot be removed. */
