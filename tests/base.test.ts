@@ -282,4 +282,55 @@ describe('多维表格', () => {
       'rec1',
     ]);
   });
+
+  test('附件：挂在多维表格上上传，单元格里 id 和 attachmentToken 都是文件 token，加在已有附件后面；记录不在第一页也能找到；非附件字段报错', async () => {
+    const table = {
+      ...TABLE,
+      recordCount: 2,
+      fieldMap: { ...TABLE.fieldMap, fldFile: { name: '附件', type: 17 } },
+    };
+    const uploads: WebRequest[] = [];
+    const commits: Dict[][] = [];
+    const web = {
+      origin: async () => 'https://tenant.feishu.cn',
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.endsWith('/clientvars')) return { code: 0, data: { table: zip(table) } };
+        if (path.endsWith('/records'))
+          return {
+            code: 0,
+            data: {
+              records: zip({
+                groupList: [{ recordIDList: ['rec2'] }],
+                recordMap: { rec2: { fldFile: { value: [{ id: 'F0', name: '旧.pdf' }] } } },
+              }),
+            },
+          };
+        if (path.includes('upload')) {
+          uploads.push(o);
+          return { code: 0, data: { file_token: 'F1' } };
+        }
+        commits.push(unzip((o.json as { data: Dict }).data.operations));
+        return { code: 0, data: { type: 'ACCEPT_COMMIT', rev: 6 } };
+      },
+    } as unknown as WebSession;
+    const base = new Base(web);
+    const file = { data: new TextEncoder().encode('hi'), name: '新.txt' };
+    expect(await base.attach('B1', 'rec2', '附件', [file])).toEqual(['F1']);
+    expect(uploads[0]?.query).toMatchObject({
+      mount_point: 'bitable_file',
+      mount_node_token: 'B1',
+    });
+    const action = firstAction(commits[0]?.[0]);
+    expect(action).toMatchObject({ action: 'data.setRecord', recordId: 'rec2' });
+    expect((action.data as Dict).fldFile).toMatchObject({
+      type: 17,
+      value: [
+        { id: 'F0', name: '旧.pdf' },
+        { id: 'F1', attachmentToken: 'F1', name: '新.txt', size: 2, mimeType: 'text/plain' },
+      ],
+    });
+    await expect(base.attach('B1', 'rec2', '标题', [file])).rejects.toThrow('不是附件字段');
+    await expect(base.attach('B1', 'recX', '附件', [file])).rejects.toThrow('找不到记录');
+    expect(commits).toHaveLength(1);
+  });
 });

@@ -138,6 +138,7 @@ export const PERMISSIONS = {
   'wiki.rename': 'modify',
   'base.add': 'modify',
   'base.set': 'modify',
+  'base.attach': 'modify',
   'base.field-add': 'modify',
   'base.table-add': 'modify',
   'sheet.write': 'modify',

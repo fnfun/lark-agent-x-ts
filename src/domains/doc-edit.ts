@@ -189,7 +189,8 @@ const MIME_TYPES: Record<string, string> = {
   mp4: 'video/mp4',
   mov: 'video/quicktime',
 };
-const mimeOf = (name: string) =>
+/** The MIME type for a file name, by its extension. */
+export const mimeOf = (name: string) =>
   MIME_TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
 
 interface Prepared {

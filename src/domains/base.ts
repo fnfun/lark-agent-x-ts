@@ -22,6 +22,9 @@
  *   option id, multi select option ids, date ms, checkbox a boolean, URL
  *   `[{type: "url", text, link}]`. New select options are added in the same commit.
  * - A new record goes at the table's `rankInfo.nextRank`; the server moves nextRank on.
+ * - An attachment cell holds `[{id, attachmentToken, name, size, mimeType, timeStamp}]`, `id` being
+ *   the file token too (the server rejects a cell without it); files are uploaded with mount
+ *   point `bitable_file` on the Base token.
  * - Tables are added and removed with a `BITABLE_BASE` message (token: the Base token, no
  *   route_key, localRev: the schema's `base.rev`): AddTableV2 (`base.addTableV2` with the new
  *   table's snapshot: a primary text field and a grid view) and DeleteTable (`base.deleteTable`,
@@ -32,7 +35,8 @@
  */
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { WebSession } from '../web.js';
-import { check } from './docs.js';
+import { mimeOf } from './doc-edit.js';
+import { check, Docs } from './docs.js';
 
 type Dict = Record<string, unknown>;
 
@@ -47,9 +51,12 @@ export const FIELD_TYPES = {
   url: 15,
 } as const;
 export type FieldType = keyof typeof FIELD_TYPES;
-const TYPE_NAMES = Object.fromEntries(
-  Object.entries(FIELD_TYPES).map(([k, v]) => [v, k]),
-) as Record<number, FieldType>;
+/** Attachment fields: read as file names, written with Base.attach. */
+const ATTACHMENT = 17;
+const TYPE_NAMES = {
+  ...Object.fromEntries(Object.entries(FIELD_TYPES).map(([k, v]) => [v, k])),
+  [ATTACHMENT]: 'attachment',
+} as Record<number, string>;
 
 /** Properties a new field of each type starts with, as the web app sends them. */
 const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
@@ -481,6 +488,78 @@ export class Base {
   ): Promise<void> {
     const t = await this.load(baseToken, o.table, 1);
     await this.commit(t, this.setOps(t, recordId, values));
+  }
+
+  /**
+   * Upload files into an attachment field of a record, after the attachments it already has
+   * (the field by id or name); returns the files' tokens.
+   */
+  async attach(
+    baseToken: string,
+    recordId: string,
+    field: string,
+    files: { data: Uint8Array; name: string; mimeType?: string }[],
+    o: { table?: string } = {},
+  ): Promise<string[]> {
+    const t = await this.load(baseToken, o.table, 200);
+    const f = t.fields.find((x) => x.id === field || x.name === field);
+    if (!f) throw new Error(`没有这个字段: ${field}`);
+    if (f.type !== ATTACHMENT) throw new Error(`不是附件字段: ${f.name}`);
+    const record = await this.rawRecord(t, recordId);
+    const existing = ((record[f.id] as Dict | undefined)?.value ?? []) as Dict[];
+    const docs = new Docs(this.web);
+    const added: Dict[] = [];
+    for (const file of files) {
+      const { objToken } = await docs.upload(file.data, file.name, {
+        mount: { point: 'bitable_file', node: baseToken },
+      });
+      // The server checks `id`; the web app's cells carry the file token there too.
+      added.push({
+        id: objToken,
+        attachmentToken: objToken,
+        name: file.name,
+        size: file.data.length,
+        mimeType: file.mimeType ?? mimeOf(file.name),
+        timeStamp: Date.now(),
+      });
+    }
+    await this.commit(t, [
+      {
+        command: 'SetRecord',
+        type: 2,
+        syncFlag: 0,
+        actions: [
+          {
+            action: 'data.setRecord',
+            type: 2,
+            tableId: t.id,
+            viewId: t.viewId,
+            recordId,
+            viewType: 1,
+            data: { [f.id]: { type: ATTACHMENT, value: [...existing, ...added] } },
+          },
+        ],
+      },
+    ]);
+    return added.map((a) => String(a.id));
+  }
+
+  /** A record's stored cells, from the first records loaded or the pages after them. */
+  private async rawRecord(t: TableState, recordId: string): Promise<Dict> {
+    if (t.records[recordId]) return t.records[recordId] as Dict;
+    for (let offset = t.firstIds.length; offset < t.recordCount; offset += 200) {
+      const page = check(
+        await this.web.json('GET', `/space/api/v1/bitable/${t.baseToken}/records`, {
+          query: { tableID: t.id, viewID: t.viewId, offset, limit: 200 },
+        }),
+        '读取记录',
+      );
+      const data = unzip((page.data as Dict).records) as Dict;
+      const found = ((data.recordMap ?? {}) as Record<string, Dict>)[recordId];
+      if (found) return found;
+      if (!groupIds(data.groupList).length) break;
+    }
+    throw new Error(`找不到记录 ${recordId}`);
   }
 
   /** Delete records. */

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { basename } from 'node:path';
 import { LarkAuth } from '../auth.js';
 import { Base, type CellInput, FIELD_TYPES, type FieldType } from '../domains/base.js';
 import { Wiki } from '../domains/wiki.js';
@@ -238,6 +240,36 @@ const fieldAdd: Command = {
     }),
 };
 
+const attach: Command = {
+  name: 'attach',
+  help: '把本地文件上传到记录的附件字段(加在已有附件后面)',
+  access: 'base.attach',
+  positionals: [
+    BASE_ARG,
+    { name: 'record_id' },
+    { name: 'field', help: '附件字段(id 或名字)' },
+    { name: 'paths', nargs: '+', help: '本地文件' },
+  ],
+  options: [TABLE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      const files = (a.paths as string[]).map((p) => {
+        if (!existsSync(p) || !statSync(p).isFile()) throw new Error(`不是文件: ${p}`);
+        return { data: new Uint8Array(readFileSync(p)), name: basename(p) };
+      });
+      const tokens = await new Base(web()).attach(
+        t.token,
+        String(a.record_id),
+        String(a.field),
+        files,
+        t.table ? { table: t.table } : {},
+      );
+      out(`已上传 ${tokens.length} 个附件`);
+      return 0;
+    }),
+};
+
 const fieldRm: Command = {
   name: 'field-rm',
   help: '删除字段(按 field_id 或字段名;主字段不能删)',
@@ -291,6 +323,19 @@ const tableRm: Command = {
 
 export const baseGroup: CommandGroup = {
   name: 'base',
-  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、按字段筛选),增删改记录,增删字段和数据表',
-  subcommands: [tables, fields, views, records, add, set, rm, fieldAdd, fieldRm, tableAdd, tableRm],
+  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、筛选、搜索),增删改记录,上传附件,增删字段和数据表',
+  subcommands: [
+    tables,
+    fields,
+    views,
+    records,
+    add,
+    set,
+    attach,
+    rm,
+    fieldAdd,
+    fieldRm,
+    tableAdd,
+    tableRm,
+  ],
 };
