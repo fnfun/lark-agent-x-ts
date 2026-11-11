@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { LarkAuth } from '../auth.js';
 import { DocComments } from '../domains/doc-comments.js';
 import { DocEditor } from '../domains/doc-edit.js';
+import { DocHistory, type DocVersion } from '../domains/doc-history.js';
 import { DocPermissions, LINK_SHARE, type LinkShare } from '../domains/doc-permissions.js';
 import {
   DOC_TYPES,
@@ -533,9 +534,76 @@ const fetch: Command = {
   },
 };
 
+/** The docx a history command names; other types have no history API here. */
+const docxRef = async (a: Record<string, unknown>): Promise<string> => {
+  const r = await ref(a);
+  if (r.type !== 'docx') throw new Error(`历史记录只支持 docx,这是 ${r.type}`);
+  return r.token;
+};
+const VERSION_ARG = { name: 'version', help: '历史记录的版本号(见 history)' };
+const KIND_TEXT: Record<DocVersion['kind'], string> = {
+  created: '新建',
+  edited: '编辑',
+  restored: '还原',
+  other: '其他',
+};
+
+const history: Command = {
+  name: 'history',
+  help: '列出 docx 的历史记录(新的在前):版本号、时间、类型、编辑者',
+  access: 'doc.history',
+  positionals: [DOC_ARG],
+  options: [TYPE_OPTION, { name: 'limit', kind: 'int', default: 50 }, JSON_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const list = await new DocHistory(web()).list(await docxRef(a), Number(a.limit));
+      if (a.json) {
+        printJson(list);
+        return 0;
+      }
+      for (const v of list) {
+        const kind =
+          v.restoredFrom === undefined
+            ? KIND_TEXT[v.kind]
+            : `${KIND_TEXT[v.kind]}到 ${shortTime(v.restoredFrom)} 的状态`;
+        out([v.version, shortTime(v.time), kind, v.editors.join(','), v.name].join('\t').trimEnd());
+      }
+      return 0;
+    }),
+};
+
+const historyFetch: Command = {
+  name: 'history-fetch',
+  help: '读 docx 在某条历史记录时的内容,输出 Markdown',
+  access: 'doc.history-fetch',
+  positionals: [DOC_ARG, VERSION_ARG],
+  options: [TYPE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      process.stdout.write(
+        await new DocHistory(web()).markdown(await docxRef(a), Number(a.version)),
+      );
+      return 0;
+    }),
+};
+
+const revert: Command = {
+  name: 'revert',
+  help: '把 docx 还原到某条历史记录(还原本身也会记一条历史,可再还原回来)',
+  access: 'doc.revert',
+  positionals: [DOC_ARG, VERSION_ARG],
+  options: [TYPE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      await new DocHistory(web()).revert(await docxRef(a), Number(a.version));
+      out('已还原');
+      return 0;
+    }),
+};
+
 export const doc: CommandGroup = {
   name: 'doc',
-  help: '云文档与云盘:搜索、列目录、新建、导入导出、上传下载、改名移动复制、回收站、读正文(Markdown)、评论、分享',
+  help: '云文档与云盘:搜索、列目录、新建、导入导出、上传下载、改名移动复制、回收站、读正文(Markdown)、编辑、历史记录、评论、分享',
   subcommands: [
     search,
     ls,
@@ -546,6 +614,9 @@ export const doc: CommandGroup = {
     append,
     writeDoc,
     replace,
+    history,
+    historyFetch,
+    revert,
     rename,
     mv,
     cp,

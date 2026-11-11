@@ -725,14 +725,21 @@ export class Docs {
     return { objToken, title, markdown: `${parts.join('\n')}\n` };
   }
 
-  /** All blocks of a docx or slides deck (with their versions) from its client_vars, paging by cursor. */
-  async blocks(path: string, id: string): Promise<{ blocks: Record<string, Dict>; root: string }> {
+  /**
+   * All blocks of a docx or slides deck (with their versions) from its client_vars, paging by
+   * cursor; `query` adds parameters, e.g. `version` for a docx as of a page version.
+   */
+  async blocks(
+    path: string,
+    id: string,
+    query: Record<string, string | number> = {},
+  ): Promise<{ blocks: Record<string, Dict>; root: string }> {
     const blocks: Record<string, Dict> = {};
     let root = '';
     let cursor = '';
     for (let page = 0; page < 100; page++) {
       const body = (await this.web.json('GET', path, {
-        query: { id, mode: 7, limit: 239, ...(cursor ? { cursor } : {}) },
+        query: { id, mode: 7, limit: 239, ...query, ...(cursor ? { cursor } : {}) },
       })) as Dict;
       if (body.code !== 0) throw new Error(`读取文档失败: ${String(body.msg ?? body.code)}`);
       const data = (body.data ?? {}) as Dict;
