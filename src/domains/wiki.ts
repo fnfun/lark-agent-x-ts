@@ -13,7 +13,9 @@
  *   their document), `tree/move_node/` (old and new parent + space), `tree/node/copy/` (copies one
  *   node, not its children) and `tree/del_node/` (the node and its subtree go to the space's trash;
  *   `auto_delete_mode` 0 is the web app's default of clearing after 180 days).
- * - Creating a space (`space/create/`) answered 920004103 on the Lark test account; not offered.
+ * - Creating a space (`POST space/create/`, form: name, introduction, space_type 1, plus uniq_id,
+ *   or InvalidParam) answered 920004103 on both test accounts; the web app's own request, which
+ *   also sends wiki_scope, cover_token and i18n_id, could not be captured. Not offered.
  */
 import type { WebSession } from '../web.js';
 import { check, DOC_TYPES, type DocRef, Docs, type DocType } from './docs.js';
