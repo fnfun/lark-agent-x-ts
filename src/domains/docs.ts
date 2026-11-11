@@ -37,6 +37,12 @@
  * - A mindnote's topics are `GET mindnote/v2/client_vars` (token, member_id) →
  *   `collab_client_vars.nodes`, each `{id, text: [{text}], children, finish, ...}` under the title;
  *   mindnotes are created by importing a FreeMind (.mm) file and get topics with mindnote.ts.
+ * - A whiteboard is a docx block (`type: "whiteboard"`, `token`) whose nodes are `GET
+ *   whiteboard/block` (blockToken, reqVersion 1, clientVersion 14) → `data.nodes`, each `{id,
+ *   info: {baseV2: {x, y, width, height}, textV2: {text}, compositeShape: {shapeType}, ...}}`.
+ *   The web app edits them over its WebSocket (`/api/whiteboard/user_change` with JSON node
+ *   operations); the HTTP route of that path (with member_id) answers "payload is nil" to the same
+ *   JSON, so whiteboards are read only here.
  * - A slides deck reads like a docx (`GET slide/pages/client_vars`, same block map): the deck
  *   block lists its `slides`, each slide's children are shapes whose `shape.text.content` is an
  *   attributed text; lines carrying the `lmkr` attribute start with a placeholder `*`. Decks are
@@ -138,6 +144,20 @@ export interface DocHit {
   /** Last edit time (s). */
   editTime: number;
   preview: string;
+}
+
+/** A node on a whiteboard: a shape, text, sticky note, connector, ... */
+export interface WhiteboardNode {
+  id: string;
+  /** The node's text, empty when it has none. */
+  text: string;
+  /** Top-left corner and size on the board. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** For shapes, the web app's shape type number. */
+  shapeType?: number;
 }
 
 export interface DocContent {
@@ -722,6 +742,30 @@ export class Docs {
       }
     });
     return { objToken, title, markdown: `${parts.join('\n')}\n` };
+  }
+
+  /** The nodes on a whiteboard (its token, as a docx's whiteboard block shows it). */
+  async whiteboard(token: string): Promise<WhiteboardNode[]> {
+    const data = (check(
+      await this.web.json('GET', '/space/api/whiteboard/block', {
+        query: { blockToken: token, reqVersion: 1, clientVersion: 14 },
+      }),
+      '读取画板',
+    ).data ?? {}) as Dict;
+    return ((data.nodes ?? []) as Dict[]).map((n) => {
+      const info = (n.info ?? {}) as Dict;
+      const base = (info.baseV2 ?? {}) as Dict;
+      const shape = info.compositeShape as Dict | undefined;
+      return {
+        id: String(n.id ?? ''),
+        text: String(((info.textV2 ?? {}) as Dict).text ?? ''),
+        x: Number(base.x ?? 0),
+        y: Number(base.y ?? 0),
+        width: Number(base.width ?? 0),
+        height: Number(base.height ?? 0),
+        ...(shape ? { shapeType: Number(shape.shapeType) } : {}),
+      };
+    });
   }
 
   /**

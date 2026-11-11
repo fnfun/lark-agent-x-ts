@@ -85,6 +85,7 @@ export {
   type FileData,
   IMPORTABLE,
   type TrashedFile,
+  type WhiteboardNode,
 } from './domains/docs.js';
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
 export { type BlockSpec, parseMarkdown } from './domains/markdown-docx.js';

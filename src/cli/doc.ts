@@ -566,6 +566,24 @@ const slideRm: Command = {
     }),
 };
 
+const whiteboard: Command = {
+  name: 'whiteboard',
+  help: '列出画板上的节点:id、文字、位置和大小(画板 token 见 fetch 输出里的 [画板](token))',
+  access: 'doc.whiteboard',
+  positionals: [{ name: 'token', help: '画板 token' }],
+  options: [JSON_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const nodes = await docs().whiteboard(String(a.token));
+      if (a.json) {
+        printJson(nodes);
+        return 0;
+      }
+      for (const n of nodes) out(`${n.id}\t${n.text}\t(${n.x}, ${n.y}) ${n.width}×${n.height}`);
+      return 0;
+    }),
+};
+
 const writeDoc: Command = {
   name: 'write',
   help: '用 Markdown 替换 docx 的正文(标题保留)',
@@ -703,6 +721,7 @@ export const doc: CommandGroup = {
     importCmd,
     rm,
     fetch,
+    whiteboard,
     append,
     attach,
     writeDoc,

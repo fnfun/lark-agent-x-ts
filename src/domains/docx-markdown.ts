@@ -116,6 +116,9 @@ function render(blocks: BlockMap, id: string, depth: number): string[] {
       );
       return [`![${caption}](${String(image.token ?? '')})`];
     }
+    case 'whiteboard':
+      // The token reads the board's nodes (Docs.whiteboard).
+      return [`[画板](${String(data.token ?? '')})`];
     case 'file': {
       const file = (data.file ?? {}) as Dict;
       return [`[${String(file.name ?? '')}](${String(file.token ?? '')})`];

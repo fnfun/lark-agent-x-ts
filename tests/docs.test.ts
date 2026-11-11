@@ -320,6 +320,44 @@ describe('云文档', () => {
     );
   });
 
+  test('画板节点：取文字、左上角坐标和大小、形状类型；docx 里的画板块读成 [画板](token)', async () => {
+    const { docs, calls } = fake((_m, path) =>
+      path.endsWith('whiteboard/block')
+        ? {
+            code: 0,
+            data: {
+              nodes: [
+                {
+                  id: 'o1:1',
+                  info: {
+                    baseV2: { x: 10, y: 20, width: 170, height: 80 },
+                    textV2: { text: '流程开始' },
+                    compositeShape: { shapeType: 8 },
+                  },
+                },
+                { id: 'o1:2', info: { baseV2: { x: 0, y: 0, width: 5, height: 5 } } },
+              ],
+            },
+          }
+        : {
+            code: 0,
+            data: {
+              block_sequence: ['D'],
+              block_map: {
+                D: { data: { type: 'page', children: ['w'] } },
+                w: { data: { type: 'whiteboard', token: 'WB1' } },
+              },
+            },
+          },
+    );
+    expect(await docs.whiteboard('WB1')).toEqual([
+      { id: 'o1:1', text: '流程开始', x: 10, y: 20, width: 170, height: 80, shapeType: 8 },
+      { id: 'o1:2', text: '', x: 0, y: 0, width: 5, height: 5 },
+    ]);
+    expect(calls[0]?.[2].query).toMatchObject({ blockToken: 'WB1' });
+    expect((await docs.fetch('D')).markdown).toContain('[画板](WB1)');
+  });
+
   test('删除要等服务端的异步任务：任务完成才算成功，任务失败如实报出', async () => {
     const polls: string[] = [];
     const { docs } = fake((_m, path, o) => {

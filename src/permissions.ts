@@ -78,6 +78,7 @@ export const PERMISSIONS = {
   'doc.comments': 'query',
   'doc.sharing': 'query',
   'doc.history': 'query',
+  'doc.whiteboard': 'query',
   'doc.history-fetch': 'query',
   'wiki.spaces': 'query',
   'wiki.ls': 'query',
