@@ -19,6 +19,11 @@
  * - Tabs: action 22 adds one (its new id: 6 capital letters and digits; JSON {sheet_id,
  *   sheet_name, index}), 20 removes one (JSON {sheet_name, index}); neither has a position field.
  *   The page's tab list shows an added tab at once but keeps a removed one for about half a minute.
+ * - Styles: action 61, one property per action, JSON {style, target: {type: 0, row, col, rowCount,
+ *   colCount}}, no position field: `fontInfo.fontWeight` 700 / 400, `fontInfo.fontStyle` "italic" /
+ *   "normal", `fontInfo.fontSize` "14pt", `textDecoration: {flag: 1 underline | 2 strikethrough,
+ *   active}` where active false turns it on and true off, `foreColor` / `backColor` "#rrggbb",
+ *   `hAlign` 0 left, 1 center, 2 right.
  * - Reading exports the sheet as .xlsx (the Docs export API) and parses it (xlsx.ts); the cell
  *   blocks embedded in the page use an undocumented columnar encoding.
  */
@@ -137,7 +142,49 @@ const ACTION = {
   deleteColumns: 8,
   removeTab: 20,
   addTab: 22,
+  style: 61,
 };
+
+/** Cell formatting `Sheets.style` applies; unset properties are left as they are. */
+export interface CellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** Text colour, "#rrggbb". */
+  color?: string;
+  /** Fill colour, "#rrggbb". */
+  background?: string;
+  align?: 'left' | 'center' | 'right';
+  /** Font size in points. */
+  fontSize?: number;
+}
+
+const ALIGN = { left: 0, center: 1, right: 2 } as const;
+
+/** The style properties of a CellStyle, one object per action, as the web app sends them. */
+export function styleParts(style: CellStyle): Record<string, unknown>[] {
+  const parts: Record<string, unknown>[] = [];
+  const color = (c: string) => {
+    if (!/^#[0-9a-f]{6}$/i.test(c)) throw new Error(`颜色要写成 #rrggbb: ${c}`);
+    return c.toLowerCase();
+  };
+  if (style.bold !== undefined) parts.push({ fontInfo: { fontWeight: style.bold ? 700 : 400 } });
+  if (style.italic !== undefined)
+    parts.push({ fontInfo: { fontStyle: style.italic ? 'italic' : 'normal' } });
+  if (style.fontSize !== undefined) {
+    if (!(style.fontSize > 0)) throw new Error(`字号要是正数: ${style.fontSize}`);
+    parts.push({ fontInfo: { fontSize: `${style.fontSize}pt` } });
+  }
+  if (style.underline !== undefined)
+    parts.push({ textDecoration: { active: !style.underline, flag: 1 } });
+  if (style.strikethrough !== undefined)
+    parts.push({ textDecoration: { active: !style.strikethrough, flag: 2 } });
+  if (style.color !== undefined) parts.push({ foreColor: color(style.color) });
+  if (style.background !== undefined) parts.push({ backColor: color(style.background) });
+  if (style.align !== undefined) parts.push({ hAlign: ALIGN[style.align] });
+  return parts;
+}
 
 /** One action: its type, the tab, where (none for tab actions), and its JSON (a cell's, a tab's). */
 function action(
@@ -339,6 +386,35 @@ export class Sheets {
     });
     if (Object.keys(cells).length) await this.write(token, cells, o);
     return { cells: Object.keys(cells).length, replaced };
+  }
+
+  /** Format a cell or range ("C3", "A1:C10") of a tab (the first by default). */
+  async style(
+    token: string,
+    range: string,
+    style: CellStyle,
+    o: { sheet?: string } = {},
+  ): Promise<number> {
+    const parts = styleParts(style);
+    if (!parts.length) throw new Error('没有要设置的样式');
+    const [from, to = from] = range.split(':') as [string, string?];
+    const [r0, c0] = cellIndex(from);
+    const [r1, c1] = cellIndex(to);
+    const target = {
+      type: 0,
+      row: Math.min(r0, r1),
+      col: Math.min(c0, c1),
+      rowCount: Math.abs(r1 - r0) + 1,
+      colCount: Math.abs(c1 - c0) + 1,
+    };
+    const state = await this.state(token);
+    const tab = o.sheet ? state.tabs.find((t) => t.name === o.sheet) : state.tabs[0];
+    if (!tab) throw new Error(`没有这个工作表: ${o.sheet ?? ''}`);
+    return this.send(
+      token,
+      state.revision,
+      parts.flatMap((s) => action(ACTION.style, tab.id, null, { style: s, target })),
+    );
   }
 
   /** Add a tab named `name` at position `at` (from 1; last by default); returns its id. */

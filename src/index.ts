@@ -90,7 +90,7 @@ export {
 export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
 export { type BlockSpec, parseMarkdown } from './domains/markdown-docx.js';
 export { MindnoteEditor } from './domains/mindnote.js';
-export { columnName, Sheets, type SheetTab } from './domains/sheet.js';
+export { type CellStyle, columnName, Sheets, type SheetTab } from './domains/sheet.js';
 export { SlidesEditor } from './domains/slides.js';
 export {
   type NewTask,

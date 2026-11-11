@@ -275,6 +275,34 @@ describe('表格', () => {
     expect(sent).toHaveLength(2);
   });
 
+  test('样式：每个属性一个动作，区域换成左上角加行列数；下划线删除线 active=false 是打开、true 是关闭；颜色要 #rrggbb', async () => {
+    const { sheets, sent, actions } = fakeSheets();
+    await sheets.style('T', 'C3:B1', {
+      bold: true,
+      italic: false,
+      underline: true,
+      strikethrough: false,
+      color: '#1F6FEB',
+      align: 'right',
+      fontSize: 14,
+    });
+    const target = { type: 0, row: 0, col: 1, rowCount: 3, colCount: 2 };
+    expect(actions(0)).toEqual(
+      [
+        { fontInfo: { fontWeight: 700 } },
+        { fontInfo: { fontStyle: 'normal' } },
+        { fontInfo: { fontSize: '14pt' } },
+        { textDecoration: { active: false, flag: 1 } },
+        { textDecoration: { active: true, flag: 2 } },
+        { foreColor: '#1f6feb' },
+        { hAlign: 2 },
+      ].map((style) => [61, 's1', {}, { style, target }]),
+    );
+    await expect(sheets.style('T', 'A1', { background: 'red' })).rejects.toThrow('#rrggbb');
+    await expect(sheets.style('T', 'A1', {})).rejects.toThrow('没有要设置的样式');
+    expect(sent).toHaveLength(1);
+  });
+
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {
     expect(parseCells(['b2=a=b', 'C3='])).toEqual({ B2: 'a=b', C3: '' });
     expect(() => parseCells(['B2'])).toThrow('单元格=值');

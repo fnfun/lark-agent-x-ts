@@ -146,6 +146,7 @@ export const PERMISSIONS = {
   'sheet.append': 'modify',
   'sheet.replace': 'modify',
   'sheet.tab-add': 'modify',
+  'sheet.style': 'modify',
   'sheet.insert-rows': 'modify',
   'sheet.insert-cols': 'modify',
   read: 'modify',

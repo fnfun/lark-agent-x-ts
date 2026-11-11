@@ -1,5 +1,5 @@
 import { LarkAuth } from '../auth.js';
-import { Sheets } from '../domains/sheet.js';
+import { type CellStyle, Sheets } from '../domains/sheet.js';
 import { Wiki } from '../domains/wiki.js';
 import type { CellValue } from '../domains/xlsx.js';
 import { WebSession } from '../web.js';
@@ -135,6 +135,47 @@ const replace: Command = {
     }),
 };
 
+const ON_OFF = { kind: 'string' as const, choices: ['on', 'off'] };
+/** The on/off options given, as CellStyle flags. */
+const flags = (a: Record<string, unknown>): CellStyle => {
+  const out: CellStyle = {};
+  const names = { bold: 'bold', italic: 'italic', underline: 'underline', strike: 'strikethrough' };
+  for (const [option, key] of Object.entries(names))
+    if (a[option] !== undefined) out[key as 'bold'] = a[option] === 'on';
+  return out;
+};
+
+const style: Command = {
+  name: 'style',
+  help: '设置单元格或区域的格式(加粗、斜体、下划线、删除线、颜色、填充色、对齐、字号)',
+  access: 'sheet.style',
+  positionals: [SHEET_ARG, { name: 'range', help: '单元格或区域,如 C3 或 A1:C10' }],
+  options: [
+    TAB_OPTION,
+    { name: 'bold', ...ON_OFF },
+    { name: 'italic', ...ON_OFF },
+    { name: 'underline', ...ON_OFF },
+    { name: 'strike', ...ON_OFF, help: '删除线' },
+    { name: 'color', kind: 'string', help: '字体颜色,#rrggbb' },
+    { name: 'background', kind: 'string', help: '填充色,#rrggbb' },
+    { name: 'align', kind: 'string', choices: ['left', 'center', 'right'] },
+    { name: 'size', kind: 'int', help: '字号(磅)' },
+  ],
+  run: (a) =>
+    guarded(async () => {
+      const s: CellStyle = {
+        ...flags(a),
+        ...(a.color ? { color: String(a.color) } : {}),
+        ...(a.background ? { background: String(a.background) } : {}),
+        ...(a.align ? { align: String(a.align) as NonNullable<CellStyle['align']> } : {}),
+        ...(a.size !== undefined ? { fontSize: Number(a.size) } : {}),
+      };
+      await new Sheets(web()).style(await token(a), String(a.range), s, tab(a));
+      out('已设置');
+      return 0;
+    }),
+};
+
 const tabAdd: Command = {
   name: 'tab-add',
   help: '新增工作表',
@@ -228,13 +269,14 @@ const deleteCols = dimension(
 
 export const sheetGroup: CommandGroup = {
   name: 'sheet',
-  help: '电子表格:列工作表、增删工作表、读单元格、写单元格(含公式)、追加行、查找替换、插入删除行列',
+  help: '电子表格:列工作表、增删工作表、读单元格、写单元格(含公式)、追加行、查找替换、设置格式、插入删除行列',
   subcommands: [
     tabs,
     read,
     write,
     append,
     replace,
+    style,
     tabAdd,
     tabRm,
     insertRows,
