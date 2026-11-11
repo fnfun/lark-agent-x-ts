@@ -11,14 +11,18 @@
  *   {1: 4, 2: sheet id, 4: {1: row, 3: column}, 5: cell JSON {style, value, reminder,
  *   dataValidation}}. The reply's `data.type` is ACCEPT_COMMIT with `new_rev`; a stale base_rev
  *   was accepted.
- * - Formulas need the web app's parsed form (`formulaData`); a formula sent without it is stored
- *   but has no computed value, so writing formulas is refused here.
+ * - A formula cell carries the web app's parsed form (`formulaData`, built by sheet-formula.ts);
+ *   values are computed by the web app, so exports hold the formula text without a value.
+ * - Rows and columns: action 5 / 6 insert / delete rows ({1: start row, 2: count}), 7 / 8 insert /
+ *   delete columns ({3: start column, 4: count}); the web app follows them with row heights (17)
+ *   and column widths (18), which are optional.
  * - Reading exports the sheet as .xlsx (the Docs export API) and parses it (xlsx.ts); the cell
  *   blocks embedded in the page use an undocumented columnar encoding.
  */
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { WebSession } from '../web.js';
 import { check, Docs } from './docs.js';
+import { compileFormula } from './sheet-formula.js';
 import { type CellValue, cellIndex, readXlsx } from './xlsx.js';
 
 type Dict = Record<string, unknown>;
@@ -112,27 +116,59 @@ const lenField = (f: number, body: number[]) => [
 const numField = (f: number, n: number) => [...varint(f * 8), ...varint(n)];
 const utf8 = (s: string) => [...new TextEncoder().encode(s)];
 
-/** The protobuf action that sets one cell. */
+/** A position in an action: {1: row, 2: row count, 3: column, 4: column count}. */
+const position = (p: { row?: number; rows?: number; col?: number; cols?: number }) =>
+  lenField(4, [
+    ...(p.row !== undefined ? numField(1, p.row) : []),
+    ...(p.rows !== undefined ? numField(2, p.rows) : []),
+    ...(p.col !== undefined ? numField(3, p.col) : []),
+    ...(p.cols !== undefined ? numField(4, p.cols) : []),
+  ]);
+
+/** Action types of `v2/sheet/user_changes`. */
+const ACTION = { setCell: 4, insertRows: 5, deleteRows: 6, insertColumns: 7, deleteColumns: 8 };
+
+/** One action: its type, the tab, where, and for cell sets the cell's JSON. */
+function action(
+  type: number,
+  sheetId: string,
+  where: Parameters<typeof position>[0],
+  cell?: unknown,
+) {
+  return lenField(1, [
+    ...numField(1, type),
+    ...lenField(2, utf8(sheetId)),
+    ...position(where),
+    ...(cell === undefined ? [] : lenField(5, utf8(JSON.stringify(cell)))),
+  ]);
+}
+
+/** The protobuf action that sets one cell (a value, or a formula starting with "="). */
 export function setCellAction(
   sheetId: string,
   row: number,
   col: number,
   value: CellValue,
 ): number[] {
-  const cell = { style: null, value, reminder: null, dataValidation: null };
-  return lenField(1, [
-    ...numField(1, 4),
-    ...lenField(2, utf8(sheetId)),
-    ...lenField(4, [...numField(1, row), ...numField(3, col)]),
-    ...lenField(5, utf8(JSON.stringify(cell))),
-  ]);
+  const cell =
+    typeof value === 'string' && value.startsWith('=')
+      ? {
+          style: null,
+          formula: value,
+          formulaData: compileFormula(value),
+          value: null,
+          reminder: null,
+          dataValidation: null,
+        }
+      : { style: null, value, reminder: null, dataValidation: null };
+  return action(ACTION.setCell, sheetId, { row, col }, cell);
 }
 
 /** A value typed into a cell: numbers stay numbers, numeric text becomes a number, "" clears. */
 function cellValue(input: CellValue): CellValue {
   if (typeof input !== 'string') return input;
   if (input === '') return null;
-  if (input.startsWith('=')) throw new Error(`暂不支持写公式: ${input}`);
+  if (input.startsWith('=')) return input;
   const n = Number(input);
   return input.trim() !== '' &&
     Number.isFinite(n) &&
@@ -185,12 +221,60 @@ export class Sheets {
       const [row, col] = cellIndex(ref);
       return setCellAction(tab.id, row, col, cellValue(v));
     });
+    return this.send(token, state.revision, actions);
+  }
+
+  /** Insert empty rows before row `at` (from 1); returns the new revision. */
+  insertRows(token: string, at: number, count = 1, o: { sheet?: string } = {}) {
+    return this.dimension(token, ACTION.insertRows, { row: at - 1, rows: count }, o);
+  }
+
+  /** Delete `count` rows starting at row `at` (from 1). */
+  deleteRows(token: string, at: number, count = 1, o: { sheet?: string } = {}) {
+    return this.dimension(token, ACTION.deleteRows, { row: at - 1, rows: count }, o);
+  }
+
+  /** Insert empty columns before column `at` (letters, e.g. "C"). */
+  insertColumns(token: string, at: string, count = 1, o: { sheet?: string } = {}) {
+    return this.dimension(
+      token,
+      ACTION.insertColumns,
+      { col: cellIndex(`${at}1`)[1], cols: count },
+      o,
+    );
+  }
+
+  /** Delete `count` columns starting at column `at` (letters). */
+  deleteColumns(token: string, at: string, count = 1, o: { sheet?: string } = {}) {
+    return this.dimension(
+      token,
+      ACTION.deleteColumns,
+      { col: cellIndex(`${at}1`)[1], cols: count },
+      o,
+    );
+  }
+
+  private async dimension(
+    token: string,
+    type: number,
+    where: Parameters<typeof position>[0],
+    o: { sheet?: string },
+  ): Promise<number> {
+    if ((where.rows ?? where.cols ?? 1) < 1 || (where.row ?? where.col ?? 0) < 0)
+      throw new Error('行列位置从 1 / A 开始,数量至少为 1');
+    const state = await this.state(token);
+    const tab = o.sheet ? state.tabs.find((t) => t.name === o.sheet) : state.tabs[0];
+    if (!tab) throw new Error(`没有这个工作表: ${o.sheet ?? ''}`);
+    return this.send(token, state.revision, action(type, tab.id, where));
+  }
+
+  private async send(token: string, revision: number, actions: number[]): Promise<number> {
     const memberId = Math.floor(Math.random() * 9e13) + 1e13;
     const reply = check(
       await this.web.json('POST', '/space/api/v2/sheet/user_changes', {
         query: { token, member_id: memberId },
         json: {
-          base_rev: state.revision,
+          base_rev: revision,
           content: gzipSync(Buffer.from(actions)).toString('base64'),
           mode: 0,
           msg_timestamp: Date.now(),
@@ -203,7 +287,7 @@ export class Sheets {
     const data = (reply.data ?? {}) as Dict;
     if (data.type !== 'ACCEPT_COMMIT')
       throw new Error(`写入表格失败: ${String(data.msg || data.type)}`);
-    return Number(data.new_rev ?? state.revision + 1);
+    return Number(data.new_rev ?? revision + 1);
   }
 
   /** Append rows below the last non-empty row of a tab; returns the first appended row (from 1). */

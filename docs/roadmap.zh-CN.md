@@ -159,8 +159,9 @@
 - 多维表格，两个账号都实测完成：`lark base tables/fields/records/add/set/rm/field-add` 与库的 `Base`（文本、数字、单选和多选（没有的选项自动新建）、日期、复选框、超链接）。细节写在 `src/domains/base.ts` 文件头。
 - 多维表格还能列出视图、按视图顺序读记录、按字段值筛选（在读到的记录里本地筛选）。
 - 多维表格未做：服务端筛选与搜索、编辑视图、附件、删除字段和数据表、其他字段类型（人员、关联、查找引用、公式按文本读出）。
-- 电子表格，两个账号都实测完成（飞书账号重新登录后补测）：`lark sheet tabs/read/write/append` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
-- 电子表格未做：写公式（网页发的是解析后的公式结构，服务端不会重算）、插入删除行列、样式、查找替换、新增工作表。
+- 电子表格，两个账号都实测完成（飞书账号重新登录后补测）：`lark sheet tabs/read/write/append/insert-rows/delete-rows/insert-cols/delete-cols` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
+- 电子表格也能写公式（2026-11-11 起，两个账号实测；插入删除行列后服务端会平移公式里的引用）：网页发公式时带上解析结构（引用、逆波兰树、文本片段），`src/domains/sheet-formula.ts` 按同样规则生成；服务端不存计算结果，网页打开时自己算，已在飞书账号的浏览器里核对。所以读取时这类公式显示为 `=公式`。引用其他工作表的公式会被拒绝。
+- 电子表格未做：公式里引用其他工作表、样式、查找替换、新增工作表。
 - 文档，两个账号都实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档未做：附件（`file` 块外面包一层 `view` 块，`view_type` 的取值常量没追到，写错了不开网页无法核对）、划词评论、历史版本。表格和图片 2026-11-11 起可以写入（图片先建块，再挂在块上上传文件，最后写回 token）。

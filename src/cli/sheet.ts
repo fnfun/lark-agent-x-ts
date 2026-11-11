@@ -66,7 +66,7 @@ const tabs: Command = {
 
 const read: Command = {
   name: 'read',
-  help: '读工作表的单元格,每行一行、单元格用 Tab 分隔(公式取计算结果)',
+  help: '读工作表的单元格,每行一行、单元格用 Tab 分隔(公式有存下的计算结果时取结果,否则显示 =公式)',
   access: 'sheet.read',
   positionals: [SHEET_ARG],
   options: [
@@ -88,7 +88,7 @@ const read: Command = {
 
 const write: Command = {
   name: 'write',
-  help: '写单元格(A1=值;数字按数字写,值留空为清空;暂不支持公式)',
+  help: '写单元格(A1=值;数字按数字写,值以 = 开头为公式,如 C1==SUM(A1:B1);值留空为清空)',
   access: 'sheet.write',
   positionals: [SHEET_ARG, { name: 'cells', nargs: '+', help: '单元格=值' }],
   options: [TAB_OPTION],
@@ -116,8 +116,68 @@ const append: Command = {
     }),
 };
 
+/** insert-rows / delete-rows / insert-cols / delete-cols. */
+function dimension(
+  name: string,
+  help: string,
+  access: Command['access'],
+  at: { name: string; help: string },
+  run: (
+    s: Sheets,
+    token: string,
+    at: string,
+    count: number,
+    o: { sheet?: string },
+  ) => Promise<number>,
+): Command {
+  return {
+    name,
+    help,
+    access,
+    positionals: [SHEET_ARG, at],
+    options: [TAB_OPTION, { name: 'count', kind: 'int', default: 1, help: '几行 / 几列' }],
+    run: (a) =>
+      guarded(async () => {
+        await run(new Sheets(web()), await token(a), String(a[at.name]), Number(a.count), tab(a));
+        out('已完成');
+        return 0;
+      }),
+  };
+}
+
+const ROW_AT = { name: 'row', help: '行号(从 1 开始)' };
+const COL_AT = { name: 'column', help: '列(字母,如 C)' };
+const insertRows = dimension(
+  'insert-rows',
+  '在这一行上面插入空行',
+  'sheet.insert-rows',
+  ROW_AT,
+  (s, t, at, n, o) => s.insertRows(t, Number(at), n, o),
+);
+const deleteRows = dimension(
+  'delete-rows',
+  '从这一行起删除若干行',
+  'sheet.delete-rows',
+  ROW_AT,
+  (s, t, at, n, o) => s.deleteRows(t, Number(at), n, o),
+);
+const insertCols = dimension(
+  'insert-cols',
+  '在这一列左边插入空列',
+  'sheet.insert-cols',
+  COL_AT,
+  (s, t, at, n, o) => s.insertColumns(t, at, n, o),
+);
+const deleteCols = dimension(
+  'delete-cols',
+  '从这一列起删除若干列',
+  'sheet.delete-cols',
+  COL_AT,
+  (s, t, at, n, o) => s.deleteColumns(t, at, n, o),
+);
+
 export const sheetGroup: CommandGroup = {
   name: 'sheet',
-  help: '电子表格:列工作表、读单元格、写单元格、追加行',
-  subcommands: [tabs, read, write, append],
+  help: '电子表格:列工作表、读单元格、写单元格(含公式)、追加行、插入删除行列',
+  subcommands: [tabs, read, write, append, insertRows, deleteRows, insertCols, deleteCols],
 };

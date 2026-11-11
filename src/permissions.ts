@@ -135,6 +135,8 @@ export const PERMISSIONS = {
   'base.field-add': 'modify',
   'sheet.write': 'modify',
   'sheet.append': 'modify',
+  'sheet.insert-rows': 'modify',
+  'sheet.insert-cols': 'modify',
   read: 'modify',
 
   flag: 'organize',
@@ -171,6 +173,8 @@ export const PERMISSIONS = {
   'doc.comment-rm': 'destroy',
   'wiki.rm': 'destroy',
   'base.rm': 'destroy',
+  'sheet.delete-rows': 'destroy',
+  'sheet.delete-cols': 'destroy',
   'cal.delete': 'destroy',
 
   'auth.qr': 'system',

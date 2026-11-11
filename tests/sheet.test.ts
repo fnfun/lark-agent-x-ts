@@ -152,7 +152,8 @@ describe('表格', () => {
     ]);
   });
 
-  test('写单元格：按工作表 id 和行列发设值动作，数字文本写成数字、空串清空；公式直接报错', async () => {
+  /** A fake server holding one tab "Sheet1" (id s1) at revision 7; records each commit sent. */
+  function fakeSheets() {
     const topSnapshot = gzipSync(
       Buffer.from(
         msg(1, [
@@ -173,30 +174,64 @@ describe('表格', () => {
         return { code: 0, data: { type: 'ACCEPT_COMMIT', new_rev: 8 } };
       },
     } as unknown as WebSession;
-    const sheets = new Sheets(web);
+    /** The actions of the n-th commit: [type, tab, {position fields}, cell JSON]. */
+    const actions = (n: number) =>
+      decode(new Uint8Array(gunzipSync(Buffer.from(String(sent[n]?.content), 'base64')))).map(
+        ([, a]) => {
+          const f = Object.fromEntries(decode(a as Uint8Array));
+          return [
+            f[1],
+            new TextDecoder().decode(f[2] as Uint8Array),
+            Object.fromEntries(decode(f[4] as Uint8Array)),
+            f[5] === undefined
+              ? undefined
+              : JSON.parse(new TextDecoder().decode(f[5] as Uint8Array)),
+          ] as const;
+        },
+      );
+    return { sheets: new Sheets(web), sent, actions };
+  }
+
+  test('写单元格：按工作表 id 和行列发设值动作，数字文本写成数字、空串清空', async () => {
+    const { sheets, sent, actions } = fakeSheets();
     expect(await sheets.write('T', { B3: '42', A1: '名称', C1: '' })).toBe(8);
     expect(sent[0]?.base_rev).toBe(7);
-    const actions = decode(
-      new Uint8Array(gunzipSync(Buffer.from(String(sent[0]?.content), 'base64'))),
-    );
-    const cells = actions.map(([, a]) => {
-      const f = Object.fromEntries(decode(a as Uint8Array));
-      const pos = Object.fromEntries(decode(f[4] as Uint8Array));
-      return [
-        f[1],
-        new TextDecoder().decode(f[2] as Uint8Array),
-        pos[1] ?? 0,
-        pos[3] ?? 0,
-        JSON.parse(new TextDecoder().decode(f[5] as Uint8Array)).value,
-      ];
-    });
-    expect(cells).toEqual([
+    expect(
+      actions(0).map(([type, tab, pos, cell]) => [type, tab, pos[1] ?? 0, pos[3] ?? 0, cell.value]),
+    ).toEqual([
       [4, 's1', 2, 1, 42],
       [4, 's1', 0, 0, '名称'],
       [4, 's1', 0, 2, null],
     ]);
-    await expect(sheets.write('T', { A2: '=A1*2' })).rejects.toThrow('公式');
+  });
+
+  test('写公式：带上公式和解析结果、值留空由网页端计算；引用其他工作表时什么都不发', async () => {
+    const { sheets, sent, actions } = fakeSheets();
+    await sheets.write('T', { C1: '=SUM(A1:B1)' });
+    expect(actions(0)[0]?.[3]).toMatchObject({
+      formula: '=SUM(A1:B1)',
+      value: null,
+      formulaData: { refs: { R1: { col: 0, colCount: 2, row: 0, rowCount: 1 } } },
+    });
+    await expect(sheets.write('T', { A2: '=Sheet2!A1' })).rejects.toThrow('其他工作表');
     expect(sent).toHaveLength(1);
+  });
+
+  test('插入删除行列：行号从 1、列用字母，换成从 0 开始的位置和数量；位置或数量不合法时不发', async () => {
+    const { sheets, sent, actions } = fakeSheets();
+    await sheets.insertRows('T', 3, 2);
+    await sheets.deleteRows('T', 1);
+    await sheets.insertColumns('T', 'AB');
+    await sheets.deleteColumns('T', 'C', 3);
+    expect([0, 1, 2, 3].map((n) => actions(n)[0]?.slice(0, 3))).toEqual([
+      [5, 's1', { 1: 2, 2: 2 }],
+      [6, 's1', { 1: 0, 2: 1 }],
+      [7, 's1', { 3: 27, 4: 1 }],
+      [8, 's1', { 3: 2, 4: 3 }],
+    ]);
+    await expect(sheets.deleteRows('T', 0)).rejects.toThrow('行列位置');
+    await expect(sheets.insertRows('T', 2, 0)).rejects.toThrow('行列位置');
+    expect(sent).toHaveLength(4);
   });
 
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {
