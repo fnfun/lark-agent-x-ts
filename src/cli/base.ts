@@ -232,8 +232,59 @@ const fieldAdd: Command = {
     }),
 };
 
+const fieldRm: Command = {
+  name: 'field-rm',
+  help: '删除字段(按 field_id 或字段名;主字段不能删)',
+  access: 'base.field-rm',
+  positionals: [BASE_ARG, { name: 'field' }],
+  options: [TABLE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      await new Base(web()).deleteField(
+        t.token,
+        String(a.field),
+        t.table ? { table: t.table } : {},
+      );
+      out('已删除');
+      return 0;
+    }),
+};
+
+const tableAdd: Command = {
+  name: 'table-add',
+  help: '新建数据表(带一个文本主字段和一个表格视图)',
+  access: 'base.table-add',
+  positionals: [BASE_ARG, { name: 'name', nargs: '+' }],
+  options: [{ name: 'primary', kind: 'string', help: '主字段名(默认 名称)' }],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      const id = await new Base(web()).addTable(
+        t.token,
+        (a.name as string[]).join(' '),
+        a.primary === undefined ? {} : { primary: String(a.primary) },
+      );
+      out(`已新建 table_id=${id}`);
+      return 0;
+    }),
+};
+
+const tableRm: Command = {
+  name: 'table-rm',
+  help: '删除数据表(移到多维表格的回收站;至少留一张)',
+  access: 'base.table-rm',
+  positionals: [BASE_ARG, { name: 'table_id' }],
+  run: (a) =>
+    guarded(async () => {
+      await new Base(web()).deleteTable((await target(a)).token, String(a.table_id));
+      out('已删除');
+      return 0;
+    }),
+};
+
 export const baseGroup: CommandGroup = {
   name: 'base',
-  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、按字段筛选),增删改记录,加字段',
-  subcommands: [tables, fields, views, records, add, set, rm, fieldAdd],
+  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、按字段筛选),增删改记录,增删字段和数据表',
+  subcommands: [tables, fields, views, records, add, set, rm, fieldAdd, fieldRm, tableAdd, tableRm],
 };

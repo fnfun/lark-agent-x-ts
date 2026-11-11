@@ -52,16 +52,31 @@ const TABLE = {
 /** The first action of an operation. */
 const firstAction = (op: Dict | undefined) => (((op?.actions ?? []) as Dict[])[0] ?? {}) as Dict;
 
+/** The Base's schema: tables tbl1, tbl2 among the sidebar blocks (a dashboard in between). */
+const SCHEMA = {
+  base: {
+    rev: 9,
+    tables: ['tbl1', 'tbl2'],
+    blocks: ['tbl1', 'blkDash', 'tbl2'],
+    tableInfos: { tbl1: { name: '任务' }, tbl2: { name: '归档' } },
+  },
+};
+
 /** Fake web: serves table snapshots in turn and accepts commits, recording their operations. */
-function fake(snapshots: Dict[] = [TABLE], reply: Dict = { type: 'ACCEPT_COMMIT', rev: 6 }) {
-  const commits: { data: Dict; ops: Dict[] }[] = [];
+function fake(
+  snapshots: Dict[] = [TABLE],
+  reply: Dict = { type: 'ACCEPT_COMMIT', rev: 6 },
+  schema: Dict = SCHEMA,
+) {
+  const commits: { kind: unknown; data: Dict; ops: Dict[] }[] = [];
   let n = 0;
   const web = {
     json: async (_m: string, path: string, o: WebRequest = {}) => {
       if (path.endsWith('/clientvars'))
         return { code: 0, data: { table: zip(snapshots[Math.min(n++, snapshots.length - 1)]) } };
+      if (path.endsWith('/client_vars/')) return { code: 0, data: { gzipSchema: zip(schema) } };
       const data = (o.json as { data: Dict }).data;
-      commits.push({ data, ops: unzip(data.operations) });
+      commits.push({ kind: (o.json as Dict).type, data, ops: unzip(data.operations) });
       return { code: 0, data: reply };
     },
   } as unknown as WebSession;
@@ -183,5 +198,57 @@ describe('多维表格', () => {
       (await base.records('B1', { where: { 标签: '紧急', 状态: '进行中' } })).map((r) => r.id),
     ).toEqual(['rec1']);
     await expect(base.records('B1', { where: { 不存在: 'x' } })).rejects.toThrow('没有这个字段');
+  });
+
+  test('建表：发给整个多维表格（BITABLE_BASE、不带 route_key、按 schema 的 rev），排在数据表和侧栏块的最后，带主字段和表格视图', async () => {
+    const { base, commits } = fake();
+    const id = await base.addTable('B1', '新表', { primary: '任务名' });
+    const [c] = commits;
+    expect([c?.kind, c?.data.token, c?.data.route_key, c?.data.localRev]).toEqual([
+      'BITABLE_BASE',
+      'B1',
+      undefined,
+      9,
+    ]);
+    const action = firstAction(c?.ops[0]);
+    expect(action).toMatchObject({ action: 'base.addTableV2', tableId: id });
+    const data = action.data as Dict & { snapshot: Dict & { fieldMap: Dict; viewMap: Dict } };
+    expect([data.index, data.blockIndex, data.total, data.name]).toEqual([2, 3, 3, '新表']);
+    const primary = data.snapshot.fieldMap[String(data.snapshot.primaryKey)] as Dict;
+    expect(primary).toMatchObject({ name: '任务名', type: 1 });
+    const [view] = Object.values(data.snapshot.viewMap) as { property: { fields: string[] } }[];
+    expect(view?.property.fields).toEqual([String(data.snapshot.primaryKey)]);
+  });
+
+  test('删表：带上它在数据表和侧栏块里的位置；不存在或只剩一张时什么都不发', async () => {
+    const { base, commits } = fake();
+    await base.deleteTable('B1', 'tbl2');
+    expect(commits[0]?.kind).toBe('BITABLE_BASE');
+    expect(firstAction(commits[0]?.ops[0])).toMatchObject({
+      action: 'base.deleteTable',
+      tableId: 'tbl2',
+      name: '归档',
+      data: { index: 1, blockIndex: 2, total: 3 },
+    });
+    await expect(base.deleteTable('B1', 'tblX')).rejects.toThrow('找不到数据表');
+    const single = fake([TABLE], undefined, { base: { ...SCHEMA.base, tables: ['tbl1'] } });
+    await expect(single.base.deleteTable('B1', 'tbl1')).rejects.toThrow('至少要留一张');
+    expect(commits).toHaveLength(1);
+    expect(single.commits).toHaveLength(0);
+  });
+
+  test('删字段：按名字或 id 找，带上它在当前视图里的位置；主字段不能删', async () => {
+    const { base, commits } = fake();
+    await base.deleteField('B1', '截止');
+    expect(commits[0]?.kind).toBe('BITABLE_TABLE');
+    expect(firstAction(commits[0]?.ops[0])).toMatchObject({
+      action: 'data.deleteField',
+      fieldId: 'fldDate',
+      viewId: 'vew1',
+      data: { indexes: { vew1: 4 }, total: 7 },
+    });
+    await expect(base.deleteField('B1', 'fldText')).rejects.toThrow('主字段不能删除');
+    await expect(base.deleteField('B1', '不存在')).rejects.toThrow('没有这个字段');
+    expect(commits).toHaveLength(1);
   });
 });

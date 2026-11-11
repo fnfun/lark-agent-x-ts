@@ -22,6 +22,13 @@
  *   option id, multi select option ids, date ms, checkbox a boolean, URL
  *   `[{type: "url", text, link}]`. New select options are added in the same commit.
  * - A new record goes at the table's `rankInfo.nextRank`; the server moves nextRank on.
+ * - Tables are added and removed with a `BITABLE_BASE` message (token: the Base token, no
+ *   route_key, localRev: the schema's `base.rev`): AddTableV2 (`base.addTableV2` with the new
+ *   table's snapshot: a primary text field and a grid view) and DeleteTable (`base.deleteTable`,
+ *   which moves it to the Base's trash). Both name the table's position among `base.tables` and
+ *   among the sidebar's `base.blocks` (tables, dashboards, workflows). Removing a field is
+ *   DeleteFields (`data.deleteField` with its position in the view). Read off the web app's traffic
+ *   on 2026-11-11.
  */
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { WebSession } from '../web.js';
@@ -223,16 +230,128 @@ export class Base {
 
   /** The tables of a Base, in their order. */
   async tables(baseToken: string): Promise<BaseTable[]> {
-    const body = check(
-      await this.web.json('GET', `/space/api/bitable/${baseToken}/client_vars/`),
-      '读取多维表格',
-    );
-    const schema = unzip((body.data as Dict | undefined)?.gzipSchema).base as Dict;
+    const schema = await this.schema(baseToken);
     const infos = (schema.tableInfos ?? {}) as Record<string, Dict>;
     return ((schema.tables ?? []) as string[]).map((id) => ({
       id,
       name: String(infos[id]?.name ?? ''),
     }));
+  }
+
+  /**
+   * Add a table at the end, with a primary text field (`primary`, "名称" by default) and a grid
+   * view; returns its id.
+   */
+  async addTable(baseToken: string, name: string, o: { primary?: string } = {}): Promise<string> {
+    const schema = await this.schema(baseToken);
+    const tableId = newId('tbl', 13);
+    const fieldId = newId('fld', 7);
+    const viewId = newId('vew', 7);
+    const blocks = (schema.blocks ?? []) as string[];
+    const view = {
+      id: viewId,
+      name: '表格',
+      publicLevel: 0,
+      type: 1,
+      isPrivate: false,
+      property: {
+        rowHeightLevel: 1,
+        records: [],
+        fields: [fieldId],
+        colInfos: {},
+        filterInfo: null,
+        sortInfo: [],
+        frozenColCount: 1,
+        group: [],
+        autoSort: false,
+        cardViewSetting: null,
+        colorInfo: null,
+      },
+      index: 0,
+    };
+    const field = {
+      id: fieldId,
+      name: o.primary ?? '名称',
+      type: FIELD_TYPES.text,
+      property: null,
+      fieldUIType: UI_TYPES.text,
+      allowedEditModes: { manual: true, scan: false },
+    };
+    await this.send('BITABLE_BASE', baseToken, undefined, Number(schema.rev ?? 0), [
+      {
+        command: 'AddTableV2',
+        type: 1,
+        actions: [
+          {
+            action: 'base.addTableV2',
+            type: 1,
+            tableId,
+            isRecover: false,
+            contentCreation: false,
+            sourceTableId: null,
+            renewRecord: true,
+            data: {
+              index: ((schema.tables ?? []) as string[]).length,
+              blockIndex: blocks.length,
+              name,
+              exInfo: { contentCreation: false },
+              parentId: null,
+              snapshot: {
+                recordMap: {},
+                fieldMap: { [fieldId]: field },
+                primaryKey: fieldId,
+                viewMap: { [viewId]: view },
+                recordMeta: {},
+                commentMap: {},
+                resourceMap: {},
+                milestoneMap: {},
+                recordsNum: 0,
+                rankInfo: {
+                  rankStep: 1048576,
+                  nextRank: 'i00000000',
+                  rankMap: {},
+                  viewRankMap: { [viewId]: { rankMap: {} } },
+                },
+              },
+              total: blocks.length,
+            },
+          },
+        ],
+        authInfo: { src_prod_type: 'BITABLE_TABLE_IND' },
+      },
+    ]);
+    return tableId;
+  }
+
+  /** Remove a table (to the Base's trash); a Base keeps at least one table. */
+  async deleteTable(baseToken: string, tableId: string): Promise<void> {
+    const schema = await this.schema(baseToken);
+    const tables = (schema.tables ?? []) as string[];
+    const index = tables.indexOf(tableId);
+    if (index < 0) throw new Error(`找不到数据表 ${tableId}`);
+    if (tables.length === 1) throw new Error('多维表格至少要留一张数据表');
+    const blocks = (schema.blocks ?? []) as string[];
+    const infos = (schema.tableInfos ?? {}) as Record<string, Dict>;
+    await this.send('BITABLE_BASE', baseToken, undefined, Number(schema.rev ?? 0), [
+      {
+        command: 'DeleteTable',
+        type: 1,
+        actions: [
+          {
+            action: 'base.deleteTable',
+            type: 1,
+            tableId,
+            name: String(infos[tableId]?.name ?? ''),
+            data: {
+              index,
+              blockIndex: blocks.indexOf(tableId),
+              parentId: null,
+              total: blocks.length,
+            },
+          },
+        ],
+      },
+    ]);
   }
 
   /** A table's fields (the first table when tableId is omitted). */
@@ -416,6 +535,33 @@ export class Base {
     return fieldId;
   }
 
+  /** Remove a field (by id or name); the primary field cannot be removed. */
+  async deleteField(baseToken: string, field: string, o: { table?: string } = {}) {
+    const t = await this.load(baseToken, o.table, 1);
+    const index = t.fields.findIndex((f) => f.id === field || f.name === field);
+    const target = t.fields[index];
+    if (!target) throw new Error(`没有这个字段: ${field}`);
+    if (target.primary) throw new Error(`主字段不能删除: ${target.name}`);
+    await this.commit(t, [
+      {
+        command: 'DeleteFields',
+        type: 2,
+        syncFlag: 0,
+        actions: [
+          {
+            action: 'data.deleteField',
+            type: 2,
+            tableId: t.id,
+            fieldId: target.id,
+            viewId: t.viewId,
+            name: target.name,
+            data: { indexes: { [t.viewId]: index }, total: t.fields.length },
+          },
+        ],
+      },
+    ]);
+  }
+
   /** SetRecord (and AddOptions for select names the field lacks) for a record's new values. */
   private setOps(t: TableState, recordId: string, values: Record<string, CellInput>): Dict[] {
     const ops: Dict[] = [];
@@ -512,24 +658,36 @@ export class Base {
 
   /** Sends operations to a table; throws unless the server accepts the commit. */
   private async commit(t: TableState, operations: Dict[]): Promise<number> {
+    t.rev = await this.send('BITABLE_TABLE', t.id, t.baseToken, t.rev, operations);
+    return t.rev;
+  }
+
+  /** Sends USER_CHANGES to a table (BITABLE_TABLE) or the Base (BITABLE_BASE); returns the new rev. */
+  private async send(
+    kind: 'BITABLE_TABLE' | 'BITABLE_BASE',
+    token: string,
+    routeKey: string | undefined,
+    localRev: number,
+    operations: Dict[],
+  ): Promise<number> {
     const memberId = Math.floor(Math.random() * 9e13) + 1e13;
     const reply = check(
       await this.web.json('POST', '/space/api/rce/messages', {
         query: { member_id: memberId },
         headers: { 'x-command': 'api.bitable.rce.message' },
         json: {
-          type: 'BITABLE_TABLE',
+          type: kind,
           version: 2,
           req_id: 1,
           data: {
             member_id: memberId,
             user_ticket: '',
             type: 'USER_CHANGES',
-            token: t.id,
-            route_key: t.baseToken,
+            token,
+            ...(routeKey ? { route_key: routeKey } : {}),
             lang: 'zh',
             suiteLang: 'zh',
-            localRev: t.rev,
+            localRev,
             operations: zip(operations),
             signature: crypto.randomUUID(),
             content_type: 'gzip/base64',
@@ -543,8 +701,16 @@ export class Base {
       throw new Error(
         `写入多维表格失败: ${String(data.msg ?? data.type)}(${String(data.code ?? '')})`,
       );
-    t.rev = Number(data.rev ?? t.rev + 1);
-    return t.rev;
+    return Number(data.rev ?? localRev + 1);
+  }
+
+  /** The Base's schema (`base`: tables, blocks, rev, ...). */
+  private async schema(baseToken: string): Promise<Dict> {
+    const body = check(
+      await this.web.json('GET', `/space/api/bitable/${baseToken}/client_vars/`),
+      '读取多维表格',
+    );
+    return unzip((body.data as Dict | undefined)?.gzipSchema).base as Dict;
   }
 
   /** A table's state from clientvars, with the first `recordLimit` records. */
