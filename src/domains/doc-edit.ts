@@ -44,20 +44,20 @@ type Dict = Record<string, unknown>;
 const ID_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const ID_LENGTH = 27;
 
-/** The two-letter operation id new block ids of a document carry. */
+/** The two-letter operation id new block ids of a document (or slides deck) carry. */
 export function operationId(docToken: string): string {
   const t = docToken;
-  if (t.length !== ID_LENGTH || t.startsWith('dox')) return t.slice(3, 5);
-  // Tokens not starting with "dox" carry the five characters at 4, 9, 14, 19, 24 up front.
+  if (t.length !== ID_LENGTH || /^(dox|sld)/.test(t)) return t.slice(3, 5);
+  // Scrambled tokens carry the five characters at 4, 9, 14, 19, 24 up front.
   return [4, 9, 14, 19, 24]
     .map((i) => t.charAt(i))
     .join('')
     .slice(3, 5);
 }
 
-/** A new block id for a document. */
-export function newBlockId(docToken: string): string {
-  let id = `dox${operationId(docToken)}`;
+/** A new block id for a document; slides decks use the prefix "sld". */
+export function newBlockId(docToken: string, prefix = 'dox'): string {
+  let id = `${prefix}${operationId(docToken)}`;
   const bytes = crypto.getRandomValues(new Uint8Array(ID_LENGTH));
   for (let i = 0; id.length < ID_LENGTH; i++)
     id += ID_CHARS[(bytes[i] as number) % ID_CHARS.length];
@@ -197,14 +197,18 @@ interface Prepared {
   images: Map<BlockSpec, ImageFile>;
 }
 
-/** Commits block changes (`{block id: {id, version, payload: {ops}}}`) to a docx. */
+/**
+ * Commits block changes (`{block id: {id, version, payload: {ops}}}`) to a docx, or to a slides
+ * deck with `path` `/space/api/slide/blocks/user_change`.
+ */
 export async function commitChanges(
   web: WebSession,
   docToken: string,
   changeMap: Record<string, Dict>,
+  path = '/space/api/docx/blocks/user_change',
 ): Promise<void> {
   const reply = check(
-    await web.json('POST', '/space/api/docx/blocks/user_change', {
+    await web.json('POST', path, {
       json: {
         member_id: String(Math.floor(Math.random() * 9e13) + 1e13),
         uuid: crypto.randomUUID(),

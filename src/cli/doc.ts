@@ -16,6 +16,7 @@ import {
   IMPORTABLE,
 } from '../domains/docs.js';
 import { MindnoteEditor } from '../domains/mindnote.js';
+import { SlidesEditor } from '../domains/slides.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
@@ -525,6 +526,46 @@ const attach: Command = {
     }),
 };
 
+const SLIDES_ARG = {
+  name: 'doc',
+  help: '幻灯片链接(含知识库链接),或 obj_token(配合 --type slides)',
+};
+
+const slideCp: Command = {
+  name: 'slide-cp',
+  help: '复制幻灯片的一页(连同备注),默认放到最后',
+  access: 'doc.slide-cp',
+  positionals: [SLIDES_ARG, { name: 'page', help: '要复制的页(从 1 开始)' }],
+  options: [TYPE_OPTION, { name: 'at', kind: 'int', help: '放到第几页(默认最后)' }],
+  run: (a) =>
+    guarded(async () => {
+      const at = await new SlidesEditor(web()).copyPage(
+        (await ref(a)).token,
+        Number(a.page),
+        a.at === undefined ? {} : { at: Number(a.at) },
+      );
+      out(`已复制到第 ${at} 页`);
+      return 0;
+    }),
+};
+
+const slideRm: Command = {
+  name: 'slide-rm',
+  help: '删除幻灯片的页(可在历史记录里找回)',
+  access: 'doc.slide-rm',
+  positionals: [SLIDES_ARG, { name: 'pages', nargs: '+', help: '页码(从 1 开始)' }],
+  options: [TYPE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const n = await new SlidesEditor(web()).removePages(
+        (await ref(a)).token,
+        (a.pages as string[]).map(Number),
+      );
+      out(`已删除 ${n} 页`);
+      return 0;
+    }),
+};
+
 const writeDoc: Command = {
   name: 'write',
   help: '用 Markdown 替换 docx 的正文(标题保留)',
@@ -541,17 +582,25 @@ const writeDoc: Command = {
 
 const replace: Command = {
   name: 'replace',
-  help: '在 docx 里查找替换文字(保留原格式)',
+  help: '在 docx 或幻灯片里查找替换文字(保留原格式)',
   access: 'doc.replace',
   positionals: [DOC_ARG, { name: 'find' }, { name: 'replacement' }],
-  options: [TYPE_OPTION],
+  options: [TYPE_OPTION, { name: 'page', kind: 'int', help: '幻灯片:只替换这一页(从 1 开始)' }],
   run: (a) =>
     guarded(async () => {
-      const r = await new DocEditor(web()).replace(
-        (await ref(a)).token,
-        String(a.find),
-        String(a.replacement),
-      );
+      const d = await ref(a);
+      const find = String(a.find);
+      const replacement = String(a.replacement);
+      if (d.type !== 'slides' && a.page !== undefined) throw new Error('--page 只用于幻灯片');
+      const r =
+        d.type === 'slides'
+          ? await new SlidesEditor(web()).replace(
+              d.token,
+              find,
+              replacement,
+              a.page === undefined ? {} : { page: Number(a.page) },
+            )
+          : await new DocEditor(web()).replace(d.token, find, replacement);
       out(
         `已替换 ${r.replaced} 处(${r.blocks} 个块)${r.skipped ? `,跳过 ${r.skipped} 个无法处理的块` : ''}`,
       );
@@ -658,6 +707,8 @@ export const doc: CommandGroup = {
     attach,
     writeDoc,
     replace,
+    slideCp,
+    slideRm,
     history,
     historyFetch,
     revert,
