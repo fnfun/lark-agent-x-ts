@@ -130,7 +130,14 @@ interface TableState {
 }
 
 /** View types this module creates, by the server's number. */
-export const VIEW_TYPES = { grid: 1, kanban: 2, gallery: 4, gantt: 5, calendar: 7 } as const;
+export const VIEW_TYPES = {
+  grid: 1,
+  kanban: 2,
+  form: 3,
+  gallery: 4,
+  gantt: 5,
+  calendar: 7,
+} as const;
 export type ViewType = keyof typeof VIEW_TYPES;
 
 /** View filter operators, as the web app names them. */
@@ -682,9 +689,9 @@ export class Base {
 
   /**
    * Add a view at the end, showing all fields: a grid (default), a kanban grouped by a single
-   * select field (`group`, the first one by default), a gallery (cover: the first attachment
-   * field), or a calendar / gantt over date fields (`start` / `end`, the first date field by
-   * default); returns its id.
+   * select field (`group`, the first one by default), a form asking for every field, a gallery
+   * (cover: the first attachment field), or a calendar / gantt over date fields (`start` / `end`,
+   * the first date field by default); returns its id.
    */
   async addView(
     baseToken: string,
@@ -765,6 +772,20 @@ export class Base {
         };
         break;
       }
+      case 'form':
+        // A form asks for every field; submissions become records.
+        property = {
+          fields,
+          fieldInfos: Object.fromEntries(
+            fields.map((id) => [id, { visible: true, description: {} }]),
+          ),
+          formBanner: '',
+          filterInfo: null,
+          sortInfo: null,
+          formBannerInfo: null,
+          primaryKey: t.fields.find((f) => f.primary)?.id ?? '',
+        };
+        break;
       case 'gantt': {
         const primary = t.fields.find((f) => f.primary)?.id ?? '';
         property = {

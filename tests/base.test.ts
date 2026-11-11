@@ -443,11 +443,11 @@ describe('多维表格', () => {
     expect(() => parseCondition('没有运算符')).toThrow('看不懂');
   });
 
-  test('视图类型：看板按单选字段分组并隐藏它，画册不带附件字段时不显示封面，日历和甘特默认用第一个日期字段；字段类型不对时不发', async () => {
+  test('视图类型：表单问全部字段，看板按单选字段分组并隐藏它，画册不带附件字段时不显示封面，日历和甘特默认用第一个日期字段；字段类型不对时不发', async () => {
     const { base, commits } = fake();
-    const kinds = ['kanban', 'gallery', 'calendar', 'gantt'] as const;
+    const kinds = ['kanban', 'gallery', 'calendar', 'gantt', 'form'] as const;
     for (const type of kinds) await base.addView('B1', type, { type });
-    const [kanban, gallery, calendar, gantt] = commits.map(
+    const [kanban, gallery, calendar, gantt, form] = commits.map(
       (c) => firstAction(c.ops[0]).data as Dict & { property: Dict },
     );
     expect(kanban).toMatchObject({
@@ -470,12 +470,19 @@ describe('多维表格', () => {
       type: 5,
       property: { ganttConfig: { titleField: 'fldText', timeBarValue: { timingValue: timing } } },
     });
+    expect(form).toMatchObject({
+      type: 3,
+      property: {
+        primaryKey: 'fldText',
+        fieldInfos: { fldText: { visible: true }, fldUrl: { visible: true } },
+      },
+    });
     await expect(base.addView('B1', 'x', { type: 'kanban', group: '标题' })).rejects.toThrow(
       '不是单选字段',
     );
     await expect(base.addView('B1', 'x', { type: 'gantt', end: '金额' })).rejects.toThrow(
       '不是日期字段',
     );
-    expect(commits).toHaveLength(4);
+    expect(commits).toHaveLength(5);
   });
 });

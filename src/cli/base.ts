@@ -280,7 +280,7 @@ const attach: Command = {
 
 const viewAdd: Command = {
   name: 'view-add',
-  help: '新建视图(显示全部字段):表格、看板(按单选字段分组)、画册、日历和甘特(按日期字段)',
+  help: '新建视图(显示全部字段):表格、看板(按单选字段分组)、表单、画册、日历和甘特(按日期字段)',
   access: 'base.view-add',
   positionals: [BASE_ARG, { name: 'name', nargs: '+' }],
   options: [
