@@ -7,6 +7,8 @@ import {
   FIELD_TYPES,
   type FieldType,
   type FilterCondition,
+  VIEW_TYPES,
+  type ViewType,
 } from '../domains/base.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
@@ -278,18 +280,26 @@ const attach: Command = {
 
 const viewAdd: Command = {
   name: 'view-add',
-  help: '新建表格视图(显示全部字段)',
+  help: '新建视图(显示全部字段):表格、看板(按单选字段分组)、画册、日历和甘特(按日期字段)',
   access: 'base.view-add',
   positionals: [BASE_ARG, { name: 'name', nargs: '+' }],
-  options: [TABLE_OPTION],
+  options: [
+    TABLE_OPTION,
+    { name: 'type', kind: 'string', choices: Object.keys(VIEW_TYPES), default: 'grid' },
+    { name: 'group', kind: 'string', help: '看板:分组用的单选字段(默认第一个)' },
+    { name: 'start', kind: 'string', help: '日历/甘特:开始日期字段(默认第一个日期字段)' },
+    { name: 'end', kind: 'string', help: '日历/甘特:结束日期字段(默认同开始)' },
+  ],
   run: (a) =>
     guarded(async () => {
       const t = await target(a);
-      const id = await new Base(web()).addView(
-        t.token,
-        (a.name as string[]).join(' '),
-        t.table ? { table: t.table } : {},
-      );
+      const id = await new Base(web()).addView(t.token, (a.name as string[]).join(' '), {
+        ...(t.table ? { table: t.table } : {}),
+        type: String(a.type) as ViewType,
+        ...(a.group ? { group: String(a.group) } : {}),
+        ...(a.start ? { start: String(a.start) } : {}),
+        ...(a.end ? { end: String(a.end) } : {}),
+      });
       out(`已新建 view_id=${id}`);
       return 0;
     }),

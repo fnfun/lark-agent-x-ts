@@ -129,6 +129,10 @@ interface TableState {
   views: BaseView[];
 }
 
+/** View types this module creates, by the server's number. */
+export const VIEW_TYPES = { grid: 1, kanban: 2, gallery: 4, gantt: 5, calendar: 7 } as const;
+export type ViewType = keyof typeof VIEW_TYPES;
+
 /** View filter operators, as the web app names them. */
 export const FILTER_OPERATORS = [
   'is',
@@ -676,10 +680,114 @@ export class Base {
     return fieldId;
   }
 
-  /** Add a grid view at the end, showing the fields in the table's order; returns its id. */
-  async addView(baseToken: string, name: string, o: { table?: string } = {}): Promise<string> {
+  /**
+   * Add a view at the end, showing all fields: a grid (default), a kanban grouped by a single
+   * select field (`group`, the first one by default), a gallery (cover: the first attachment
+   * field), or a calendar / gantt over date fields (`start` / `end`, the first date field by
+   * default); returns its id.
+   */
+  async addView(
+    baseToken: string,
+    name: string,
+    o: { table?: string; type?: ViewType; group?: string; start?: string; end?: string } = {},
+  ): Promise<string> {
     const t = await this.load(baseToken, o.table, 1);
+    const type = o.type ?? 'grid';
     const viewId = newId('vew', 7);
+    const fields = t.fields.map((f) => f.id);
+    const visible = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, { hidden: false }]));
+    const firstOf = (kind: number, given: string | undefined, what: string) => {
+      const f = given === undefined ? t.fields.find((x) => x.type === kind) : fieldOf(t, given);
+      if (!f) throw new Error(`${what}需要一个${kind === FIELD_TYPES.date ? '日期' : '单选'}字段`);
+      if (f.type !== kind)
+        throw new Error(`${f.name} 不是${kind === FIELD_TYPES.date ? '日期' : '单选'}字段`);
+      return f.id;
+    };
+    const timing = () => {
+      const start = firstOf(FIELD_TYPES.date, o.start, '日历和甘特视图');
+      const end = o.end === undefined ? start : firstOf(FIELD_TYPES.date, o.end, '日历和甘特视图');
+      return {
+        timeBarColor: { type: 1, specificColor: 0 },
+        timeBarValue: { type: 1, timingValue: { startDateFieldId: start, endDateFieldId: end } },
+      };
+    };
+    const common = { filterInfo: null, sortInfo: [], autoSort: false, fields };
+    let property: Dict;
+    switch (type) {
+      case 'kanban': {
+        const group = firstOf(FIELD_TYPES.select, o.group, '看板视图');
+        property = {
+          ...common,
+          group: [{ fieldId: group, desc: false }],
+          colInfos: {},
+          groupOrder: [],
+          cardConfig: {
+            coverFieldId: null,
+            coverFitType: 'crop',
+            showCover: false,
+            showMode: 'normal',
+            showFieldName: false,
+          },
+          sectionInfos: { [group]: { hidden: true } },
+        };
+        break;
+      }
+      case 'gallery': {
+        const cover = t.fields.find((f) => f.type === ATTACHMENT)?.id ?? null;
+        property = {
+          ...common,
+          galleryConfig: {
+            showFieldName: false,
+            coverFitType: 'crop',
+            coverPosition: 2,
+            layoutColumn: 0,
+            showCover: cover !== null,
+            coverFieldId: cover,
+          },
+          sectionInfos: visible(fields),
+        };
+        break;
+      }
+      case 'calendar': {
+        const bar = timing();
+        const { startDateFieldId, endDateFieldId } = bar.timeBarValue.timingValue;
+        const primary = t.fields.find((f) => f.primary)?.id ?? '';
+        property = {
+          ...common,
+          calendarConfig: {
+            timeScale: 3,
+            timeAxisSize: 1,
+            defaultDuration: 2,
+            fieldStyleMap: {},
+            ...bar,
+          },
+          sectionInfos: visible([...new Set([primary, startDateFieldId, endDateFieldId])]),
+        };
+        break;
+      }
+      case 'gantt': {
+        const primary = t.fields.find((f) => f.primary)?.id ?? '';
+        property = {
+          ...common,
+          rowHeightLevel: 1,
+          colInfos: { [primary]: { hidden: false } },
+          frozenColCount: 1,
+          group: [],
+          ganttConfig: { ...timing(), officialHoliday: false, titleField: primary },
+        };
+        break;
+      }
+      default:
+        property = {
+          ...common,
+          rowHeightLevel: 1,
+          colInfos: {},
+          frozenColCount: 1,
+          group: [],
+          cardViewSetting: null,
+          colorInfo: null,
+        };
+    }
     const me = check(await this.web.json('GET', '/space/api/user/'), '读取用户信息');
     await this.commit(t, [
       {
@@ -693,22 +801,11 @@ export class Base {
             tableId: t.id,
             viewId,
             data: {
-              type: 1,
+              type: VIEW_TYPES[type],
               index: t.views.length,
               name,
               isPrivate: false,
-              property: {
-                rowHeightLevel: 1,
-                fields: t.fields.map((f) => f.id),
-                colInfos: {},
-                filterInfo: null,
-                sortInfo: [],
-                frozenColCount: 1,
-                group: [],
-                autoSort: false,
-                cardViewSetting: null,
-                colorInfo: null,
-              },
+              property,
               owner: String((me.data as Dict | undefined)?.suid ?? ''),
               bizType: 0,
               total: t.views.length,

@@ -51,6 +51,8 @@ export {
   type FieldType,
   type FilterCondition,
   type SelectOption,
+  VIEW_TYPES,
+  type ViewType,
 } from './domains/base.js';
 export {
   Calendar,
