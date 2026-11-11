@@ -11,12 +11,15 @@
  *   after a parenthesised expression, `F:<NAME>:<argument count>` after a function's arguments.
  * - `tokens`: the formula text without "=", cut at the references: `C<text>` pieces and `R<n>`.
  *
- * Operator precedence follows Excel: comparisons < & < + - < * / < ^ < % < unary + -. References to
- * other sheets are not supported.
+ * - A reference to another tab (`'数据'!A1` or `数据!A1`) carries that tab's `sheetId`; the
+ *   `'name'!` prefix belongs to the reference, not to the text pieces around it.
+ *
+ * Operator precedence follows Excel: comparisons < & < + - < * / < ^ < % < unary + -.
  */
 
 export interface FormulaRef {
   type: number;
+  sheetId?: string;
   row?: number;
   rowCount?: number;
   col?: number;
@@ -87,17 +90,20 @@ function parseRef(text: string): FormulaRef | null {
   return null;
 }
 
+/** A tab prefix: 'quoted name'! (quotes doubled inside) or a bare name followed by "!". */
+const SHEET_PREFIX = /'((?:[^']|'')+)'!|([^\s!'"(),+\-*/^&=<>%:;{}]+)!/y;
 const REF =
   /\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?|\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}|\$?\d+:\$?\d+/y;
 const NUMBER = /\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?/y;
 const FUNC = /([A-Za-z_][A-Za-z0-9_.]*)\s*\(/y;
 const OPERATORS = ['<=', '>=', '<>', '+', '-', '*', '/', '^', '&', '=', '<', '>', '%'];
 
-/** Compiles a formula ("=..." ) into its formulaData; throws on what it cannot represent. */
-export function compileFormula(formula: string): FormulaData {
+/**
+ * Compiles a formula ("=...") into its formulaData; `sheets` maps tab names to ids for references
+ * to other tabs. Throws on what it cannot represent.
+ */
+export function compileFormula(formula: string, sheets: Record<string, string> = {}): FormulaData {
   const body = formula.replace(/^=/, '');
-  if (body.replace(/"(?:[^"]|"")*"/g, '').includes('!'))
-    throw new Error(`暂不支持引用其他工作表: ${formula}`);
   const refs: Record<string, FormulaRef> = {};
   const tokens: string[] = [];
   const lexed: Token[] = [];
@@ -140,21 +146,33 @@ export function compileFormula(formula: string): FormulaData {
       i += func[0].length;
       continue;
     }
-    const ref = at(REF);
+    const prefix = at(SHEET_PREFIX);
+    let sheetId: string | undefined;
+    let start = i;
+    if (prefix) {
+      const sheetName =
+        prefix[1] !== undefined ? prefix[1].replace(/''/g, "'") : (prefix[2] as string);
+      sheetId = sheets[sheetName];
+      if (sheetId === undefined) throw new Error(`公式里引用的工作表不存在: ${sheetName}`);
+      start = i + prefix[0].length;
+    }
+    REF.lastIndex = start;
+    const ref = REF.exec(body);
     if (ref) {
-      const after = body[i + ref[0].length];
+      const after = body[start + ref[0].length];
       const parsed = after && /[A-Za-z0-9_(]/.test(after) ? null : parseRef(ref[0]);
       if (parsed) {
         const name = `R${Object.keys(refs).length + 1}`;
-        refs[name] = parsed;
+        refs[name] = sheetId === undefined ? parsed : { ...parsed, sheetId };
         if (text) tokens.push(`C${text}`);
         tokens.push(name);
         text = '';
         lexed.push({ kind: 'ref', name });
-        i += ref[0].length;
+        i = start + ref[0].length;
         continue;
       }
     }
+    if (prefix) throw new Error(`看不懂的公式: ${formula}(工作表名后面要跟单元格或区域)`);
     const num = at(NUMBER);
     if (num) {
       lexed.push({ kind: 'num', text: num[0] });

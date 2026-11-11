@@ -211,7 +211,7 @@ describe('表格', () => {
     ]);
   });
 
-  test('写公式：带上公式和解析结果、值留空由网页端计算；引用其他工作表时什么都不发', async () => {
+  test('写公式：带上公式和解析结果、值留空由网页端计算；引用的工作表按名字换成 id，不存在时什么都不发', async () => {
     const { sheets, sent, actions } = fakeSheets();
     await sheets.write('T', { C1: '=SUM(A1:B1)' });
     expect(actions(0)[0]?.[3]).toMatchObject({
@@ -219,8 +219,12 @@ describe('表格', () => {
       value: null,
       formulaData: { refs: { R1: { col: 0, colCount: 2, row: 0, rowCount: 1 } } },
     });
-    await expect(sheets.write('T', { A2: '=Sheet2!A1' })).rejects.toThrow('其他工作表');
-    expect(sent).toHaveLength(1);
+    await sheets.write('T', { A2: "='Sheet1'!A1" });
+    expect(actions(1)[0]?.[3]).toMatchObject({
+      formulaData: { refs: { R1: { sheetId: 's1' } } },
+    });
+    await expect(sheets.write('T', { A2: '=Sheet2!A1' })).rejects.toThrow('工作表不存在');
+    expect(sent).toHaveLength(2);
   });
 
   test('插入删除行列：行号从 1、列用字母，换成从 0 开始的位置和数量；位置或数量不合法时不发', async () => {

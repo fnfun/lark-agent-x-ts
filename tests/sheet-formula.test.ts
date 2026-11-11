@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { compileFormula } from '../src/domains/sheet-formula.js';
+import { compileFormula, type FormulaData } from '../src/domains/sheet-formula.js';
 
 // Expected values are what the Sheets web app sent for these formulas typed into a sheet.
 const cell = (row: number, col: number, type = 0, rowCount = 1, colCount = 1) => ({
@@ -87,8 +87,24 @@ describe('表格公式', () => {
     });
   });
 
-  test('引用其他工作表、括号不配对时报错', () => {
-    expect(() => compileFormula('=Sheet2!A1')).toThrow('其他工作表');
+  test('引用其他工作表：引用带上该表的 id，表名前缀算在引用里；加引号和不加引号的表名一样', () => {
+    const sheets = { 数据: '70P1BH' };
+    const expected: FormulaData = {
+      v: 1,
+      refs: {
+        R1: { ...cell(0, 0), sheetId: '70P1BH' },
+        R2: { ...cell(0, 0, 0, 2), sheetId: '70P1BH' },
+        R3: { type: 2, col: 1, colCount: 1, sheetId: '70P1BH' },
+      },
+      tree: ['R1', 'R2', 'F:SUM:1', 'OB+', 'R3', 'OB+'],
+      tokens: ['R1', 'C+SUM(', 'R2', 'C)+', 'R3'],
+    };
+    expect(compileFormula("='数据'!A1+SUM('数据'!A1:A2)+'数据'!B:B", sheets)).toEqual(expected);
+    expect(compileFormula('=数据!A1+SUM(数据!A1:A2)+数据!B:B', sheets)).toEqual(expected);
+  });
+
+  test('引用不存在的工作表、括号不配对时报错', () => {
+    expect(() => compileFormula('=Sheet2!A1')).toThrow('工作表不存在');
     expect(() => compileFormula('=SUM(A1')).toThrow('括号');
   });
 });

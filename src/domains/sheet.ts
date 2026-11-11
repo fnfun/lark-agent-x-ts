@@ -156,19 +156,23 @@ function action(
 
 const TAB_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
-/** The protobuf action that sets one cell (a value, or a formula starting with "="). */
+/**
+ * The protobuf action that sets one cell (a value, or a formula starting with "="); `sheets` maps
+ * tab names to ids for formulas referring to other tabs.
+ */
 export function setCellAction(
   sheetId: string,
   row: number,
   col: number,
   value: CellValue,
+  sheets: Record<string, string> = {},
 ): number[] {
   const cell =
     typeof value === 'string' && value.startsWith('=')
       ? {
           style: null,
           formula: value,
-          formulaData: compileFormula(value),
+          formulaData: compileFormula(value, sheets),
           value: null,
           reminder: null,
           dataValidation: null,
@@ -230,9 +234,10 @@ export class Sheets {
     const state = await this.state(token);
     const tab = o.sheet ? state.tabs.find((t) => t.name === o.sheet) : state.tabs[0];
     if (!tab) throw new Error(`没有这个工作表: ${o.sheet ?? ''}`);
+    const ids = Object.fromEntries(state.tabs.map((t) => [t.name, t.id]));
     const actions = Object.entries(cells).flatMap(([ref, v]) => {
       const [row, col] = cellIndex(ref);
-      return setCellAction(tab.id, row, col, cellValue(v));
+      return setCellAction(tab.id, row, col, cellValue(v), ids);
     });
     return this.send(token, state.revision, actions);
   }
