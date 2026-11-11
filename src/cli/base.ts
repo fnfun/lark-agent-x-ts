@@ -1,7 +1,13 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { LarkAuth } from '../auth.js';
-import { Base, type CellInput, FIELD_TYPES, type FieldType } from '../domains/base.js';
+import {
+  Base,
+  type CellInput,
+  FIELD_TYPES,
+  type FieldType,
+  type FilterCondition,
+} from '../domains/base.js';
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
@@ -111,7 +117,7 @@ const records: Command = {
   positionals: [BASE_ARG],
   options: [
     TABLE_OPTION,
-    { name: 'view', kind: 'string', help: '按这个视图的顺序(视图 id,见 views)' },
+    { name: 'view', kind: 'string', help: '按这个视图的顺序和筛选(视图 id 或名字,见 views)' },
     {
       name: 'where',
       kind: 'string',
@@ -289,6 +295,88 @@ const viewAdd: Command = {
     }),
 };
 
+const VIEW_OPTION = { name: 'view', kind: 'string' as const, help: '视图 id 或名字(默认当前视图)' };
+const viewOf = (a: Record<string, unknown>, t: { table?: string }) => ({
+  ...(t.table ? { table: t.table } : {}),
+  ...(a.view ? { view: String(a.view) } : {}),
+});
+/** "字段" or "字段:desc" → a sort / group key. */
+const orderBy = (specs: string[]) =>
+  specs.map((s) => {
+    const m = /^(.*?)(?::(asc|desc))?$/.exec(s) as RegExpExecArray;
+    return { field: m[1] as string, desc: m[2] === 'desc' };
+  });
+
+const viewSort: Command = {
+  name: 'view-sort',
+  help: '设置视图的排序(字段 或 字段:desc,按先后;不给字段为取消排序)',
+  access: 'base.view-sort',
+  positionals: [BASE_ARG, { name: 'fields', nargs: '*' }],
+  options: [TABLE_OPTION, VIEW_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      await new Base(web()).setSort(t.token, orderBy(a.fields as string[]), viewOf(a, t));
+      out('已设置');
+      return 0;
+    }),
+};
+
+const viewGroup: Command = {
+  name: 'view-group',
+  help: '设置视图的分组(字段 或 字段:desc;不给字段为取消分组)',
+  access: 'base.view-group',
+  positionals: [BASE_ARG, { name: 'fields', nargs: '*' }],
+  options: [TABLE_OPTION, VIEW_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      await new Base(web()).setGroup(t.token, orderBy(a.fields as string[]), viewOf(a, t));
+      out('已设置');
+      return 0;
+    }),
+};
+
+/** "字段=值" is, "字段!=值" is not, "字段~值" contains, "字段!~值" does not contain; an empty value with = / != is empty / not empty. */
+export function parseCondition(spec: string): FilterCondition {
+  const m = /^(.+?)(!=|!~|=|~|>|<)(.*)$/.exec(spec);
+  if (!m) throw new Error(`看不懂的筛选条件: ${spec}(写成 字段=值、字段!=值、字段~值、字段!~值)`);
+  const [, field, op, value] = m as unknown as [string, string, string, string];
+  if (value === '' && (op === '=' || op === '!='))
+    return { field, operator: op === '=' ? 'isEmpty' : 'isNotEmpty' };
+  const operator = {
+    '=': 'is',
+    '!=': 'isNot',
+    '~': 'contains',
+    '!~': 'doesNotContain',
+    '>': 'isGreater',
+    '<': 'isLess',
+  }[op] as string;
+  return { field, operator, value: [value] };
+}
+
+const viewFilter: Command = {
+  name: 'view-filter',
+  help: '设置视图的筛选条件(字段=值、字段!=值、字段~值 包含、字段!~值 不含、字段> / 字段< 比较;值留空为 为空 / 不为空;不给条件为取消筛选)',
+  access: 'base.view-filter',
+  positionals: [BASE_ARG, { name: 'conditions', nargs: '*' }],
+  options: [
+    TABLE_OPTION,
+    VIEW_OPTION,
+    { name: 'or', kind: 'flag', help: '满足任一条件即可(默认全部满足)' },
+  ],
+  run: (a) =>
+    guarded(async () => {
+      const t = await target(a);
+      await new Base(web()).setFilter(t.token, (a.conditions as string[]).map(parseCondition), {
+        ...viewOf(a, t),
+        ...(a.or ? { or: true } : {}),
+      });
+      out('已设置');
+      return 0;
+    }),
+};
+
 const viewRm: Command = {
   name: 'view-rm',
   help: '删除视图(按 view_id 或名字;至少留一个)',
@@ -357,7 +445,7 @@ const tableRm: Command = {
 
 export const baseGroup: CommandGroup = {
   name: 'base',
-  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、筛选、搜索),增删改记录,上传附件,增删字段、视图和数据表',
+  help: '多维表格:列数据表、字段、视图、记录(可按视图排序、筛选、搜索),增删改记录,上传附件,增删字段、视图和数据表,设置视图的排序、分组和筛选',
   subcommands: [
     tables,
     fields,
@@ -371,6 +459,9 @@ export const baseGroup: CommandGroup = {
     fieldRm,
     viewAdd,
     viewRm,
+    viewSort,
+    viewGroup,
+    viewFilter,
     tableAdd,
     tableRm,
   ],

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { parseAssignments } from '../src/cli/base.js';
+import { parseAssignments, parseCondition } from '../src/cli/base.js';
 import { Base, newRecordId, parseDate } from '../src/domains/base.js';
 import type { WebRequest, WebSession } from '../src/web.js';
 
@@ -366,5 +366,80 @@ describe('多维表格', () => {
     });
     await expect(two.base.deleteView('B1', '没有')).rejects.toThrow('没有这个视图');
     expect([commits.length, two.commits.length]).toEqual([1, 1]);
+  });
+
+  test('视图设置：排序和分组按字段 id 和方向；筛选把单选的选项名换成 id、为空类条件不带值，可选“任一满足”；视图可按名字指定', async () => {
+    const two = {
+      ...TABLE,
+      views: ['vew1', 'vew2'],
+      viewMap: { ...TABLE.viewMap, vew2: { name: '周报', property: { fields: [] } } },
+    };
+    const { base, commits } = fake([two]);
+    await base.setSort('B1', [{ field: '金额', desc: true }, { field: '标题' }], { view: '周报' });
+    expect(firstAction(commits[0]?.ops[0])).toMatchObject({
+      action: 'view.sortRecordsV2',
+      viewId: 'vew2',
+      data: {
+        sortInfo: [
+          { fieldId: 'fldNum', desc: true },
+          { fieldId: 'fldText', desc: false },
+        ],
+        autoSort: true,
+      },
+    });
+    await base.setGroup('B1', [{ field: '状态' }]);
+    expect(firstAction(commits[1]?.ops[0])).toMatchObject({
+      action: 'view.setGroup',
+      viewId: 'vew1',
+      viewType: 1,
+      data: { group: [{ fieldId: 'fldSel', desc: false }] },
+    });
+    await base.setFilter(
+      'B1',
+      [
+        { field: '状态', operator: 'is', value: ['进行中'] },
+        { field: '标题', operator: 'isNotEmpty', value: ['忽略'] },
+      ],
+      { or: true },
+    );
+    const data = firstAction(commits[2]?.ops[0]).data as {
+      conjunction: string;
+      conditions: Dict[];
+    };
+    expect(data.conjunction).toBe('or');
+    expect(data.conditions).toMatchObject([
+      { fieldId: 'fldSel', fieldType: 3, operator: 'is', value: ['optA'] },
+      { fieldId: 'fldText', operator: 'isNotEmpty', value: [] },
+    ]);
+    await expect(
+      base.setFilter('B1', [{ field: '状态', operator: 'is', value: ['没有'] }]),
+    ).rejects.toThrow('没有这个选项');
+    await expect(base.setFilter('B1', [{ field: '标题', operator: 'like' }])).rejects.toThrow(
+      '不认识的筛选条件',
+    );
+    await expect(base.setSort('B1', [], { view: '不存在' })).rejects.toThrow('没有这个视图');
+    expect(commits).toHaveLength(3);
+  });
+
+  test('命令行筛选条件：= != ~ !~ > <；= 和 != 后面留空为 为空 / 不为空；字段名里可以有空格', () => {
+    expect(
+      ['状态=完成', '状态!=完成', '标题~周报', '标题!~草稿', '金额>10', '备注=', '备注!='].map(
+        parseCondition,
+      ),
+    ).toEqual([
+      { field: '状态', operator: 'is', value: ['完成'] },
+      { field: '状态', operator: 'isNot', value: ['完成'] },
+      { field: '标题', operator: 'contains', value: ['周报'] },
+      { field: '标题', operator: 'doesNotContain', value: ['草稿'] },
+      { field: '金额', operator: 'isGreater', value: ['10'] },
+      { field: '备注', operator: 'isEmpty' },
+      { field: '备注', operator: 'isNotEmpty' },
+    ]);
+    expect(parseCondition('任务 名称=a b')).toEqual({
+      field: '任务 名称',
+      operator: 'is',
+      value: ['a b'],
+    });
+    expect(() => parseCondition('没有运算符')).toThrow('看不懂');
   });
 });

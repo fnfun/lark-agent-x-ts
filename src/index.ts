@@ -47,7 +47,9 @@ export {
   type BaseView,
   type CellInput,
   FIELD_TYPES,
+  FILTER_OPERATORS,
   type FieldType,
+  type FilterCondition,
   type SelectOption,
 } from './domains/base.js';
 export {

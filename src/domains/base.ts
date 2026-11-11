@@ -129,6 +129,48 @@ interface TableState {
   views: BaseView[];
 }
 
+/** View filter operators, as the web app names them. */
+export const FILTER_OPERATORS = [
+  'is',
+  'isNot',
+  'contains',
+  'doesNotContain',
+  'isEmpty',
+  'isNotEmpty',
+  'isGreater',
+  'isLess',
+];
+
+export interface FilterCondition {
+  /** Field id or name. */
+  field: string;
+  /** One of FILTER_OPERATORS. */
+  operator: string;
+  /** The values compared with (none for isEmpty / isNotEmpty). */
+  value?: string[];
+}
+
+/** A field of the table by id or name. */
+function fieldOf(t: TableState, field: string): BaseField {
+  const f = t.fields.find((x) => x.id === field || x.name === field);
+  if (!f) throw new Error(`没有这个字段: ${field}`);
+  return f;
+}
+
+/** An operation on the table state's view (`extra` joins the action, e.g. a viewType). */
+const viewOp = (
+  t: TableState,
+  command: string,
+  action: string,
+  data: Dict,
+  extra: Dict = {},
+): Dict => ({
+  command,
+  type: 2,
+  syncFlag: 1,
+  actions: [{ action, type: 2, tableId: t.id, viewId: t.viewId, ...extra, data }],
+});
+
 /** Record ids of a (possibly grouped) view, groups in order. */
 const groupIds = (groups: unknown) =>
   ((groups ?? []) as Dict[]).flatMap((g) => (g.recordIDList ?? []) as string[]);
@@ -678,6 +720,86 @@ export class Base {
     return viewId;
   }
 
+  /** Sort a view (by id or name; the table's current view by default) by fields, in order. */
+  async setSort(
+    baseToken: string,
+    by: { field: string; desc?: boolean }[],
+    o: { table?: string; view?: string } = {},
+  ): Promise<void> {
+    const t = await this.viewState(baseToken, o);
+    await this.commit(t, [
+      viewOp(t, 'SortRecordV2', 'view.sortRecordsV2', {
+        sortInfo: by.map((s) => ({ fieldId: fieldOf(t, s.field).id, desc: s.desc === true })),
+        autoSort: by.length > 0,
+      }),
+    ]);
+  }
+
+  /** Group a view's records by fields, in order (none ungroups). */
+  async setGroup(
+    baseToken: string,
+    by: { field: string; desc?: boolean }[],
+    o: { table?: string; view?: string } = {},
+  ): Promise<void> {
+    const t = await this.viewState(baseToken, o);
+    await this.commit(t, [
+      viewOp(
+        t,
+        'SetGroup',
+        'view.setGroup',
+        { group: by.map((s) => ({ fieldId: fieldOf(t, s.field).id, desc: s.desc === true })) },
+        { viewType: 1 },
+      ),
+    ]);
+  }
+
+  /**
+   * Filter a view (none clears it): records must meet all conditions, or any with `or`. Values are
+   * readable text: option names for select fields, which become their ids.
+   */
+  async setFilter(
+    baseToken: string,
+    conditions: FilterCondition[],
+    o: { table?: string; view?: string; or?: boolean } = {},
+  ): Promise<void> {
+    const t = await this.viewState(baseToken, o);
+    await this.commit(t, [
+      viewOp(t, 'SetFilter', 'view.setFilter', {
+        conjunction: o.or ? 'or' : 'and',
+        conditions: conditions.map((c) => {
+          const f = fieldOf(t, c.field);
+          if (!FILTER_OPERATORS.includes(c.operator))
+            throw new Error(`不认识的筛选条件: ${c.operator}`);
+          const empty = c.operator === 'isEmpty' || c.operator === 'isNotEmpty';
+          const value = empty
+            ? []
+            : (c.value ?? []).map((v) => {
+                if (f.type !== FIELD_TYPES.select && f.type !== FIELD_TYPES.multiselect) return v;
+                const option = f.options.find((x) => x.name === v || x.id === v);
+                if (!option) throw new Error(`${f.name} 没有这个选项: ${v}`);
+                return option.id;
+              });
+          return {
+            fieldId: f.id,
+            fieldType: f.type,
+            operator: c.operator,
+            value,
+            conditionId: newId('con', 7),
+          };
+        }),
+      }),
+    ]);
+  }
+
+  /** A table's state for a view given by id or name (the current view by default). */
+  private async viewState(baseToken: string, o: { table?: string; view?: string }) {
+    const t = await this.load(baseToken, o.table, 1);
+    if (o.view === undefined) return t;
+    const view = t.views.find((v) => v.id === o.view || v.name === o.view);
+    if (!view) throw new Error(`没有这个视图: ${o.view}`);
+    return { ...t, viewId: view.id };
+  }
+
   /** Remove a view (by id or name); a table keeps at least one. */
   async deleteView(baseToken: string, view: string, o: { table?: string } = {}) {
     const t = await this.load(baseToken, o.table, 1);
@@ -908,8 +1030,13 @@ export class Base {
     }
     const fieldMap = (t.fieldMap ?? {}) as Record<string, Dict>;
     const viewMap = (t.viewMap ?? {}) as Record<string, Dict>;
+    if (view && !viewMap[view]) {
+      // A view given by name: load again by its id.
+      const byName = Object.entries(viewMap).find(([, v]) => v.name === view)?.[0];
+      if (!byName) throw new Error(`没有这个视图: ${view}`);
+      return this.load(baseToken, tableId, recordLimit, byName);
+    }
     const viewId = view ?? String(t.currentView ?? ((t.views ?? []) as string[])[0] ?? '');
-    if (view && !viewMap[view]) throw new Error(`没有这个视图: ${view}`);
     const order = ((
       ((t.viewMap as Dict | undefined)?.[viewId] as Dict | undefined)?.property as Dict | undefined
     )?.fields ?? Object.keys(fieldMap)) as string[];
