@@ -584,6 +584,19 @@ const whiteboard: Command = {
     }),
 };
 
+const whiteboardImage: Command = {
+  name: 'whiteboard-image',
+  help: '下载画板的预览图(服务端渲染,与文档里显示的一致)',
+  access: 'doc.whiteboard-image',
+  positionals: [{ name: 'token', help: '画板 token' }],
+  options: [OUT_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      out(`已保存 ${save(await docs().whiteboardImage(String(a.token)), s(a.out))}`);
+      return 0;
+    }),
+};
+
 const writeDoc: Command = {
   name: 'write',
   help: '用 Markdown 替换 docx 的正文(标题保留)',
@@ -722,6 +735,7 @@ export const doc: CommandGroup = {
     rm,
     fetch,
     whiteboard,
+    whiteboardImage,
     append,
     attach,
     writeDoc,

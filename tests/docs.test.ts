@@ -358,6 +358,22 @@ describe('云文档', () => {
     expect((await docs.fetch('D')).markdown).toContain('[画板](WB1)');
   });
 
+  test('画板图片：取服务端渲染的预览图，扩展名按文件头而不是 content-type；不是图片时报错', async () => {
+    // A JPEG header (SOI + APP0 + SOF0 with a 4x3 size) is enough for imageInfo.
+    const jpeg = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 3, 0, 4, 3, 1, 0x22, 0,
+    ]);
+    const { docs, calls } = fake(
+      () => ({}),
+      new Response(jpeg, { headers: { 'content-type': 'image/png' } }),
+    );
+    const file = await docs.whiteboardImage('WB1');
+    expect(file.name).toBe('WB1.jpg');
+    expect(calls[0]?.[1]).toBe('/space/api/file/f/cdp-whiteboard-WB1~noop/');
+    const html = fake(() => ({}), new Response('<html></html>'));
+    await expect(html.docs.whiteboardImage('WB1')).rejects.toThrow('不是图片');
+  });
+
   test('删除要等服务端的异步任务：任务完成才算成功，任务失败如实报出', async () => {
     const polls: string[] = [];
     const { docs } = fake((_m, path, o) => {

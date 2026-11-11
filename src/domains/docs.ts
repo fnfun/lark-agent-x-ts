@@ -42,7 +42,8 @@
  *   info: {baseV2: {x, y, width, height}, textV2: {text}, compositeShape: {shapeType}, ...}}`.
  *   The web app edits them over its WebSocket (`/api/whiteboard/user_change` with JSON node
  *   operations); the HTTP route of that path (with member_id) answers "payload is nil" to the same
- *   JSON, so whiteboards are read only here.
+ *   JSON, so whiteboards are read only here. The server renders a preview of a board (JPEG, served
+ *   as image/png) at `GET file/f/cdp-whiteboard-<token>~noop/`.
  * - A slides deck reads like a docx (`GET slide/pages/client_vars`, same block map): the deck
  *   block lists its `slides`, each slide's children are shapes whose `shape.text.content` is an
  *   attributed text; lines carrying the `lmkr` attribute start with a placeholder `*`. Decks are
@@ -51,6 +52,7 @@
  *   `export/result/<ticket>`, then download the result's file token. Sheets export to xlsx only
  *   (csv needs a sub-sheet).
  */
+import { imageInfo } from '../media.js';
 import type { WebRequest, WebSession } from '../web.js';
 import { attributedText, type BlockMap, docxToMarkdown } from './docx-markdown.js';
 
@@ -766,6 +768,19 @@ export class Docs {
         ...(shape ? { shapeType: Number(shape.shapeType) } : {}),
       };
     });
+  }
+
+  /**
+   * A whiteboard's preview image as the server renders it (what a docx shows for the board; a
+   * placeholder while the board is empty), named after the token with its real type's extension.
+   */
+  async whiteboardImage(token: string): Promise<FileData> {
+    const res = await this.web.request('GET', `/space/api/file/f/cdp-whiteboard-${token}~noop/`);
+    const data = new Uint8Array(await res.arrayBuffer());
+    const info = imageInfo(data);
+    if (!info) throw new Error('读取画板图片失败: 服务端返回的不是图片');
+    const ext = info.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : info.mimeType.split('/')[1];
+    return { name: `${token}.${ext}`, data };
   }
 
   /**
