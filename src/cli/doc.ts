@@ -480,6 +480,24 @@ const append: Command = {
     }),
 };
 
+const attach: Command = {
+  name: 'attach',
+  help: '把本地文件作为附件追加到 docx 末尾',
+  access: 'doc.attach',
+  positionals: [DOC_ARG, { name: 'paths', nargs: '+', help: '本地文件' }],
+  options: [TYPE_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const files = (a.paths as string[]).map((p) => {
+        if (!existsSync(p) || !statSync(p).isFile()) throw new Error(`不是文件: ${p}`);
+        return { data: new Uint8Array(readFileSync(p)), name: basename(p) };
+      });
+      const n = await new DocEditor(web()).attach((await ref(a)).token, files);
+      out(`已添加 ${n} 个附件`);
+      return 0;
+    }),
+};
+
 const writeDoc: Command = {
   name: 'write',
   help: '用 Markdown 替换 docx 的正文(标题保留)',
@@ -612,6 +630,7 @@ export const doc: CommandGroup = {
     rm,
     fetch,
     append,
+    attach,
     writeDoc,
     replace,
     history,

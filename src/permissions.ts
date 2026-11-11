@@ -128,6 +128,7 @@ export const PERMISSIONS = {
   'task.complete': 'modify',
   'doc.rename': 'modify',
   'doc.append': 'modify',
+  'doc.attach': 'modify',
   'doc.write': 'modify',
   'doc.replace': 'modify',
   'doc.revert': 'modify',

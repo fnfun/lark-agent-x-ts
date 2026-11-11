@@ -165,7 +165,8 @@
 - 文档，两个账号都实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档历史记录，两个账号都实测完成（2026-11-11）：`lark doc history/history-fetch/revert` 与库的 `DocHistory`，列出 docx 的历史记录、读某条记录时的内容、还原到某条记录。接口是在飞书账号的无头浏览器里观察网页的历史记录面板得到的，再用 HTTP 重放验证；细节写在 `src/domains/doc-history.ts` 文件头。
-- 文档未做：附件（`file` 块外面包一层 `view` 块，`view_type` 的取值常量没追到，写错了不开网页无法核对）、划词评论。表格和图片 2026-11-11 起可以写入（图片先建块，再挂在块上上传文件，最后写回 token）。
+- 文档附件，两个账号都实测完成（2026-11-11）：`lark doc attach` 与 `DocEditor.attach`。块结构（`view_type: "Preview"` 的 `view` 块里放一个 `file` 块）是在飞书账号的无头浏览器里观察网页插入文件得到的；网页里能正常预览附件。
+- 文档未做：划词评论。表格和图片 2026-11-11 起可以写入（图片先建块，再挂在块上上传文件，最后写回 token）。
 - 注意：用飞书测试账号的 cookie 在无头浏览器里观察网页，导致该会话被服务端注销，需要重新登录。
 
 ### v0.7：邮箱 + 审批

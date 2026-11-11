@@ -10,7 +10,8 @@
  * - Kinds seen: page (the title), text, heading1..9, bullet, ordered (`seq`), todo (`done`), quote,
  *   code (`language`), divider, table (`rows_id`, `columns_id`, `cell_set` keyed by row id +
  *   column id → `{block_id}` of a table_cell whose children hold the cell's blocks); an
- *   image (`image.token`, `image.caption.text`) renders as `![caption](file token)`. Other kinds
+ *   image (`image.token`, `image.caption.text`) renders as `![caption](file token)`, an attachment
+ *   (a `view` block holding a `file` block, `file.name` / `file.token`) as `[name](file token)`. Other kinds
  *   (callouts, grids, ...) render their text, or nothing when they have none.
  */
 
@@ -114,6 +115,10 @@ function render(blocks: BlockMap, id: string, depth: number): string[] {
         ((image.caption as Dict | undefined)?.text ?? undefined) as Dict | undefined,
       );
       return [`![${caption}](${String(image.token ?? '')})`];
+    }
+    case 'file': {
+      const file = (data.file ?? {}) as Dict;
+      return [`[${String(file.name ?? '')}](${String(file.token ?? '')})`];
     }
     case 'table':
       return table(blocks, data);

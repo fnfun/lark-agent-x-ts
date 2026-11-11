@@ -15,6 +15,10 @@
  *   block (point `docx_image`, node = block id, extra `drive_route_token` = the doc) and the token
  *   set with `{p: ["image", "token"], action: {od: "", oi: <file token>}}`. Uploading before the
  *   block exists answers "mount node not exist", mounting on the document "relation mismatch".
+ * - An attachment is a `view` block (`view_type: "Preview"`) holding a `file` block
+ *   (`file: {token, mimeType, size, name}`), uploaded the same way with point `docx_file` on the
+ *   file block and its token set with `{p: ["file", "token"], ...}` (read off the web app's traffic
+ *   on 2026-11-11).
  * - Block ids are "dox" + the document's two-letter operation id + random letters and digits, 27
  *   characters long; the operation id comes from the document token (unscrambled when the token
  *   does not start with "dox").
@@ -131,7 +135,7 @@ function blockData(spec: BlockSpec, parent: string, children: string[], author: 
   };
 }
 
-/** An image file for an image block. */
+/** A file to put in a document: an image for an image block, or any file as an attachment. */
 export interface ImageFile {
   data: Uint8Array;
   name: string;
@@ -162,6 +166,31 @@ async function defaultLoadImage(src: string, baseDir: string): Promise<ImageFile
     );
   }
 }
+
+/** MIME types the web app records for common attachments; others are octet-stream. */
+const MIME_TYPES: Record<string, string> = {
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  json: 'application/json',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+};
+const mimeOf = (name: string) =>
+  MIME_TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
 
 interface Prepared {
   specs: BlockSpec[];
@@ -280,6 +309,53 @@ export class DocEditor {
       await this.commit(docToken, tokens);
     }
     return ids.length;
+  }
+
+  /** Append files as attachments at the end of a docx; returns how many were added. */
+  async attach(docToken: string, files: ImageFile[]): Promise<number> {
+    if (!files.length) return 0;
+    const page = await this.page(docToken);
+    const author = await this.me();
+    const changes: Record<string, Dict> = {};
+    const put = (id: string, data: Dict) => {
+      changes[id] = { id, version: 0, payload: { ops: [{ p: [], action: { oi: data } }] } };
+    };
+    const blocks = files.map((file) => {
+      const view = newBlockId(docToken);
+      const id = newBlockId(docToken);
+      put(view, { ...common('view', docToken, author), children: [id], view_type: 'Preview' });
+      put(id, {
+        ...common('file', view, author),
+        children: [],
+        file: { token: '', mimeType: mimeOf(file.name), size: file.data.length, name: file.name },
+      });
+      return { view, id, file };
+    });
+    changes[docToken] = {
+      id: docToken,
+      version: page.version,
+      payload: {
+        ops: blocks.map(({ view }, i) => ({
+          p: ['children', page.children.length + i],
+          action: { li: view },
+        })),
+      },
+    };
+    await this.commit(docToken, changes);
+    const docs = new Docs(this.web);
+    const tokens: Record<string, Dict> = {};
+    for (const { id, file } of blocks) {
+      const uploaded = await docs.upload(file.data, file.name, {
+        mount: { point: 'docx_file', node: id, extra: { drive_route_token: docToken } },
+      });
+      tokens[id] = {
+        id,
+        version: 1,
+        payload: { ops: [{ p: ['file', 'token'], action: { od: '', oi: uploaded.objToken } }] },
+      };
+    }
+    await this.commit(docToken, tokens);
+    return blocks.length;
   }
 
   /** Replace the body of a docx (everything below the title) with Markdown. */

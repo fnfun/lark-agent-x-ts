@@ -283,4 +283,59 @@ describe('Markdown 写入文档', () => {
     ).rejects.toThrow('读取图片失败');
     expect(commits).toHaveLength(0);
   });
+
+  test('附件：文末挂一个 Preview 视图块、里面是空 token 的文件块；挂在文件块上传后写回 token，读回来是 [文件名](token)', async () => {
+    const commits: Record<
+      string,
+      { version: number; payload: { ops: { p: unknown[]; action: Dict }[] } }
+    >[] = [];
+    const uploads: WebRequest[] = [];
+    const web = {
+      origin: async () => 'https://tenant.feishu.cn',
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.endsWith('client_vars'))
+          return {
+            code: 0,
+            data: { block_map: { D: { version: 4, data: { children: ['old'] } } } },
+          };
+        if (path.endsWith('/user/')) return { code: 0, data: { suid: 'u1' } };
+        if (path.includes('upload')) {
+          uploads.push(o);
+          return { code: 0, data: { file_token: 'F1' } };
+        }
+        commits.push((o.json as { change_map: (typeof commits)[number] }).change_map);
+        return { code: 0, data: { type: 'ACCEPT_COMMIT' } };
+      },
+    } as unknown as WebSession;
+    const n = await new DocEditor(web).attach('D', [
+      { data: new TextEncoder().encode('内容'), name: '说明.txt' },
+    ]);
+    expect(n).toBe(1);
+    const [created, token] = commits;
+    expect(created?.D?.version).toBe(4);
+    expect(created?.D?.payload.ops[0]?.p).toEqual(['children', 1]);
+    const viewId = created?.D?.payload.ops[0]?.action.li as string;
+    const view = created?.[viewId]?.payload.ops[0]?.action.oi as Dict & { children: string[] };
+    expect(view).toMatchObject({ type: 'view', parent_id: 'D', view_type: 'Preview' });
+    const fileId = view.children[0] as string;
+    const file = created?.[fileId]?.payload.ops[0]?.action.oi as Dict;
+    expect(file).toMatchObject({
+      type: 'file',
+      parent_id: viewId,
+      file: { token: '', mimeType: 'text/plain', size: 6, name: '说明.txt' },
+    });
+    expect(uploads[0]?.query).toMatchObject({ mount_point: 'docx_file', mount_node_token: fileId });
+    expect(token?.[fileId]).toMatchObject({
+      version: 1,
+      payload: { ops: [{ p: ['file', 'token'], action: { od: '', oi: 'F1' } }] },
+    });
+    const map: Record<string, { data: Dict }> = {
+      D: {
+        data: { type: 'page', children: [viewId], text: attributedText([{ text: '标题' }], 'u1') },
+      },
+      [viewId]: { data: view },
+      [fileId]: { data: { ...file, file: { ...(file.file as Dict), token: 'F1' } } },
+    };
+    expect(docxToMarkdown(map, 'D').markdown).toBe('# 标题\n\n[说明.txt](F1)\n');
+  });
 });
