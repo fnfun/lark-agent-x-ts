@@ -116,6 +116,25 @@ const append: Command = {
     }),
 };
 
+const replace: Command = {
+  name: 'replace',
+  help: '在工作表里查找替换文字(跳过公式单元格)',
+  access: 'sheet.replace',
+  positionals: [SHEET_ARG, { name: 'find' }, { name: 'replacement' }],
+  options: [TAB_OPTION],
+  run: (a) =>
+    guarded(async () => {
+      const r = await new Sheets(web()).replace(
+        await token(a),
+        String(a.find),
+        String(a.replacement),
+        tab(a),
+      );
+      out(`已替换 ${r.replaced} 处(${r.cells} 个单元格)`);
+      return r.replaced ? 0 : 1;
+    }),
+};
+
 /** insert-rows / delete-rows / insert-cols / delete-cols. */
 function dimension(
   name: string,
@@ -178,6 +197,6 @@ const deleteCols = dimension(
 
 export const sheetGroup: CommandGroup = {
   name: 'sheet',
-  help: '电子表格:列工作表、读单元格、写单元格(含公式)、追加行、插入删除行列',
-  subcommands: [tabs, read, write, append, insertRows, deleteRows, insertCols, deleteCols],
+  help: '电子表格:列工作表、读单元格、写单元格(含公式)、追加行、查找替换、插入删除行列',
+  subcommands: [tabs, read, write, append, replace, insertRows, deleteRows, insertCols, deleteCols],
 };

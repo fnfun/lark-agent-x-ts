@@ -104,16 +104,17 @@ const XLSX = zip({
   'xl/worksheets/sheet1.xml':
     '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1"><v>2.5</v></c></row><row r="3"><c r="B3" t="s"><v>1</v></c><c r="C3"><f>A1*2</f></c><c r="D3" t="b"><v>1</v></c><c r="E3" t="inlineStr"><is><t>行内</t></is></c></row></sheetData></worksheet>',
   'xl/worksheets/sheet2.xml':
-    '<worksheet><sheetData><row r="1"><c r="A1" t="str"><v>合计</v></c></row></sheetData></worksheet>',
+    '<worksheet><sheetData><row r="1"><c r="A1" t="str"><f>CONCAT("合","计")</f><v>合计</v></c></row></sheetData></worksheet>',
 });
 
 describe('表格', () => {
-  test('xlsx：按工作簿顺序取工作表；共享字符串拼接富文本并反转义；空行空格补 null；无缓存值的公式显示为 =公式', () => {
+  test('xlsx：按工作簿顺序取工作表；共享字符串拼接富文本并反转义；空行空格补 null；公式显示缓存值，没有时显示为 =公式；公式单元格不论有无缓存值都记下', () => {
     expect(readXlsx(XLSX)).toEqual([
-      { name: '汇总', rows: [['合计']] },
+      { name: '汇总', rows: [['合计']], formulas: new Set(['A1']) },
       {
         name: '明细 & 备注',
         rows: [['名称', null, 2.5], [], [null, '苹果, "红"', '=A1*2', true, '行内']],
+        formulas: new Set(['C3']),
       },
     ]);
   });
@@ -153,7 +154,7 @@ describe('表格', () => {
   });
 
   /** A fake server holding one tab "Sheet1" (id s1) at revision 7; records each commit sent. */
-  function fakeSheets() {
+  function fakeSheets(xlsx?: Uint8Array) {
     const topSnapshot = gzipSync(
       Buffer.from(
         msg(1, [
@@ -168,8 +169,13 @@ describe('表格', () => {
     const page = `<script>window.DATA={clientVars:{"code":0,"data":{"revision":7,"snapshot":{"gzipTopSnapshot":"${topSnapshot}"}}},ssr:true}</script>`;
     const sent: Record<string, unknown>[] = [];
     const web = {
-      request: async () => new Response(page),
-      json: async (_m: string, _p: string, o: WebRequest = {}) => {
+      // The page for the sheet's state, or the exported .xlsx for downloads.
+      request: async (_m: string, path: string) =>
+        new Response(path.includes('download') ? xlsx : page),
+      json: async (_m: string, path: string, o: WebRequest = {}) => {
+        if (path.includes('export/create')) return { code: 0, data: { ticket: 'K' } };
+        if (path.includes('export/result'))
+          return { code: 0, data: { result: { job_status: 0, file_token: 'F' } } };
         sent.push(o.json as Record<string, unknown>);
         return { code: 0, data: { type: 'ACCEPT_COMMIT', new_rev: 8 } };
       },
@@ -232,6 +238,24 @@ describe('表格', () => {
     await expect(sheets.deleteRows('T', 0)).rejects.toThrow('行列位置');
     await expect(sheets.insertRows('T', 2, 0)).rejects.toThrow('行列位置');
     expect(sent).toHaveLength(4);
+  });
+
+  test('查找替换：按导出的单元格逐个替换、只写改到的格子；公式格子（含有缓存值的）不碰', async () => {
+    const book = zip({
+      'xl/workbook.xml': '<workbook><sheets><sheet name="Sheet1" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels':
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      'xl/worksheets/sheet1.xml':
+        '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>苹果园</t></is></c><c r="B1" t="str"><f>A1</f><v>苹果园</v></c><c r="C1"><v>10</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>苹果苹果</t></is></c></row></sheetData></worksheet>',
+    });
+    const { sheets, sent, actions } = fakeSheets(book);
+    expect(await sheets.replace('T', '苹果', '梨')).toEqual({ cells: 2, replaced: 3 });
+    expect(actions(0).map(([, , pos, cell]) => [pos[1] ?? 0, pos[3] ?? 0, cell.value])).toEqual([
+      [0, 0, '梨园'],
+      [1, 0, '梨梨'],
+    ]);
+    expect(await sheets.replace('T', '香蕉', '梨')).toEqual({ cells: 0, replaced: 0 });
+    expect(sent).toHaveLength(1);
   });
 
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {

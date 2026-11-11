@@ -12,6 +12,8 @@ export interface XlsxSheet {
   name: string;
   /** Rows from row 1; each row from column A; missing cells are null. */
   rows: CellValue[][];
+  /** The cells holding a formula ("C3"), whether or not they show its result. */
+  formulas: Set<string>;
 }
 
 /** The entries of a zip archive by name. */
@@ -62,8 +64,9 @@ export function cellIndex(ref: string): [number, number] {
   return [Number(m[2]) - 1, col - 1];
 }
 
-function parseSheet(xml: string, shared: string[]): CellValue[][] {
+function parseSheet(xml: string, shared: string[]): Omit<XlsxSheet, 'name'> {
   const rows: CellValue[][] = [];
+  const formulas = new Set<string>();
   for (const c of xml.matchAll(/<c\s([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
     const attrs = c[1] as string;
     const inner = c[2] ?? '';
@@ -72,6 +75,7 @@ function parseSheet(xml: string, shared: string[]): CellValue[][] {
     const type = /\bt="(\w+)"/.exec(attrs)?.[1] ?? 'n';
     const v = /<v>([^<]*)<\/v>/.exec(inner)?.[1];
     const f = /<f(?:\s[^>]*)?>([^<]*)<\/f>/.exec(inner)?.[1];
+    if (f !== undefined) formulas.add(ref.toUpperCase());
     let value: CellValue = null;
     if (type === 'inlineStr') value = texts(inner);
     else if (v === undefined) value = f !== undefined ? `=${decode(f)}` : null;
@@ -86,7 +90,7 @@ function parseSheet(xml: string, shared: string[]): CellValue[][] {
     row[col] = value;
   }
   for (let i = 0; i < rows.length; i++) rows[i] ??= [];
-  return rows;
+  return { rows, formulas };
 }
 
 /** The sheets of an .xlsx file, in workbook order. */
@@ -109,6 +113,6 @@ export function readXlsx(data: Uint8Array): XlsxSheet[] {
     const name = decode(/name="([^"]*)"/.exec(m[0])?.[1] ?? '');
     const target = targets.get(/r:id="([^"]+)"/.exec(m[0])?.[1] ?? '') ?? '';
     const path = target.startsWith('/') ? target.slice(1) : `xl/${target}`;
-    return { name, rows: parseSheet(text(path), shared) };
+    return { name, ...parseSheet(text(path), shared) };
   });
 }

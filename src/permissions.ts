@@ -144,6 +144,7 @@ export const PERMISSIONS = {
   'base.view-add': 'modify',
   'sheet.write': 'modify',
   'sheet.append': 'modify',
+  'sheet.replace': 'modify',
   'sheet.insert-rows': 'modify',
   'sheet.insert-cols': 'modify',
   read: 'modify',

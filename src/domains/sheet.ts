@@ -290,6 +290,39 @@ export class Sheets {
     return Number(data.new_rev ?? revision + 1);
   }
 
+  /**
+   * Replaces text in a tab's cells (the first tab by default), skipping formula cells; returns
+   * how many cells changed and how many times the text was replaced.
+   */
+  async replace(
+    token: string,
+    find: string,
+    replacement: string,
+    o: { sheet?: string } = {},
+  ): Promise<{ cells: number; replaced: number }> {
+    if (!find) throw new Error('要替换的文字不能为空');
+    const file = await new Docs(this.web).export({ token, type: 'sheet' }, { format: 'xlsx' });
+    const sheets = readXlsx(file.data);
+    const sheet = o.sheet ? sheets.find((s) => s.name === o.sheet) : sheets[0];
+    if (!sheet) throw new Error(`没有这个工作表: ${o.sheet ?? ''}`);
+    const cells: Record<string, CellValue> = {};
+    let replaced = 0;
+    sheet.rows.forEach((row, r) => {
+      row.forEach((v, c) => {
+        const ref = `${columnName(c)}${r + 1}`;
+        if (v === null || sheet.formulas.has(ref)) return;
+        const text = String(v);
+        const count = text.split(find).length - 1;
+        if (!count) return;
+        // Written as typed text: numeric results become numbers again, as in the web app.
+        cells[ref] = text.split(find).join(replacement);
+        replaced += count;
+      });
+    });
+    if (Object.keys(cells).length) await this.write(token, cells, o);
+    return { cells: Object.keys(cells).length, replaced };
+  }
+
   /** Append rows below the last non-empty row of a tab; returns the first appended row (from 1). */
   async append(token: string, rows: CellValue[][], o: { sheet?: string } = {}): Promise<number> {
     const existing = await this.read(token, o);

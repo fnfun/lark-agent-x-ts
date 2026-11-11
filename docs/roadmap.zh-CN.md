@@ -165,7 +165,8 @@
 - 多维表格未做：服务端筛选与搜索（本地筛选要读全部记录）、其他视图类型和视图设置（筛选、排序、分组）、新建附件字段、其他字段类型（人员、关联、查找引用、公式按文本读出）。
 - 电子表格，两个账号都实测完成（飞书账号重新登录后补测）：`lark sheet tabs/read/write/append/insert-rows/delete-rows/insert-cols/delete-cols` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
 - 电子表格也能写公式（2026-11-11 起，两个账号实测；插入删除行列后服务端会平移公式里的引用）：网页发公式时带上解析结构（引用、逆波兰树、文本片段），`src/domains/sheet-formula.ts` 按同样规则生成；服务端不存计算结果，网页打开时自己算，已在飞书账号的浏览器里核对。所以读取时这类公式显示为 `=公式`。引用其他工作表的公式会被拒绝。
-- 电子表格未做：公式里引用其他工作表、样式、查找替换、新增工作表。
+- 电子表格也能查找替换（`lark sheet replace`，2026-11-11 起两个账号实测）：从导出的 .xlsx 读单元格，只写回改到的格子，跳过公式单元格（导出里即使显示计算结果也能认出是公式）。
+- 电子表格未做：公式里引用其他工作表、样式、新增工作表。
 - 文档，两个账号都实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档历史记录，两个账号都实测完成（2026-11-11）：`lark doc history/history-fetch/revert` 与库的 `DocHistory`，列出 docx 的历史记录、读某条记录时的内容、还原到某条记录。接口是在飞书账号的无头浏览器里观察网页的历史记录面板得到的，再用 HTTP 重放验证；细节写在 `src/domains/doc-history.ts` 文件头。
