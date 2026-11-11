@@ -319,4 +319,19 @@ describe('云文档', () => {
       '# 季度回顾\n\n## 第 1 页\n\n*开头\n\n## 第 2 页\n\n要点\n\n增长\n\n留存\n',
     );
   });
+
+  test('删除要等服务端的异步任务：任务完成才算成功，任务失败如实报出', async () => {
+    const polls: string[] = [];
+    const { docs } = fake((_m, path, o) => {
+      if (path.endsWith('remove/'))
+        return { code: 0, data: { task_id: `t-${(o.json as { tokens: string[] }).tokens[0]}` } };
+      const task = String(o.query?.task_id);
+      polls.push(task);
+      if (task === 't-a' && polls.filter((p) => p === 't-a').length < 2)
+        return { code: 0, data: { is_finish: false } };
+      return { code: 0, data: { is_finish: true, is_fail: task === 't-bad' } };
+    });
+    expect([...(await docs.remove(['a', 'bad']))]).toEqual([['bad', '服务端任务失败']]);
+    expect(polls.filter((p) => p === 't-a')).toHaveLength(2);
+  });
 });

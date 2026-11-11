@@ -14,8 +14,9 @@
  *   (`obj_token`, used to open the content, e.g. the docx id).
  * - A docx's content is `GET docx/pages/client_vars` (paged by cursor), converted to Markdown by
  *   docx-markdown.ts.
- * - Removing is asynchronous (the reply carries a task id): a listing right after it may still show
- *   the file for a moment.
+ * - Removing, moving and restoring are asynchronous: the reply carries a task id whose state is
+ *   `GET explorer/v2/task/` (task_id → is_finish, is_fail). A task can take tens of seconds, and an
+ *   accepted request has been seen not to take effect, so these calls wait for the task.
  * - Importing a file: upload it to Drive's upload host (`box/stream/upload/all`, mount point
  *   `ccm_import`, Adler-32 checksum, `ext[extra]` naming the target type), then `POST import/create/`
  *   as JSON with `event_source: 1` (a string there gives "invalid param"), then poll
@@ -191,6 +192,10 @@ export function adler32(data: Uint8Array): number {
   }
   return ((b << 16) | a) >>> 0;
 }
+
+/** How long remove / move / restore wait for their asynchronous Drive task, and how often they look. */
+const TASK_TIMEOUT_MS = 60_000;
+const TASK_POLL_MS = 1000;
 
 /** Largest file sent in one upload request; larger ones go block by block. */
 const DIRECT_UPLOAD_MAX = 4 * 1024 * 1024;
@@ -577,9 +582,32 @@ export class Docs {
         code: -1,
         msg: e.reason || e.message,
       }))) as Dict;
-      if (body.code !== 0) failed.set(t, String(body.msg ?? body.code));
+      if (body.code !== 0) {
+        failed.set(t, String(body.msg ?? body.code));
+        continue;
+      }
+      const task = (body.data as Dict | undefined)?.task_id;
+      const outcome = task ? await this.waitTask(String(task)) : '';
+      if (outcome) failed.set(t, outcome);
     }
     return failed;
+  }
+
+  /**
+   * Waits for an asynchronous Drive task (remove, move, restore); returns '' when it finished
+   * fine, otherwise why not. The accepted request alone does not mean the change happened.
+   */
+  private async waitTask(taskId: string, timeoutMs = TASK_TIMEOUT_MS): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const body = (await this.web.json('GET', '/space/api/explorer/v2/task/', {
+        query: { task_id: taskId },
+      })) as Dict;
+      const data = (body.data ?? {}) as Dict;
+      if (data.is_finish === true) return data.is_fail === true ? '服务端任务失败' : '';
+      if (Date.now() > deadline) return '服务端仍在处理,稍后再看';
+      await new Promise((x) => setTimeout(x, TASK_POLL_MS));
+    }
   }
 
   /**
