@@ -188,7 +188,7 @@ describe('表格', () => {
           return [
             f[1],
             new TextDecoder().decode(f[2] as Uint8Array),
-            Object.fromEntries(decode(f[4] as Uint8Array)),
+            f[4] === undefined ? {} : Object.fromEntries(decode(f[4] as Uint8Array)),
             f[5] === undefined
               ? undefined
               : JSON.parse(new TextDecoder().decode(f[5] as Uint8Array)),
@@ -256,6 +256,19 @@ describe('表格', () => {
     ]);
     expect(await sheets.replace('T', '香蕉', '梨')).toEqual({ cells: 0, replaced: 0 });
     expect(sent).toHaveLength(1);
+  });
+
+  test('工作表：新增带新 id、名字和位置（不带行列位置），默认放最后；删除带名字和位置；同名、删光、不存在时不发', async () => {
+    const { sheets, sent, actions } = fakeSheets();
+    const id = await sheets.addTab('T', '汇总');
+    expect(id).toMatch(/^[A-Z0-9]{6}$/);
+    expect(actions(0)).toEqual([[22, id, {}, { sheet_id: id, sheet_name: '汇总', index: 1 }]]);
+    await sheets.addTab('T', '封面', { at: 1 });
+    expect(actions(1)[0]?.[3]).toMatchObject({ index: 0 });
+    await expect(sheets.addTab('T', 'Sheet1')).rejects.toThrow('同名');
+    await expect(sheets.removeTab('T', 'Sheet1')).rejects.toThrow('至少要留一个');
+    await expect(sheets.removeTab('T', '没有')).rejects.toThrow('没有这个工作表');
+    expect(sent).toHaveLength(2);
   });
 
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {

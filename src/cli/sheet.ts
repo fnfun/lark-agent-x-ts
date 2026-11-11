@@ -135,6 +135,37 @@ const replace: Command = {
     }),
 };
 
+const tabAdd: Command = {
+  name: 'tab-add',
+  help: '新增工作表',
+  access: 'sheet.tab-add',
+  positionals: [SHEET_ARG, { name: 'name', nargs: '+' }],
+  options: [{ name: 'at', kind: 'int', help: '放到第几个(默认最后)' }],
+  run: (a) =>
+    guarded(async () => {
+      const id = await new Sheets(web()).addTab(
+        await token(a),
+        (a.name as string[]).join(' '),
+        a.at === undefined ? {} : { at: Number(a.at) },
+      );
+      out(`已新增 sheet_id=${id}`);
+      return 0;
+    }),
+};
+
+const tabRm: Command = {
+  name: 'tab-rm',
+  help: '删除工作表(按名字;至少留一个;tabs 要过约半分钟才不再列出它)',
+  access: 'sheet.tab-rm',
+  positionals: [SHEET_ARG, { name: 'name', nargs: '+' }],
+  run: (a) =>
+    guarded(async () => {
+      await new Sheets(web()).removeTab(await token(a), (a.name as string[]).join(' '));
+      out('已删除');
+      return 0;
+    }),
+};
+
 /** insert-rows / delete-rows / insert-cols / delete-cols. */
 function dimension(
   name: string,
@@ -197,6 +228,18 @@ const deleteCols = dimension(
 
 export const sheetGroup: CommandGroup = {
   name: 'sheet',
-  help: '电子表格:列工作表、读单元格、写单元格(含公式)、追加行、查找替换、插入删除行列',
-  subcommands: [tabs, read, write, append, replace, insertRows, deleteRows, insertCols, deleteCols],
+  help: '电子表格:列工作表、增删工作表、读单元格、写单元格(含公式)、追加行、查找替换、插入删除行列',
+  subcommands: [
+    tabs,
+    read,
+    write,
+    append,
+    replace,
+    tabAdd,
+    tabRm,
+    insertRows,
+    deleteRows,
+    insertCols,
+    deleteCols,
+  ],
 };

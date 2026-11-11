@@ -16,6 +16,9 @@
  * - Rows and columns: action 5 / 6 insert / delete rows ({1: start row, 2: count}), 7 / 8 insert /
  *   delete columns ({3: start column, 4: count}); the web app follows them with row heights (17)
  *   and column widths (18), which are optional.
+ * - Tabs: action 22 adds one (its new id: 6 capital letters and digits; JSON {sheet_id,
+ *   sheet_name, index}), 20 removes one (JSON {sheet_name, index}); neither has a position field.
+ *   The page's tab list shows an added tab at once but keeps a removed one for about half a minute.
  * - Reading exports the sheet as .xlsx (the Docs export API) and parses it (xlsx.ts); the cell
  *   blocks embedded in the page use an undocumented columnar encoding.
  */
@@ -126,22 +129,32 @@ const position = (p: { row?: number; rows?: number; col?: number; cols?: number 
   ]);
 
 /** Action types of `v2/sheet/user_changes`. */
-const ACTION = { setCell: 4, insertRows: 5, deleteRows: 6, insertColumns: 7, deleteColumns: 8 };
+const ACTION = {
+  setCell: 4,
+  insertRows: 5,
+  deleteRows: 6,
+  insertColumns: 7,
+  deleteColumns: 8,
+  removeTab: 20,
+  addTab: 22,
+};
 
-/** One action: its type, the tab, where, and for cell sets the cell's JSON. */
+/** One action: its type, the tab, where (none for tab actions), and its JSON (a cell's, a tab's). */
 function action(
   type: number,
   sheetId: string,
-  where: Parameters<typeof position>[0],
-  cell?: unknown,
+  where: Parameters<typeof position>[0] | null,
+  json?: unknown,
 ) {
   return lenField(1, [
     ...numField(1, type),
     ...lenField(2, utf8(sheetId)),
-    ...position(where),
-    ...(cell === undefined ? [] : lenField(5, utf8(JSON.stringify(cell)))),
+    ...(where ? position(where) : []),
+    ...(json === undefined ? [] : lenField(5, utf8(JSON.stringify(json)))),
   ]);
 }
+
+const TAB_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 /** The protobuf action that sets one cell (a value, or a formula starting with "="). */
 export function setCellAction(
@@ -321,6 +334,37 @@ export class Sheets {
     });
     if (Object.keys(cells).length) await this.write(token, cells, o);
     return { cells: Object.keys(cells).length, replaced };
+  }
+
+  /** Add a tab named `name` at position `at` (from 1; last by default); returns its id. */
+  async addTab(token: string, name: string, o: { at?: number } = {}): Promise<string> {
+    const state = await this.state(token);
+    if (state.tabs.some((t) => t.name === name)) throw new Error(`已有同名工作表: ${name}`);
+    const index = (o.at ?? state.tabs.length + 1) - 1;
+    if (!Number.isInteger(index) || index < 0 || index > state.tabs.length)
+      throw new Error(`位置要在 1 到 ${state.tabs.length + 1} 之间`);
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+    const id = Array.from(bytes, (b) => TAB_ID_CHARS[b % TAB_ID_CHARS.length]).join('');
+    await this.send(
+      token,
+      state.revision,
+      action(ACTION.addTab, id, null, { sheet_id: id, sheet_name: name, index }),
+    );
+    return id;
+  }
+
+  /** Remove a tab by name; a spreadsheet keeps at least one. */
+  async removeTab(token: string, name: string): Promise<void> {
+    const state = await this.state(token);
+    const index = state.tabs.findIndex((t) => t.name === name);
+    const tab = state.tabs[index];
+    if (!tab) throw new Error(`没有这个工作表: ${name}`);
+    if (state.tabs.length === 1) throw new Error('电子表格至少要留一个工作表');
+    await this.send(
+      token,
+      state.revision,
+      action(ACTION.removeTab, tab.id, null, { sheet_name: name, index }),
+    );
   }
 
   /** Append rows below the last non-empty row of a tab; returns the first appended row (from 1). */

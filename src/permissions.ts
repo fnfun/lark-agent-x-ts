@@ -145,6 +145,7 @@ export const PERMISSIONS = {
   'sheet.write': 'modify',
   'sheet.append': 'modify',
   'sheet.replace': 'modify',
+  'sheet.tab-add': 'modify',
   'sheet.insert-rows': 'modify',
   'sheet.insert-cols': 'modify',
   read: 'modify',
@@ -189,6 +190,7 @@ export const PERMISSIONS = {
   'base.view-rm': 'destroy',
   'sheet.delete-rows': 'destroy',
   'sheet.delete-cols': 'destroy',
+  'sheet.tab-rm': 'destroy',
   'cal.delete': 'destroy',
 
   'auth.qr': 'system',
