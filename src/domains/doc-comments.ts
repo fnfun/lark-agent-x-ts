@@ -13,11 +13,19 @@
  *   `reply/add/` appends. `update/` resolves (`finish: 1`), reopens (`finish: 0`) or deletes
  *   (`is_deleted: 1`) a thread.
  * - Content is HTML-escaped text: a raw `<` answers "Parameter Error", so text is escaped on the
- *   way in and unescaped on the way out. Comments anchored to text need the editor (see the
- *   collaborative-editing note in docs/roadmap.md); they are listed but not created here.
+ *   way in and unescaped on the way out.
+ * - A comment on a piece of a docx's text (read off the web app's traffic on 2026-11-11) is
+ *   `add/` with `is_whole: 0`, the `quote`, and `comment_extra` `{visibility: 0,
+ *   content_anchor_id: <block id>}`; then the block is edited (`docx/blocks/user_change`) to mark
+ *   the text: a text op with `subType: {t: "easysync", o: {zone_changesets: {0: <changeset>},
+ *   apool}}`, the changeset keeping the text before the quote and applying the attribute
+ *   `["comment-id-<comment id>", "true"]` to the quote (`Z:<length>>0=<before>*0=<quote>$`, base
+ *   36), and the comment id appended to the block's `comments`.
  */
 import type { WebSession } from '../web.js';
-import { check, DOC_TYPES, type DocRef } from './docs.js';
+import { commitChanges } from './doc-edit.js';
+import { check, DOC_TYPES, type DocRef, Docs } from './docs.js';
+import { ops } from './markdown-docx.js';
 
 type Dict = Record<string, unknown>;
 
@@ -72,6 +80,36 @@ const toComment = (c: Dict): DocComment => ({
   replies: ((c.comment_list ?? []) as Dict[]).map(toReply),
 });
 
+/** The first block (in document order) whose text contains `quote`, and where. */
+function findText(
+  blocks: Record<string, Dict>,
+  root: string,
+  quote: string,
+): { id: string; version: number; text: string; at: number; comments: string[] | null } | null {
+  const visit = (id: string): ReturnType<typeof findText> => {
+    const record = blocks[id];
+    const data = (record?.data ?? {}) as Dict;
+    const texts = ((data.text as Dict | undefined)?.initialAttributedTexts as Dict | undefined)
+      ?.text as Record<string, string> | undefined;
+    const text = texts?.['0'];
+    const at = id !== root && text !== undefined ? text.indexOf(quote) : -1;
+    if (at >= 0)
+      return {
+        id,
+        version: Number(record?.version ?? 0),
+        text: text as string,
+        at,
+        comments: (data.comments as string[] | null | undefined) ?? null,
+      };
+    for (const child of (data.children ?? []) as string[]) {
+      const hit = visit(child);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return visit(root);
+}
+
 /** How many comments one batch request asks for. */
 const BATCH = 50;
 
@@ -108,13 +146,69 @@ export class DocComments {
     return out.sort((a, b) => Number(a.solved) - Number(b.solved));
   }
 
-  /** Comment on the whole document; returns the new thread. */
-  async add(ref: DocRef, text: string): Promise<DocComment> {
+  /**
+   * Comment on the whole document, or with `quote` on the first occurrence of that text in a docx
+   * (in document order); returns the new thread.
+   */
+  async add(ref: DocRef, text: string, o: { quote?: string } = {}): Promise<DocComment> {
+    if (o.quote === undefined) return this.create(ref, text, { is_whole: 1 });
+    if (ref.type !== 'docx') throw new Error('划词评论只支持 docx');
+    if (!o.quote) throw new Error('要评论的文字不能为空');
+    const quote = o.quote;
+    const { blocks, root } = await new Docs(this.web).blocks(
+      '/space/api/docx/pages/client_vars',
+      ref.token,
+    );
+    const found = findText(blocks, root, quote);
+    if (!found) throw new Error(`文档里找不到要评论的文字: ${quote}`);
+    const comment = await this.create(ref, text, {
+      is_whole: 0,
+      quote: escapeHtml(quote),
+      extra: JSON.stringify({ image_list: [], image_extra_list: {} }),
+      comment_extra: JSON.stringify({ visibility: 0, content_anchor_id: found.id }),
+    });
+    const changeset = `Z:${found.text.length.toString(36)}>0${
+      found.at ? ops('', found.text.slice(0, found.at), '=') : ''
+    }${ops('*0', quote, '=')}$`;
+    try {
+      await commitChanges(this.web, ref.token, {
+        [found.id]: {
+          id: found.id,
+          version: found.version,
+          payload: {
+            ops: [
+              {
+                p: ['text'],
+                subType: {
+                  t: 'easysync',
+                  o: {
+                    zone_changesets: { 0: changeset },
+                    apool: { numToAttrib: { 0: [`comment-id-${comment.id}`, 'true'] }, nextNum: 1 },
+                  },
+                },
+              },
+              {
+                p: ['comments'],
+                action: { od: found.comments, oi: [...(found.comments ?? []), comment.id] },
+              },
+            ],
+          },
+        },
+      });
+    } catch (e) {
+      // A comment whose text was not marked would float unanchored; take it back.
+      await this.remove(ref, comment.id).catch(() => undefined);
+      throw e;
+    }
+    return comment;
+  }
+
+  private async create(ref: DocRef, text: string, fields: Dict): Promise<DocComment> {
     const body = check(
       await this.web.json('POST', '/space/api/comment/add/', {
         form: {
           ...this.doc(ref),
-          is_whole: 1,
+          ...fields,
           content: escapeHtml(text),
           comment_uuid: crypto.randomUUID(),
           reply_uuid: crypto.randomUUID(),

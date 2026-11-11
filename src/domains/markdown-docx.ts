@@ -197,18 +197,18 @@ export function parseMarkdown(markdown: string): BlockSpec[] {
 }
 
 /**
- * One changeset op for a run of text with the same attributes: a run containing newlines is split
- * after its last newline, that part carrying `|<newline count>` (the Etherpad rule the server
- * checks; anything else answers "schema mismatch").
+ * One changeset op (`+` insert by default, `=` keep) for a run of text with the same attributes: a
+ * run containing newlines is split after its last newline, that part carrying `|<newline count>`
+ * (the Etherpad rule the server checks; anything else answers "schema mismatch").
  */
-function ops(attrs: string, segment: string): string {
+export function ops(attrs: string, segment: string, op: '+' | '=' = '+'): string {
   const cut = segment.lastIndexOf('\n') + 1;
   const len = (s: string) => s.length.toString(36);
-  if (!cut) return `${attrs}+${len(segment)}`;
+  if (!cut) return `${attrs}${op}${len(segment)}`;
   const head = segment.slice(0, cut);
   const lines = head.split('\n').length - 1;
   const rest = segment.slice(cut);
-  return `${attrs}|${lines.toString(36)}+${len(head)}${rest ? `${attrs}+${len(rest)}` : ''}`;
+  return `${attrs}|${lines.toString(36)}${op}${len(head)}${rest ? `${attrs}${op}${len(rest)}` : ''}`;
 }
 
 const STYLE_KEYS = ['bold', 'italic', 'strikethrough', 'inlineCode'] as const;

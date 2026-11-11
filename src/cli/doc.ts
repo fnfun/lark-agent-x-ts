@@ -319,13 +319,20 @@ const comments: Command = {
 
 const comment: Command = {
   name: 'comment',
-  help: '给文档加一条全文评论',
+  help: '给文档加一条评论(默认是全文评论;--quote 评论 docx 里的一段文字)',
   access: 'doc.comment',
   positionals: [DOC_ARG, { name: 'text', nargs: '+' }],
-  options: [TYPE_OPTION],
+  options: [
+    TYPE_OPTION,
+    { name: 'quote', kind: 'string', help: '评论这段文字(docx 里第一次出现的位置)' },
+  ],
   run: (a) =>
     guarded(async () => {
-      const c = await new DocComments(web()).add(await ref(a), (a.text as string[]).join(' '));
+      const c = await new DocComments(web()).add(
+        await ref(a),
+        (a.text as string[]).join(' '),
+        a.quote === undefined ? {} : { quote: String(a.quote) },
+      );
       out(`已评论 comment_id=${c.id}`);
       return 0;
     }),

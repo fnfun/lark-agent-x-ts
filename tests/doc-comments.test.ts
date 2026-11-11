@@ -76,6 +76,93 @@ describe('文档评论', () => {
       [undefined, 1],
     ]);
   });
+
+  /** A docx whose second block (in document order) holds "甲\n乙丙目标丁" with comments [old]. */
+  function anchored(
+    commit: (o: WebRequest) => unknown = () => ({ code: 0, data: { type: 'ACCEPT_COMMIT' } }),
+  ) {
+    const text = (t: string) => ({
+      initialAttributedTexts: { text: { 0: t }, attribs: { 0: '' } },
+    });
+    return fake((path, o) => {
+      if (path.endsWith('client_vars'))
+        return {
+          code: 0,
+          data: {
+            block_sequence: ['D1'],
+            block_map: {
+              // Listed out of document order: b2 also contains the quote but comes later.
+              b2: { version: 1, data: { type: 'text', text: text('目标在后') } },
+              D1: {
+                version: 1,
+                data: { type: 'page', text: text('目标标题'), children: ['b1', 'b2'] },
+              },
+              b1: {
+                version: 6,
+                data: { type: 'text', text: text('甲\n乙丙目标丁'), comments: ['old'] },
+              },
+            },
+          },
+        };
+      if (path.endsWith('comment/add/'))
+        return { code: 0, data: { comment: { comment_id: 'c9', is_whole: 0 } } };
+      if (path.endsWith('user_change')) return commit(o);
+      return { code: 0, data: {} };
+    });
+  }
+
+  test('划词评论：按文档顺序找第一个含该文字的块（跳过标题），评论锚在块上，再给这段文字打上评论标记、把评论 id 加进块的 comments', async () => {
+    const { web, calls } = anchored();
+    const c = await new DocComments(web).add(DOC, '有问题', { quote: '目标' });
+    expect(c.id).toBe('c9');
+    const add = calls.find(([, p]) => p.endsWith('comment/add/'))?.[2].form as Record<
+      string,
+      unknown
+    >;
+    expect(add).toMatchObject({ is_whole: 0, quote: '目标' });
+    expect(JSON.parse(String(add.comment_extra))).toMatchObject({ content_anchor_id: 'b1' });
+    const commit = calls.find(([, p]) => p.endsWith('user_change')) as Call;
+    const change = (
+      commit[2].json as {
+        change_map: Record<
+          string,
+          { version: number; payload: { ops: Record<string, unknown>[] } }
+        >;
+      }
+    ).change_map;
+    expect(Object.keys(change)).toEqual(['b1']);
+    expect(change.b1?.version).toBe(6);
+    // 7 characters; keep "甲\n" (one newline), keep "乙丙", mark the 2 characters of the quote.
+    expect(change.b1?.payload.ops[0]).toEqual({
+      p: ['text'],
+      subType: {
+        t: 'easysync',
+        o: {
+          zone_changesets: { 0: 'Z:7>0|1=2=2*0=2$' },
+          apool: { numToAttrib: { 0: ['comment-id-c9', 'true'] }, nextNum: 1 },
+        },
+      },
+    });
+    expect(change.b1?.payload.ops[1]).toEqual({
+      p: ['comments'],
+      action: { od: ['old'], oi: ['old', 'c9'] },
+    });
+  });
+
+  test('划词评论：找不到文字时什么都不提交；标记提交失败时删掉刚加的评论', async () => {
+    const missing = anchored();
+    await expect(new DocComments(missing.web).add(DOC, 'x', { quote: '没有' })).rejects.toThrow(
+      '找不到',
+    );
+    expect(missing.calls.filter(([m]) => m === 'POST')).toHaveLength(0);
+
+    const failed = anchored(() => ({ code: 0, data: { type: 'REJECT' } }));
+    await expect(new DocComments(failed.web).add(DOC, 'x', { quote: '目标' })).rejects.toThrow(
+      '编辑文档失败',
+    );
+    const undo = failed.calls.find(([, p]) => p.endsWith('comment/update/'))?.[2].form;
+    expect(undo).toMatchObject({ comment_id: 'c9', is_deleted: 1 });
+  });
 });
 
 describe('文档权限', () => {

@@ -126,7 +126,7 @@
 
 - 2026-11-11 补上，同样在两个账号上实测：`rename`、`mv`、`cp`、`trash` / `restore`、`upload`（超过 4MB 分块）/ `download`、`export`（docx 导出 docx / pdf，表格导出 xlsx）、评论（`comments` / `comment` / `reply` / `resolve` / `comment-rm`，库的 `DocComments`）和分享（`sharing` / `set-link`，库的 `DocPermissions`）。把测试文档的链接范围放宽被会话的安全检查拦下，`set-link` 只用"设成当前值"验证过。评论和权限的细节写在 `src/domains/doc-comments.ts`、`src/domains/doc-permissions.ts` 文件头。
 - 知识库，2026-11-11 补上：`lark wiki spaces/ls/get/create/rename/mv/cp/rm` 与库的 `Wiki`；`doc` 各命令接受知识库链接（先解析成对应文档）。在飞书账号的个人文档库里用专为测试新建、测完删除的页面实测；Lark 账号没有知识空间，新建空间回 920004103，所以个人库以外的空间列表只验证过空结果。细节写在 `src/domains/wiki.ts` 文件头。
-- 未做：划词评论（在 docx 编辑器自己的代码包里，放到 v0.6 一起研究；历史版本已在 v0.6 做完）、增删协作者和空间成员（涉及他人）、新建知识空间（见上），以及 Markdown 文件与本地草稿的比对（项目里没有 diff 库；`doc cat` 再用本地 diff 即可）。Markdown 文件本身是云空间文件：`doc upload` 新建、`doc cat` 读取、`doc upload --replace` 作为新版本覆盖。
+- 未做：增删协作者和空间成员（涉及他人）、新建知识空间（见上），以及 Markdown 文件与本地草稿的比对（项目里没有 diff 库；`doc cat` 再用本地 diff 即可）。Markdown 文件本身是云空间文件：`doc upload` 新建、`doc cat` 读取、`doc upload --replace` 作为新版本覆盖。
 
 ### v0.5：日历
 
@@ -166,7 +166,8 @@
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档历史记录，两个账号都实测完成（2026-11-11）：`lark doc history/history-fetch/revert` 与库的 `DocHistory`，列出 docx 的历史记录、读某条记录时的内容、还原到某条记录。接口是在飞书账号的无头浏览器里观察网页的历史记录面板得到的，再用 HTTP 重放验证；细节写在 `src/domains/doc-history.ts` 文件头。
 - 文档附件，两个账号都实测完成（2026-11-11）：`lark doc attach` 与 `DocEditor.attach`。块结构（`view_type: "Preview"` 的 `view` 块里放一个 `file` 块）是在飞书账号的无头浏览器里观察网页插入文件得到的；网页里能正常预览附件。
-- 文档未做：划词评论。表格和图片 2026-11-11 起可以写入（图片先建块，再挂在块上上传文件，最后写回 token）。
+- 划词评论，两个账号都实测完成（2026-11-11）：`lark doc comment --quote` 与 `DocComments.add(ref, text, {quote})` 先建锚在块上的评论，再给这段文字加 `comment-id-<id>` 属性（在飞书账号上观察网页流量得到；网页能显示高亮和评论）。删除评论时不用改文字，网页会自动不再高亮。细节写在 `src/domains/doc-comments.ts` 文件头。
+- 文档的表格和图片 2026-11-11 起可以写入（图片先建块，再挂在块上上传文件，最后写回 token）。
 - 注意：用飞书测试账号的 cookie 在无头浏览器里观察网页，导致该会话被服务端注销，需要重新登录。
 
 ### v0.7：邮箱 + 审批

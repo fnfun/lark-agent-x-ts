@@ -197,6 +197,27 @@ interface Prepared {
   images: Map<BlockSpec, ImageFile>;
 }
 
+/** Commits block changes (`{block id: {id, version, payload: {ops}}}`) to a docx. */
+export async function commitChanges(
+  web: WebSession,
+  docToken: string,
+  changeMap: Record<string, Dict>,
+): Promise<void> {
+  const reply = check(
+    await web.json('POST', '/space/api/docx/blocks/user_change', {
+      json: {
+        member_id: String(Math.floor(Math.random() * 9e13) + 1e13),
+        uuid: crypto.randomUUID(),
+        page_id: docToken,
+        change_map: changeMap,
+      },
+    }),
+    '编辑文档',
+  );
+  const data = (reply.data ?? {}) as Dict;
+  if (data.type !== 'ACCEPT_COMMIT') throw new Error(`编辑文档失败: ${String(data.type)}`);
+}
+
 export class DocEditor {
   constructor(readonly web: WebSession) {}
 
@@ -429,20 +450,8 @@ export class DocEditor {
     return { replaced, blocks: Object.keys(changes).length, skipped };
   }
 
-  private async commit(docToken: string, changeMap: Record<string, Dict>): Promise<void> {
-    const reply = check(
-      await this.web.json('POST', '/space/api/docx/blocks/user_change', {
-        json: {
-          member_id: String(Math.floor(Math.random() * 9e13) + 1e13),
-          uuid: crypto.randomUUID(),
-          page_id: docToken,
-          change_map: changeMap,
-        },
-      }),
-      '编辑文档',
-    );
-    const data = (reply.data ?? {}) as Dict;
-    if (data.type !== 'ACCEPT_COMMIT') throw new Error(`编辑文档失败: ${String(data.type)}`);
+  private commit(docToken: string, changeMap: Record<string, Dict>): Promise<void> {
+    return commitChanges(this.web, docToken, changeMap);
   }
 
   /** The page (root) block's version and children. */
