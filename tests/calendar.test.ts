@@ -128,4 +128,70 @@ describe('日历', () => {
     });
     expect(updated.span).toBe(1);
   });
+
+  test('搜索：高级场景、时间范围按秒过滤；结果按实例与内容对上，key 取 uid、时间换成毫秒', async () => {
+    const c = newClient();
+    const sent: Dict[] = [];
+    c.command = async (cmd, reqType, data) => {
+      fromJson(larkType(reqType), data as JsonValue);
+      expect(cmd).toBe(1010036);
+      sent.push(data);
+      return {
+        instances: [
+          { eventRefId: 'r2', startTime: 1_800_007_200n, endTime: 1_800_010_800n },
+          { eventRefId: 'r1', startTime: 1_800_000_000n, endTime: 1_800_003_600n },
+        ],
+        contents: {
+          r1: { uid: 'k1', calendarId: CAL, summary: '周会', organizer: '同事甲' },
+          r2: { uid: 'k2', calendarId: CAL, summary: '周会复盘', location: '会议室A' },
+        },
+      };
+    };
+    const hits = await new Calendar(c).search('周会', {
+      since: 1_799_000_000_000,
+      until: 1_801_000_000_500,
+    });
+    expect(sent[0]).toMatchObject({
+      query: '周会',
+      eventSearchScene: 2,
+      eventFilter: { startTime: '1799000000', endTime: '1801000000' },
+    });
+    expect(hits.map((h) => [h.key, h.start, h.end, h.summary, h.location, h.organizer])).toEqual([
+      ['k2', 1_800_007_200_000, 1_800_010_800_000, '周会复盘', '会议室A', ''],
+      ['k1', 1_800_000_000_000, 1_800_003_600_000, '周会', '', '同事甲'],
+    ]);
+  });
+
+  test('忙闲：先把人换成主日历，再按日历问忙闲并换回人；没有日历的人不列，空回复算空闲', async () => {
+    const c = newClient();
+    const asked: Dict[] = [];
+    let busyReply: Dict = { calendarBusyMap: { 'cal-a': true } };
+    c.command = async (cmd, reqType, data) => {
+      fromJson(larkType(reqType), data as JsonValue);
+      expect(cmd).toBe(1002008);
+      return {
+        userAttendees: {
+          u1: { attendeeCalendarId: 'cal-a' },
+          u2: { attendeeCalendarId: 'cal-b' },
+        },
+      };
+    };
+    c.api = async (type, data) => {
+      expect(type).toBe('calendarevents.GetBusyUserRequest');
+      asked.push(data as Dict);
+      return busyReply;
+    };
+    const cal = new Calendar(c);
+    expect(await cal.busy(['u1', 'u2', 'u3'], 1_800_000_000_000, 1_800_003_600_000)).toEqual({
+      u1: true,
+      u2: false,
+    });
+    expect(asked[0]).toEqual({
+      calendarIds: ['cal-a', 'cal-b'],
+      startTime: '1800000000',
+      endTime: '1800003600',
+    });
+    busyReply = {};
+    expect(await cal.busy(['u1'], 1_800_000_000_000, 1_800_003_600_000)).toEqual({ u1: false });
+  });
 });

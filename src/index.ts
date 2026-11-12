@@ -58,6 +58,7 @@ export {
   Calendar,
   type CalendarEvent,
   type CalendarInfo,
+  type EventHit,
   type EventUpdate,
   type NewEvent,
 } from './domains/calendar.js';

@@ -139,7 +139,8 @@ Prerequisite: v0.3's protocol pipeline extension must be able to extract the eve
 
 **Status (2026-11-10, mostly done).** `lark cal calendars/agenda/get/create/update/delete` and the library's `Calendar`, tested on the Feishu test account with events created for the test and deleted afterwards. Events go through the calendar web app's `calendarweb` commands (1002001 list, 1002003 create, 1002004 update, 1002005 delete, 1002006 fetch by id), which the cmd map lacks and `LarkClient.command` calls by number; the `calendar.v1.*` numbers in the same app answer "command not found". Details at the top of `src/domains/calendar.ts`.
 
-- Not done: attendees (inviting others), RSVP, free/busy and suggested times, meeting rooms, event search. The legacy free/busy request answered with an empty packet; attendees and RSVP would involve other people.
+- Added on 2026-11-13, on both accounts with events created for the test and deleted afterwards: event search (`cal search`, `Calendar.search`; the web app's SEARCH_CALENDAR_EVENT, 1010036, with an optional time range) and whether people are busy over a range (`cal busy`, `Calendar.busy`; `calendarevents.GetBusyUserRequest` on their primary calendars, found with WEB_GET_USER_ATTENDEES_BY_USER_IDS, 1002008; an empty answer means free, which is likely what the legacy request's empty packet meant). Only checked on my own calendar, since asking about others is a read but needs someone else's schedule to compare against.
+- Not done: attendees (inviting others), RSVP, suggested times, meeting rooms. Attendees and RSVP would involve other people; the server answers busy or free for a whole range, not the busy intervals that suggesting times needs.
 
 ### v0.6: Collaborative editing: docs, sheets, Base
 

@@ -1,4 +1,4 @@
-import { Calendar, type CalendarEvent } from '../domains/calendar.js';
+import { Calendar, type CalendarEvent, type EventHit } from '../domains/calendar.js';
 import type { Option, Parsed } from './args.js';
 import { type Command, type CommandGroup, client, err, out, s } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
@@ -74,6 +74,59 @@ const agenda: Command = {
     });
     printEvents(list, Boolean(a.json));
     return 0;
+  },
+};
+
+const search: Command = {
+  name: 'search',
+  help: '按关键词搜日程(标题、描述、地点、参与人),--since/--until 限定时间范围',
+  access: 'cal.search',
+  positionals: [{ name: 'query', nargs: '+' }],
+  options: [
+    { name: 'since', kind: 'string', help: '起始时间(2026-11-20、2026-11-20 09:00 或时间戳)' },
+    { name: 'until', kind: 'string', help: '截止时间(格式同 --since)' },
+    JSON_OPTION,
+  ],
+  async run(a) {
+    const hits = await (await calendar()).search((a.query as string[]).join(' '), {
+      ...(a.since ? { since: parseTimeArg(String(a.since)) } : {}),
+      ...(a.until ? { until: parseTimeArg(String(a.until)) } : {}),
+    });
+    if (a.json) printJson(hits);
+    else
+      for (const e of hits as EventHit[])
+        out(
+          `${e.key}\t${e.allDay ? `全天 ${when(e.start).slice(0, 5)}` : `${when(e.start)} - ${when(e.end).slice(-5)}`}\t${e.summary}${e.location ? `\t@${e.location}` : ''}${e.organizer ? `\t组织者 ${e.organizer}` : ''}`,
+        );
+    return 0;
+  },
+};
+
+const busy: Command = {
+  name: 'busy',
+  help: '查这些人在一段时间内是否有日程(只看忙闲,不看内容)',
+  access: 'cal.busy',
+  positionals: [{ name: 'user_ids', nargs: '+' }],
+  options: [
+    {
+      name: 'start',
+      kind: 'string',
+      required: true,
+      help: '开始时间:2026-11-20 15:00、2h 后或时间戳',
+    },
+    { name: 'end', kind: 'string', help: '结束时间(默认开始后 1 小时)' },
+    JSON_OPTION,
+  ],
+  async run(a) {
+    const start = at(a.start) as number;
+    const end = at(a.end) ?? start + 3_600_000;
+    const ids = a.user_ids as string[];
+    const result = await (await calendar()).busy(ids, start, end);
+    if (a.json) printJson(result);
+    else for (const [id, b] of Object.entries(result)) out(`${id}\t${b ? '忙' : '空闲'}`);
+    const missing = ids.filter((id) => !(id in result));
+    if (missing.length) err(`找不到这些人的日历: ${missing.join(', ')}`);
+    return missing.length ? 1 : 0;
   },
 };
 
@@ -191,6 +244,6 @@ const del: Command = {
 
 export const cal: CommandGroup = {
   name: 'cal',
-  help: '日历:日历列表、日程、详情、新建、修改、删除',
-  subcommands: [calendars, agenda, get, create, update, del],
+  help: '日历:日历列表、日程、详情、搜索、忙闲、新建、修改、删除',
+  subcommands: [calendars, agenda, get, search, busy, create, update, del],
 };

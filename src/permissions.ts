@@ -92,6 +92,8 @@ export const PERMISSIONS = {
   'sheet.read': 'query',
   'cal.calendars': 'query',
   'cal.agenda': 'query',
+  'cal.search': 'query',
+  'cal.busy': 'query',
   unread: 'query',
   members: 'query',
   users: 'query',

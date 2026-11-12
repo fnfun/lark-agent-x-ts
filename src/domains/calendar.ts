@@ -18,12 +18,29 @@
  * over a range much longer than 90 days never ends (every page is empty and carries another page
  * token), so ranges are listed in 90-day windows. Listings leave out descriptions; fetching by id
  * returns the whole event, so updates (which send the whole event back) start from that.
+ *
+ * Search and free/busy (2026-11-13, both accounts, checked on events created for the test): event
+ * search is the web app's SEARCH_CALENDAR_EVENT (1010036, `calendarevents.SearchCalendarEventRequest`;
+ * the advanced scene takes a time range, the event key comes back as `uid`). Whether people are
+ * busy over a range is `calendarevents.GetBusyUserRequest` on their primary calendars (an empty
+ * answer means nobody is busy), which WEB_GET_USER_ATTENDEES_BY_USER_IDS (1002008) maps user ids
+ * to. It answers busy or free for the whole range, not the busy intervals.
  */
 import type { LarkClient } from '../client.js';
 import { authorize, guardMethods, type Permission } from '../permissions.js';
 import type { Dict } from '../proto/dict.js';
 
-const CMD = { list: 1002001, create: 1002003, update: 1002004, delete: 1002005, mget: 1002006 };
+const CMD = {
+  list: 1002001,
+  create: 1002003,
+  update: 1002004,
+  delete: 1002005,
+  mget: 1002006,
+  userCalendars: 1002008,
+  search: 1010036,
+};
+// calendarevents.SearchCalendarEventRequest.EventSearchScene.ADVANCED_SEARCH (takes a time range)
+const SEARCH_ADVANCED = 2;
 const WINDOW_MS = 90 * 86_400_000;
 // entities.CalendarEvent: Source.WEB, SelfAttendeeStatus.ACCEPT (organizer),
 // NotificationType.NO_NOTIFICATION
@@ -71,6 +88,23 @@ export interface NewEvent {
   calendarId?: string | undefined;
 }
 
+/** An event found by search. */
+export interface EventHit {
+  /** What get, update and delete take (with originalTime for recurring instances). */
+  key: string;
+  calendarId: string;
+  originalTime: number;
+  summary: string;
+  description: string;
+  /** Start and end (ms) of this occurrence. */
+  start: number;
+  end: number;
+  allDay: boolean;
+  location: string;
+  /** Organizer's display name. */
+  organizer: string;
+}
+
 /** Fields to change; the rest stay as they are. */
 export interface EventUpdate {
   summary?: string | undefined;
@@ -87,6 +121,8 @@ const CALENDAR_PERMISSIONS: { [K in keyof Calendar]?: Permission } = {
   calendars: 'cal.calendars',
   events: 'cal.agenda',
   get: 'cal.agenda',
+  search: 'cal.search',
+  busy: 'cal.busy',
   create: 'cal.create',
   update: 'cal.update',
   delete: 'cal.delete',
@@ -289,6 +325,78 @@ export class Calendar {
       span: 0,
       notificationType: NO_NOTIFICATION,
     });
+  }
+
+  /**
+   * Events I can see whose summary, description, location or attendees match query, optionally
+   * only those overlapping [since, until) (ms); in the server's order (by start time).
+   */
+  async search(query: string, o: { since?: number; until?: number } = {}): Promise<EventHit[]> {
+    const sec = (ms: number | undefined) =>
+      ms === undefined ? undefined : String(Math.floor(ms / 1000));
+    const resp = await this.client.command(
+      CMD.search,
+      'calendarevents.SearchCalendarEventRequest',
+      {
+        query,
+        eventSearchScene: SEARCH_ADVANCED,
+        eventFilter: {
+          ...(o.since !== undefined ? { startTime: sec(o.since) } : {}),
+          ...(o.until !== undefined ? { endTime: sec(o.until) } : {}),
+        },
+        localeIdentifier: 'zh_CN',
+      },
+      'calendarevents.SearchCalendarEventResponse',
+    );
+    const contents = (resp.contents ?? {}) as Record<string, Dict>;
+    return ((resp.instances ?? []) as Dict[]).flatMap((i) => {
+      const c = contents[String(i.eventRefId)];
+      if (!c) return [];
+      return [
+        {
+          key: String(c.uid ?? ''),
+          calendarId: String(c.calendarId ?? ''),
+          originalTime: num(c.originalTime),
+          summary: String(c.summary ?? ''),
+          description: String(c.description ?? ''),
+          start: num(i.startTime) * 1000,
+          end: num(i.endTime) * 1000,
+          allDay: c.isAllDay === true,
+          location: String(c.location ?? ''),
+          organizer: String(c.organizer ?? ''),
+        },
+      ];
+    });
+  }
+
+  /**
+   * Whether each user (by user id) has something on their primary calendar during [since, until)
+   * (ms): true when busy at any point of it. Reads free/busy only, as the web app's scheduling
+   * view does; users whose calendar cannot be found are left out.
+   */
+  async busy(userIds: string[], since: number, until: number): Promise<Record<string, boolean>> {
+    if (!userIds.length) return {};
+    const resp = await this.client.command(
+      CMD.userCalendars,
+      'calendarweb.GetUserAttendeesByUserIdsRequest',
+      { userIds },
+      'calendarweb.GetUserAttendeesByUserIdsResponse',
+    );
+    const calendarOf = new Map<string, string>();
+    for (const [userId, a] of Object.entries((resp.userAttendees ?? {}) as Record<string, Dict>))
+      if (a.attendeeCalendarId) calendarOf.set(userId, String(a.attendeeCalendarId));
+    if (!calendarOf.size) return {};
+    const busy = await this.client.api('calendarevents.GetBusyUserRequest', {
+      calendarIds: [...calendarOf.values()],
+      startTime: String(Math.floor(since / 1000)),
+      endTime: String(Math.ceil(until / 1000)),
+    });
+    const map = (busy.calendarBusyMap ?? {}) as Record<string, boolean>;
+    return Object.fromEntries(
+      userIds
+        .filter((u) => calendarOf.has(u))
+        .map((u) => [u, map[calendarOf.get(u) as string] === true]),
+    );
   }
 
   /** The whole event (with description) by its id; the listed form when that fails. */

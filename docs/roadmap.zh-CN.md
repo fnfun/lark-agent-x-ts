@@ -139,7 +139,8 @@
 
 **进展（2026-11-10，大部分完成）。** `lark cal calendars/agenda/get/create/update/delete` 与库的 `Calendar`，在飞书测试账号上用专为测试新建、测完删除的日程实测。日程走日历网页应用的 `calendarweb` 命令（1002001 列出、1002003 新建、1002004 修改、1002005 删除、1002006 按 id 取），cmd 映射里没有这些号，由 `LarkClient.command` 按号调用；同一应用里的 `calendar.v1.*` 命令号回"command not found"。细节写在 `src/domains/calendar.ts` 文件头。
 
-- 未做：参会人（邀请他人）、回复邀请、忙闲与推荐时间、会议室、日程搜索。老版忙闲请求回空包；参会人与回复邀请会涉及他人。
+- 2026-11-13 补上，在两个账号上用专为测试新建、事后删除的日程实测：日程搜索（`cal search`、`Calendar.search`；网页版的 SEARCH_CALENDAR_EVENT，1010036，可带时间范围）和一些人在某段时间是否忙（`cal busy`、`Calendar.busy`；对他们的主日历调 `calendarevents.GetBusyUserRequest`，主日历由 WEB_GET_USER_ATTENDEES_BY_USER_IDS，1002008，查到；回空表示空闲，老版忙闲请求回的空包多半也是这个意思）。只在自己的日历上核对过：问别人的忙闲虽是读操作，但要有别人的日程才能对照。
+- 未做：参会人（邀请他人）、回复邀请、推荐时间、会议室。参会人与回复邀请会涉及他人；服务端只回答整段时间忙不忙，给不出推荐时间需要的忙碌区间。
 
 ### v0.6：协同编辑：文档、表格、多维表格
 
