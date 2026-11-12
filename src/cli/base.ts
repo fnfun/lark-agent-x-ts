@@ -13,10 +13,12 @@ import {
 import { Wiki } from '../domains/wiki.js';
 import { WebSession } from '../web.js';
 import type { Option } from './args.js';
-import { type Command, type CommandGroup, err, out } from './common.js';
+import { type Command, type CommandGroup, client, err, out } from './common.js';
 import { errorText, printJson } from './format.js';
 
 const web = () => new WebSession(new LarkAuth());
+/** For writing records: person cells get people's names from the gateway. */
+const writer = () => new Base(web(), { userNames: async (ids) => (await client()).userNames(ids) });
 const JSON_OPTION: Option = { name: 'json', kind: 'flag' };
 const TABLE_OPTION: Option = {
   name: 'table',
@@ -166,14 +168,14 @@ const records: Command = {
 
 const add: Command = {
   name: 'add',
-  help: '新增一条记录(字段=值;单选、多选填选项名,没有的选项会新建,多选用逗号分隔;日期填 2026-11-20 或 2026-11-20 18:30)',
+  help: '新增一条记录(字段=值;单选、多选填选项名,没有的选项会新建,多选用逗号分隔;日期填 2026-11-20 或 2026-11-20 18:30;人员填 user_id,多人用逗号分隔)',
   access: 'base.add',
   positionals: [BASE_ARG, { name: 'values', nargs: '*', help: '字段=值' }],
   options: [TABLE_OPTION],
   run: (a) =>
     guarded(async () => {
       const t = await target(a);
-      const id = await new Base(web()).addRecord(
+      const id = await writer().addRecord(
         t.token,
         parseAssignments(a.values as string[]),
         t.table ? { table: t.table } : {},
@@ -192,7 +194,7 @@ const set: Command = {
   run: (a) =>
     guarded(async () => {
       const t = await target(a);
-      await new Base(web()).setRecord(
+      await writer().setRecord(
         t.token,
         String(a.record_id),
         parseAssignments(a.values as string[]),

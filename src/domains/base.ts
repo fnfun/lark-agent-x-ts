@@ -20,7 +20,10 @@
  *   (`data.addOptions`), AddField (`data.addField` + `data.setFieldAttr`).
  * - Cell values by field type: text `[{type: "text", text}]`, number a number, single select an
  *   option id, multi select option ids, date ms, checkbox a boolean, URL
- *   `[{type: "url", text, link}]`. New select options are added in the same commit.
+ *   `[{type: "url", text, link}]`. New select options are added in the same commit. A person
+ *   cell is `{users: [{userId, name, enName}]}` (2026-11-13, read off what the server stores in a
+ *   created-by field; the server keeps the names as sent, so they are looked up first; the array
+ *   forms are refused as `type_mismatch`).
  * - A new record goes at the table's `rankInfo.nextRank`; the server moves nextRank on.
  * - An attachment cell holds `[{id, attachmentToken, name, size, mimeType, timeStamp}]`, `id` being
  *   the file token too (the server rejects a cell without it); files are uploaded with mount
@@ -49,6 +52,7 @@ export const FIELD_TYPES = {
   multiselect: 4,
   date: 5,
   checkbox: 7,
+  person: 11,
   url: 15,
 } as const;
 /** Attachment fields: read as file names, written with Base.attach. */
@@ -68,6 +72,7 @@ const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
   multiselect: { options: [], optionsType: 0 },
   date: { timeFormat: '', displayTimeZone: false, autoFill: false, dateFormat: 'yyyy/MM/dd' },
   checkbox: { styleId: '0' },
+  person: { multiple: true },
   url: { extractExternalUrl: false },
   attachment: undefined,
 };
@@ -78,6 +83,7 @@ const UI_TYPES: Record<FieldType, string> = {
   multiselect: 'MultiSelect',
   date: 'DateTime',
   checkbox: 'Checkbox',
+  person: 'User',
   url: 'Url',
   attachment: 'Attachment',
 };
@@ -237,6 +243,12 @@ function showDate(ms: number): string {
     : day;
 }
 
+/** A list given as an array or a comma-separated string, trimmed, empty items dropped. */
+const listInput = (input: CellInput): string[] =>
+  (Array.isArray(input) ? input : String(input ?? '').split(/[,，]/))
+    .map((x) => x.trim())
+    .filter(Boolean);
+
 /** A segment list (text runs, URLs, people ...) → its visible text; text runs join directly. */
 function segmentsText(v: unknown[]): string {
   const textRuns = v.every(
@@ -267,6 +279,11 @@ export function readCell(field: BaseField, value: unknown): string | number | bo
       return showDate(Number(value));
     default:
       if (Array.isArray(value)) return segmentsText(value);
+      // People, created-by and modified-by cells
+      if (Array.isArray((value as Dict).users))
+        return ((value as Dict).users as Dict[])
+          .map((u) => String(u.name || u.enName || u.userId || ''))
+          .join(', ');
       return typeof value === 'object'
         ? JSON.stringify(value)
         : (value as string | number | boolean);
@@ -290,7 +307,14 @@ const toField = (id: string, f: Dict, primary: string): BaseField => {
 };
 
 export class Base {
-  constructor(readonly web: WebSession) {}
+  /**
+   * userNames looks up people's display names for person cells (the server stores the names it is
+   * sent); without it, person cells are written with ids only.
+   */
+  constructor(
+    readonly web: WebSession,
+    readonly o: { userNames?: (userIds: string[]) => Promise<Map<string, string>> } = {},
+  ) {}
 
   /** The tables of a Base, in their order. */
   async tables(baseToken: string): Promise<BaseTable[]> {
@@ -532,7 +556,7 @@ export class Base {
         },
       ],
     };
-    await this.commit(t, [add, ...this.setOps(t, recordId, values)]);
+    await this.commit(t, [add, ...this.setOps(t, recordId, values, await this.names(t, values))]);
     return recordId;
   }
 
@@ -544,7 +568,17 @@ export class Base {
     o: { table?: string } = {},
   ): Promise<void> {
     const t = await this.load(baseToken, o.table, 1);
-    await this.commit(t, this.setOps(t, recordId, values));
+    await this.commit(t, this.setOps(t, recordId, values, await this.names(t, values)));
+  }
+
+  /** Display names of the people the values put into person fields (empty without a resolver). */
+  private async names(t: TableState, values: Record<string, CellInput>) {
+    const ids = Object.entries(values).flatMap(([key, input]) => {
+      const f = t.fields.find((x) => x.id === key) ?? t.fields.find((x) => x.name === key);
+      return f?.type === FIELD_TYPES.person ? listInput(input) : [];
+    });
+    if (!ids.length || !this.o.userNames) return new Map<string, string>();
+    return this.o.userNames([...new Set(ids)]);
   }
 
   /**
@@ -975,13 +1009,18 @@ export class Base {
   }
 
   /** SetRecord (and AddOptions for select names the field lacks) for a record's new values. */
-  private setOps(t: TableState, recordId: string, values: Record<string, CellInput>): Dict[] {
+  private setOps(
+    t: TableState,
+    recordId: string,
+    values: Record<string, CellInput>,
+    names: Map<string, string>,
+  ): Dict[] {
     const ops: Dict[] = [];
     const data: Dict = {};
     for (const [key, input] of Object.entries(values)) {
       const f = t.fields.find((x) => x.id === key) ?? t.fields.find((x) => x.name === key);
       if (!f) throw new Error(`没有这个字段: ${key}`);
-      const { value, newOptions } = this.encode(f, input);
+      const { value, newOptions } = this.encode(f, input, names);
       if (newOptions.length) {
         ops.push({
           command: 'AddOptions',
@@ -1024,7 +1063,7 @@ export class Base {
   }
 
   /** A given value → the stored form for the field, plus select options to create. */
-  private encode(f: BaseField, input: CellInput) {
+  private encode(f: BaseField, input: CellInput, names: Map<string, string>) {
     const newOptions: (SelectOption & { color: number })[] = [];
     if (input === null || input === '') return { value: null, newOptions };
     const text = Array.isArray(input) ? input.join(',') : String(input);
@@ -1063,6 +1102,13 @@ export class Base {
       }
       case FIELD_TYPES.url:
         return { value: [{ type: 'url', text, link: text }], newOptions };
+      case FIELD_TYPES.person: {
+        const users = listInput(input).map((userId) => {
+          const name = names.get(userId);
+          return { userId, ...(name ? { name, enName: name } : {}) };
+        });
+        return { value: users.length ? { users } : null, newOptions };
+      }
       default:
         throw new Error(`不支持写入 ${f.name}(字段类型 ${f.type})`);
     }

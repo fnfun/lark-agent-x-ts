@@ -270,6 +270,53 @@ describe('多维表格', () => {
     expect(attrAtt?.data).not.toHaveProperty('property');
   });
 
+  test('人员：写成 {users: [{userId, name}]}（数组形式服务端不收），名字先查好；没有查名字的办法时只写 id；读出名字', async () => {
+    const table = {
+      ...TABLE,
+      viewMap: { vew1: { property: { fields: ['fldText', 'fldWho'] } } },
+      fieldMap: { fldText: { name: '标题', type: 1 }, fldWho: { name: '负责人', type: 11 } },
+      recordMap: {
+        rec1: {
+          fldWho: {
+            value: {
+              users: [
+                { userId: '7000000000000000001', name: '同事甲' },
+                { userId: '7000000000000000002' },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const { base: plain, commits } = fake([table]);
+    const asked: string[][] = [];
+    const base = new Base(plain.web, {
+      userNames: async (ids) => {
+        asked.push(ids);
+        return new Map([['7000000000000000001', '同事甲']]);
+      },
+    });
+    await base.setRecord('B1', 'rec1', { 负责人: '7000000000000000001, 7000000000000000002' });
+    expect(asked).toEqual([['7000000000000000001', '7000000000000000002']]);
+    expect(firstAction(commits[0]?.ops[0]).data).toEqual({
+      fldWho: {
+        type: 11,
+        value: {
+          users: [
+            { userId: '7000000000000000001', name: '同事甲', enName: '同事甲' },
+            { userId: '7000000000000000002' },
+          ],
+        },
+      },
+    });
+    await plain.setRecord('B1', 'rec1', { 负责人: '7000000000000000002' });
+    expect(firstAction(commits[1]?.ops[0]).data).toEqual({
+      fldWho: { type: 11, value: { users: [{ userId: '7000000000000000002' }] } },
+    });
+    const [row] = await plain.records('B1');
+    expect(row?.fields.负责人).toBe('同事甲, 7000000000000000002');
+  });
+
   test('搜索和筛选在整张表里找、找完再按 limit 截断；搜索不分大小写、任一字段含有即可', async () => {
     const queries: Dict[] = [];
     const web = {
