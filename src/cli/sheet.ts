@@ -147,7 +147,7 @@ const flags = (a: Record<string, unknown>): CellStyle => {
 
 const style: Command = {
   name: 'style',
-  help: '设置单元格或区域的格式(加粗、斜体、下划线、删除线、颜色、填充色、对齐、字号、数字格式)',
+  help: '设置单元格或区域的格式(加粗、斜体、下划线、删除线、颜色、填充色、对齐、字号、数字格式、边框)',
   access: 'sheet.style',
   positionals: [SHEET_ARG, { name: 'range', help: '单元格或区域,如 C3 或 A1:C10' }],
   options: [
@@ -161,6 +161,13 @@ const style: Command = {
     { name: 'align', kind: 'string', choices: ['left', 'center', 'right'] },
     { name: 'size', kind: 'int', help: '字号(磅)' },
     { name: 'format', kind: 'string', help: '数字格式,Excel 写法,如 0.00% 或 #,##0' },
+    {
+      name: 'border',
+      kind: 'string',
+      choices: ['all', 'outer', 'none'],
+      help: '边框:all 每个单元格四边,outer 区域外框,none 去掉区域内单元格的边框',
+    },
+    { name: 'border-color', kind: 'string', help: '边框颜色,#rrggbb(默认深灰)' },
   ],
   run: (a) =>
     guarded(async () => {
@@ -171,6 +178,10 @@ const style: Command = {
         ...(a.align ? { align: String(a.align) as NonNullable<CellStyle['align']> } : {}),
         ...(a.size !== undefined ? { fontSize: Number(a.size) } : {}),
         ...(a.format !== undefined ? { format: String(a.format) } : {}),
+        ...(a.border !== undefined
+          ? { border: String(a.border) as NonNullable<CellStyle['border']> }
+          : {}),
+        ...(a.border_color !== undefined ? { borderColor: String(a.border_color) } : {}),
       };
       await new Sheets(web()).style(await token(a), String(a.range), s, tab(a));
       out('已设置');

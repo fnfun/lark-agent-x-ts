@@ -323,6 +323,37 @@ describe('表格', () => {
     expect(sent).toHaveLength(3);
   });
 
+  test('边框：all 四条边都作用于整个区域，outer 每条边只作用于最外一行或一列，none 用 null 去掉；颜色默认深灰', async () => {
+    const { sheets, actions } = fakeSheets();
+    await sheets.style('T', 'B2:C4', { border: 'outer', borderColor: '#FF0000' });
+    const line = { color: '#ff0000', width: 1, lineStyle: 2 };
+    const t = (row: number, col: number, rowCount: number, colCount: number) => ({
+      type: 0,
+      row,
+      col,
+      rowCount,
+      colCount,
+    });
+    expect(actions(0).map(([, , , json]) => json)).toEqual([
+      { style: { borderTop: line }, target: t(1, 1, 1, 2) },
+      { style: { borderRight: line }, target: t(1, 2, 3, 1) },
+      { style: { borderBottom: line }, target: t(3, 1, 1, 2) },
+      { style: { borderLeft: line }, target: t(1, 1, 3, 1) },
+    ]);
+    await sheets.style('T', 'A1', { border: 'all', bold: true });
+    expect(actions(1).map(([, , , json]) => json)).toEqual([
+      { style: { fontInfo: { fontWeight: 700 } }, target: t(0, 0, 1, 1) },
+      ...['borderTop', 'borderRight', 'borderBottom', 'borderLeft'].map((side) => ({
+        style: { [side]: { color: '#1f2329', width: 1, lineStyle: 2 } },
+        target: t(0, 0, 1, 1),
+      })),
+    ]);
+    await sheets.style('T', 'A1:B1', { border: 'none' });
+    expect(
+      actions(2).every(([type, , , json]) => type === 61 && Object.values(json.style)[0] === null),
+    ).toBe(true);
+  });
+
   test('命令行的 单元格=值：引用转大写，值可含等号', () => {
     expect(parseCells(['b2=a=b', 'C3='])).toEqual({ B2: 'a=b', C3: '' });
     expect(() => parseCells(['B2'])).toThrow('单元格=值');

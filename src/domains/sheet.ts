@@ -24,11 +24,13 @@
  *   "normal", `fontInfo.fontSize` "14pt", `textDecoration: {flag: 1 underline | 2 strikethrough,
  *   active}` where active false turns it on and true off, `foreColor` / `backColor` "#rrggbb",
  *   `hAlign` 0 left, 1 center, 2 right, `formatter.formatCached` a number format ("0%",
- *   "¥#,##0.00", Excel's syntax).
+ *   "¥#,##0.00", Excel's syntax), `borderTop` / `borderRight` / `borderBottom` / `borderLeft`
+ *   `{color, width: 1, lineStyle: 2}` for a thin line or null for none, applied to every cell in
+ *   the target (so an outline sets each side on its outer row or column only).
  * - Merging: action 9 over the range with JSON `[{target: {row, col, row_count, col_count}}]`, after
  *   a cell set on its top-left cell with `{style: null, dataValidation: null}` (no value, which
- *   keeps the cell's value); unmerging sends `[]` over the range. Borders use another action (74)
- *   that rewrites whole cell styles in a compact columnar form, which this module does not send.
+ *   keeps the cell's value); unmerging sends `[]` over the range. (The web app sets borders with
+ *   another action, 74, that rewrites whole cell styles; the style action above does it per side.)
  * - Reading exports the sheet as .xlsx (the Docs export API) and parses it (xlsx.ts); the cell
  *   blocks embedded in the page use an undocumented columnar encoding.
  */
@@ -166,6 +168,48 @@ export interface CellStyle {
   fontSize?: number;
   /** Number format in Excel's syntax, e.g. "0.00%", "#,##0", "yyyy/MM/dd". */
   format?: string;
+  /** Borders: every cell's four sides, the range's outline, or none. */
+  border?: 'all' | 'outer' | 'none';
+  /** Border colour, "#rrggbb" (the web app's default dark grey otherwise). */
+  borderColor?: string;
+}
+
+/** A thin line, as the web app draws borders. */
+const BORDER_LINE = { width: 1, lineStyle: 2 };
+const DEFAULT_BORDER_COLOR = '#1f2329';
+
+type Area = { row: number; col: number; rows: number; cols: number };
+
+/**
+ * The border actions' style and target for a range: each side is set on the cells it borders
+ * (all cells for "all", the outer row or column for "outer"), null removes it.
+ */
+export function borderParts(
+  border: NonNullable<CellStyle['border']>,
+  color: string,
+  r: Area,
+): { style: Record<string, unknown>; target: Record<string, number> }[] {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error(`颜色要写成 #rrggbb: ${color}`);
+  const line = border === 'none' ? null : { color: color.toLowerCase(), ...BORDER_LINE };
+  const target = (row: number, col: number, rows: number, cols: number) => ({
+    type: 0,
+    row,
+    col,
+    rowCount: rows,
+    colCount: cols,
+  });
+  const whole = target(r.row, r.col, r.rows, r.cols);
+  if (border !== 'outer')
+    return ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'].map((side) => ({
+      style: { [side]: line },
+      target: whole,
+    }));
+  return [
+    { style: { borderTop: line }, target: target(r.row, r.col, 1, r.cols) },
+    { style: { borderRight: line }, target: target(r.row, r.col + r.cols - 1, r.rows, 1) },
+    { style: { borderBottom: line }, target: target(r.row + r.rows - 1, r.col, 1, r.cols) },
+    { style: { borderLeft: line }, target: target(r.row, r.col, r.rows, 1) },
+  ];
 }
 
 const ALIGN = { left: 0, center: 1, right: 2 } as const;
@@ -417,15 +461,20 @@ export class Sheets {
     style: CellStyle,
     o: { sheet?: string } = {},
   ): Promise<number> {
-    const parts = styleParts(style);
-    if (!parts.length) throw new Error('没有要设置的样式');
     const r = area(range);
     const target = { type: 0, row: r.row, col: r.col, rowCount: r.rows, colCount: r.cols };
+    const parts = [
+      ...styleParts(style).map((s) => ({ style: s, target })),
+      ...(style.border === undefined
+        ? []
+        : borderParts(style.border, style.borderColor ?? DEFAULT_BORDER_COLOR, r)),
+    ];
+    if (!parts.length) throw new Error('没有要设置的样式');
     const { state, tab } = await this.tab(token, o.sheet);
     return this.send(
       token,
       state.revision,
-      parts.flatMap((s) => action(ACTION.style, tab.id, null, { style: s, target })),
+      parts.flatMap((p) => action(ACTION.style, tab.id, null, p)),
     );
   }
 

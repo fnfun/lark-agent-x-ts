@@ -171,7 +171,7 @@
 - 电子表格也能新增、删除工作表（`lark sheet tab-add/tab-rm`，2026-11-11 起两个账号实测）；删掉后约半分钟内页面里的工作表列表仍会列出它。
 - 电子表格也能设置格式（`lark sheet style`：加粗、斜体、下划线、删除线、字体颜色和填充色、对齐、字号；2026-11-11 起两个账号实测，在浏览器和导出的 .xlsx 里都核对过）。
 - 电子表格也能设置数字格式（`style --format`）和合并单元格（`lark sheet merge`，`--undo` 取消），2026-11-11 起两个账号实测。
-- 电子表格未做：边框。网页用一种动作（74）设置边框，它会重写区域内以及相邻单元格的整套样式，所以发送前要知道这些单元格当前的样式；页面是从 `sheet/block` 以未公开的列式编码加载样式的，猜出来的样式会冲掉已有格式。从设了样式的单元格观察到的元组布局：0 CSS 字体简写（"italic bold 14pt/1.5 ..."），2 水平对齐，3 下划线 / 删除线标志，5 填充色，6 字体色，7 数字格式，8–11 四条边框（`{color, width, lineStyle}`）；可行的做法是从导出 .xlsx 的样式里重建相关单元格的元组。
+- 电子表格也能设置边框（`style --border all|outer|none`、`--border-color`；2026-11-13 起两个账号实测，在网页和导出的 .xlsx 里都核对过）：样式动作可以逐条边单独设置 `borderTop` / `borderRight` / `borderBottom` / `borderLeft`，不会动单元格的其他格式。（网页自己设边框用的动作 74 会重写整套样式元组。）
 - 文档，两个账号都实测完成：`lark doc append/write` 与库的 `DocEditor`，可以往 docx 末尾追加 Markdown 或替换正文。提交走 `POST /space/api/docx/blocks/user_change`，按块的 json0 风格操作（新块 `oi`，父块 `children` 上 `li`/`ld`）；操作格式取自 docx 编辑器代码而非网页观察，用"Markdown 写进去再读回来"在服务端核对。细节写在 `src/domains/doc-edit.ts` 文件头。
 - 文档还能原地查找替换（`lark doc replace`）：块的文本操作整段替换带属性的文字，每个字保留原有属性；多行文字按服务端校验的 Etherpad 换行规则编码。
 - 文档历史记录，两个账号都实测完成（2026-11-11）：`lark doc history/history-fetch/revert` 与库的 `DocHistory`，列出 docx 的历史记录、读某条记录时的内容、还原到某条记录。接口是在飞书账号的无头浏览器里观察网页的历史记录面板得到的，再用 HTTP 重放验证；细节写在 `src/domains/doc-history.ts` 文件头。
