@@ -78,7 +78,7 @@
 
 - 在真实账号上实测过（读操作；写操作只做在自聊会话、只有自己的测试群和测试标签上，随后还原）：第一批的全部命令；`send-video` / `send-audio`（下载回来逐字节一致，时长正确；服务端只保留语音的整秒，所以发送时四舍五入）；`send --md` 的内嵌图片与 `--attach`；`forward --thread`；`history --order/--reactions`；`mute`（含 `--at-all`）、`group nickname`（`members` 能显示，取自成员列表的 `metas`）、`group moderation`、`group link`、`tags` 的增删改。
 - 按协议定义实现、用假服务端测试覆盖（请求按真实定义严格编码），但实测会涉及他人，所以**没有实测**：`group admin`（要有别的成员）、`group requests --approve/--reject`（要有人申请）。
-- 顺延：文件夹消息的子文件列表需要 `media.v1.*` 的定义，现有协议管线没提取到（`cmd_map.json` 里有名字、没有定义），随 v0.3 的管线扩展一起做。放弃：`shortcut` 的插入位置，服务端怎么处理 `position` 只能靠在真实账号上写入才能确认。
+- 顺延：文件夹消息的子文件列表需要 `media.v1.*` 的定义，现有协议管线没提取到（`cmd_map.json` 里有名字、没有定义），随 v0.3 的管线扩展一起做。2026-11-13 已做（`lark folder`，库的 `LarkClient.listFolder`）：`media.v1` 的浏览请求原来是桌面端 SDK 本地处理的（网页网关回 “command not found”），网页版改调文件域名的 `GET /api/folder/browse`（protobuf `pan.BrowseFolderResponse`，每页最多 50 条）；同一域名还能解压压缩包文件消息（`/api/package/uncompress`），`folder` 也一并列出。在两个账号上用发到自己会话的 zip 实测（60 个文件的翻页、子文件夹、用 `download --key` 下载里面的文件）；真正的文件夹消息造不出来，只有桌面端的分片上传器会发，因此这部分依据的是网页版把它的内容当 `FileContent` 解析、key 即文件夹 key。放弃：`shortcut` 的插入位置，服务端怎么处理 `position` 只能靠在真实账号上写入才能确认。
 
 ### v0.3：多领域底座 + 任务
 

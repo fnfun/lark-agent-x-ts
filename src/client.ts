@@ -5,7 +5,15 @@ import type { LarkAuth } from './auth.js';
 import { HttpError, NetworkError, raiseForStatus, request, USER_AGENT } from './http.js';
 import { accessKey, longRequestId, requestCid, requestId } from './ids.js';
 import { getLogger } from './log.js';
-import { mp4DurationMs, oggOpusDurationMs, uploadFile, uploadImage } from './media.js';
+import {
+  type FolderEntry,
+  listFolder,
+  mp4DurationMs,
+  oggOpusDurationMs,
+  unpackArchive,
+  uploadFile,
+  uploadImage,
+} from './media.js';
 import {
   authorize,
   checkSource,
@@ -51,6 +59,10 @@ import {
 import { type Dict, fromDict, toDict } from './proto/dict.js';
 import { larkType, protoType, resolveCmd } from './proto/registry.js';
 import { urls, webOrigin } from './region.js';
+
+// entities.Message.Type
+const MESSAGE_FILE = 3;
+const MESSAGE_FOLDER = 25;
 
 const logger = getLogger('larkx.client');
 
@@ -2216,6 +2228,48 @@ export class LarkClient {
   }
 
   /**
+   * What a message's folder holds: a folder message's folder, or the folder an archive file message
+   * unpacks into (the server unpacks it on the first call; formats it cannot unpack throw HttpError
+   * with its reason). path walks down subfolders by name (`a/b`); recursive also lists everything
+   * below, each entry's path relative to where the listing starts. Files download through the
+   * message's resource URL with the entry's key (`lark download <msg_id> --key ... --chat ...`).
+   */
+  async listFolder(
+    msgId: string,
+    opts: { path?: string | undefined; recursive?: boolean } = {},
+  ): Promise<{ chatId: string; entries: (FolderEntry & { path: string })[] }> {
+    const resp = await this.api('messages.PullMessagesByIdsRequest', { messageIds: [msgId] });
+    const v = ((resp.messages ?? {}) as Record<string, Dict>)[msgId];
+    if (!v) throw new Error(`未找到消息 ${msgId}`);
+    const type = enumToInt(v.type);
+    if (type !== MESSAGE_FILE && type !== MESSAGE_FOLDER)
+      throw new Error(`消息 ${msgId} 不是文件夹或压缩包`);
+    // A folder message carries a FileContent too, its key being the folder's key
+    const fileType = protoType('FileContent');
+    const file = toDict(
+      fileType,
+      fromBinary(fileType, (v.content as Uint8Array) ?? new Uint8Array()),
+    );
+    let key = String(file.key ?? '');
+    if (type === MESSAGE_FILE) key = await unpackArchive(this.auth, key);
+    for (const name of (opts.path ?? '').split('/').filter(Boolean)) {
+      const sub = (await listFolder(this.auth, key)).find((e) => e.folder && e.name === name);
+      if (!sub) throw new Error(`没有子文件夹: ${name}`);
+      key = sub.key;
+    }
+    const entries: (FolderEntry & { path: string })[] = [];
+    const walk = async (folderKey: string, prefix: string): Promise<void> => {
+      for (const e of await listFolder(this.auth, folderKey)) {
+        const path = prefix ? `${prefix}/${e.name}` : e.name;
+        entries.push({ ...e, path });
+        if (opts.recursive && e.folder) await walk(e.key, path);
+      }
+    };
+    await walk(key, '');
+    return { chatId: String(v.chatId || v.channelId || ''), entries };
+  }
+
+  /**
    * Full context of a thread: the root message first, then the latest limit replies; empty when the
    * root message does not exist.
    */
@@ -2610,6 +2664,7 @@ const METHOD_PERMISSIONS: {
   unreadMessages: 'unread',
   unreadMentions: 'unread',
   getMessages: 'get',
+  listFolder: 'folder',
   threadMessages: 'thread',
   threadReplies: 'thread',
   missedMessages: 'history',

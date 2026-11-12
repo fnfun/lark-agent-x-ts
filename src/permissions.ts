@@ -104,6 +104,7 @@ export const PERMISSIONS = {
   'message-link': 'query',
   'self-chat': 'query',
   download: 'query',
+  folder: 'query',
   'scheduled.list': 'query',
   'shortcut.list': 'query',
 

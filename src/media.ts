@@ -2,11 +2,14 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { fromBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from './auth.js';
 import { loadConfig } from './config.js';
-import { raiseForStatus, request, USER_AGENT } from './http.js';
+import { HttpError, raiseForStatus, request, USER_AGENT } from './http.js';
 import { getLogger } from './log.js';
-import type { Dict } from './proto/dict.js';
+import { type Dict, toDict } from './proto/dict.js';
+import { larkType } from './proto/registry.js';
 import { getRegion, urls, webOrigin } from './region.js';
 
 const logger = getLogger('larkx.media');
@@ -85,6 +88,17 @@ export interface UploadedFile {
 
 const UPLOAD_TIMEOUT_MS = 300_000;
 
+/** Headers the web client sends to the file host (cookie auth). */
+function fileHostHeaders(auth: LarkAuth): Record<string, string> {
+  return {
+    origin: webOrigin(auth.region),
+    referer: `${webOrigin(auth.region)}/`,
+    'user-agent': USER_AGENT,
+    'x-source': 'web',
+    'x-appid': auth.gatewayAppId,
+  };
+}
+
 /** The web client's form request for uploading resources (file host, cookie auth). */
 async function postForm(
   auth: LarkAuth,
@@ -98,13 +112,7 @@ async function postForm(
   return raiseForStatus(
     await request(url, {
       method: 'POST',
-      headers: {
-        origin: webOrigin(auth.region),
-        referer: `${webOrigin(auth.region)}/`,
-        'user-agent': USER_AGENT,
-        'x-source': 'web',
-        'x-appid': auth.gatewayAppId,
-      },
+      headers: fileHostHeaders(auth),
       cookies: auth.cookies,
       body: form,
       timeoutMs: UPLOAD_TIMEOUT_MS,
@@ -270,4 +278,118 @@ export function imageInfo(
     }
   }
   return null;
+}
+
+/**
+ * One entry of a folder: the folder a folder message carries, or the folder the server unpacks an
+ * archive file message into. key is a folder key for subfolders (listed with listFolder) and a file
+ * key otherwise; files download through their message's resource URL with this key
+ * (messageResourceUrl).
+ */
+export interface FolderEntry {
+  key: string;
+  name: string;
+  folder: boolean;
+  /** Bytes; for a folder, the total of its contents. */
+  size: number;
+  /** Unix seconds. */
+  createTime: number;
+  ownerId: string;
+  ownerName: string;
+}
+
+// pan.CompleteFileUploadRequest.FileType
+const FILE_TYPE_FOLDER = 9;
+// Larger pages answer 400 with an empty message
+const BROWSE_PAGE = 50;
+// The web client polls an unpacking archive at most 30 times
+const UNPACK_POLLS = 30;
+
+/**
+ * GET a protobuf answer from the file host's folder APIs (the web client's `/api/folder/browse` and
+ * `/api/package/uncompress`, query parameters in the same form). Failures answer JSON whose
+ * message becomes HttpError.reason (e.g. 解压失败，暂不支持此文件格式).
+ */
+async function fileHostGet(
+  auth: LarkAuth,
+  path: string,
+  query: Record<string, string | number>,
+  type: string,
+): Promise<Dict> {
+  const url = new URL(`${urls.fileHost(auth.region)}${path}`);
+  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v));
+  const res = await request(url.toString(), {
+    headers: fileHostHeaders(auth),
+    cookies: auth.cookies,
+    timeoutMs: 30_000,
+  });
+  const body = new Uint8Array(await res.arrayBuffer());
+  if (!res.ok) {
+    let reason = '';
+    try {
+      const j = JSON.parse(new TextDecoder().decode(body)) as { message?: string };
+      reason = String(j.message ?? '');
+    } catch {}
+    throw new HttpError(res.status, res.statusText, res.url, reason);
+  }
+  const t = larkType(type);
+  return toDict(t, fromBinary(t, body));
+}
+
+/** Query of both folder APIs: one page, in the web client's default order (oldest first). */
+const pageQuery = (key: string, start: number) => ({
+  key,
+  start,
+  step: BROWSE_PAGE,
+  order_type: 1,
+  order_direction: 2,
+  scene: 1,
+});
+
+function folderEntry(d: Dict): FolderEntry {
+  return {
+    key: String(d.key ?? ''),
+    name: String(d.name ?? ''),
+    folder: Number(d.type) === FILE_TYPE_FOLDER,
+    size: Number(d.size ?? 0),
+    createTime: Number(d.createTime ?? 0),
+    ownerId: String(d.ownerId ?? ''),
+    ownerName: String(d.ownerName ?? ''),
+  };
+}
+
+/** Every entry directly inside a folder (by its folder key), oldest first. */
+export async function listFolder(auth: LarkAuth, folderKey: string): Promise<FolderEntry[]> {
+  const out: FolderEntry[] = [];
+  for (;;) {
+    const page = await fileHostGet(
+      auth,
+      '/api/folder/browse',
+      pageQuery(folderKey, out.length),
+      'pan.BrowseFolderResponse',
+    );
+    const infos = (page.infos as Dict[] | undefined) ?? [];
+    out.push(...infos.map(folderEntry));
+    if (!page.hasMore || !infos.length) return out;
+  }
+}
+
+/**
+ * Have the server unpack an archive file (by its file key; zip and the other formats the web
+ * client previews) and return the key of the folder it unpacked into, for listFolder. The first
+ * call starts the unpacking and later ones report progress; a format the server cannot unpack
+ * throws HttpError with the server's reason.
+ */
+export async function unpackArchive(auth: LarkAuth, fileKey: string): Promise<string> {
+  for (let i = 0; i < UNPACK_POLLS; i++) {
+    const r = await fileHostGet(
+      auth,
+      '/api/package/uncompress',
+      { ...pageQuery(fileKey, 0), process_key: fileKey },
+      'pan.UnCompressPackageResponse',
+    );
+    if (r.browseResult && r.folderKey) return String(r.folderKey);
+    await sleep(Number(r.queryProgressIntervalMs ?? 0) || 1000);
+  }
+  throw new Error(`压缩包解压超时: ${fileKey}`);
 }

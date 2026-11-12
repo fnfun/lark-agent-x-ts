@@ -1792,6 +1792,35 @@ const downloadCmd: Command = {
   },
 };
 
+const folderCmd: Command = {
+  name: 'folder',
+  help: '列出文件夹消息里的文件,或压缩包文件消息解压后的内容(服务端解压)',
+  access: 'folder',
+  positionals: [{ name: 'msg_id', help: '文件夹消息或压缩包文件消息的 id' }],
+  options: [
+    { name: 'path', kind: 'string', help: '只列这个子文件夹(按名字逐级,如 a/b)' },
+    { name: 'recursive', short: '-r', kind: 'flag', help: '连同各级子文件夹的内容一起列' },
+    { name: 'json', kind: 'flag' },
+  ],
+  async run(a) {
+    const msgId = String(a.msg_id);
+    const { chatId, entries } = await (await client()).listFolder(msgId, {
+      path: s(a.path),
+      recursive: Boolean(a.recursive),
+    });
+    if (a.json) printJson({ chat_id: chatId, entries });
+    else {
+      for (const e of entries)
+        out(
+          `${e.folder ? '[文件夹]' : '[文件]'}\t${e.path}\t${e.size}字节\t${shortTime(e.createTime)}\t${e.key}`,
+        );
+      if (entries.some((e) => !e.folder))
+        err(`下载其中的文件: lark download ${msgId} --key <key> --chat ${chatId} -o <保存路径>`);
+    }
+    return 0;
+  },
+};
+
 async function askLoginChoice(): Promise<'qr' | 'cookie' | 'quit'> {
   out('  [1] 扫码登录(推荐)');
   out('  [2] 粘贴 cookie 登录');
@@ -2262,6 +2291,7 @@ export const COMMANDS: Command[] = [
   getCmd,
   thread,
   downloadCmd,
+  folderCmd,
   listen,
   permissions,
 ];

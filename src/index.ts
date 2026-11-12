@@ -112,9 +112,12 @@ export { type Level, type LogSink, setLogLevel, setLogSink } from './log.js';
 export {
   downloadMessageResource,
   extractResourceKey,
+  type FolderEntry,
+  listFolder,
   mp4DurationMs,
   oggOpusDurationMs,
   type UploadedFile,
+  unpackArchive,
   uploadFile,
   uploadImage,
 } from './media.js';

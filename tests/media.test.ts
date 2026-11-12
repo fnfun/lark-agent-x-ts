@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
-import { mp4DurationMs, oggOpusDurationMs, uploadFile, uploadImage } from '../src/media.js';
+import {
+  listFolder,
+  mp4DurationMs,
+  oggOpusDurationMs,
+  unpackArchive,
+  uploadFile,
+  uploadImage,
+} from '../src/media.js';
 import { toDict } from '../src/proto/dict.js';
-import { protoType } from '../src/proto/registry.js';
+import { larkType, protoType } from '../src/proto/registry.js';
 import { urls } from '../src/region.js';
 import { newClient } from './helpers.js';
 
@@ -115,6 +122,85 @@ describe('上传图片与文件', () => {
         'r1',
       ],
     ]);
+  });
+});
+
+describe('文件夹与压缩包浏览', () => {
+  let server: ReturnType<typeof Bun.serve>;
+  const seen: string[] = [];
+  let unpackPolls = 0;
+  const origHost = urls.fileHost;
+  const pb = (type: string, init: Record<string, unknown>) =>
+    new Response(toBinary(larkType(type), create(larkType(type), init)));
+  const info = (n: number, folder = false) => ({
+    key: `file_v3_k${n}`,
+    ownerId: 7000000000000000001n,
+    ownerName: '同事甲',
+    type: folder ? 9 : 1,
+    name: folder ? `目录${n}` : `文件${n}.txt`,
+    size: BigInt(n),
+    createTime: 1_790_000_000n,
+  });
+  beforeEach(() => {
+    seen.length = 0;
+    unpackPolls = 0;
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const u = new URL(req.url);
+        const q = u.searchParams;
+        seen.push(`${u.pathname} key=${q.get('key')} start=${q.get('start')}`);
+        if (u.pathname === '/api/package/uncompress') {
+          if (q.get('key') === 'file_v3_bad')
+            return Response.json(
+              { code: 900, message: '解压失败，暂不支持此文件格式' },
+              { status: 400 },
+            );
+          // Still unpacking on the first poll
+          if (++unpackPolls === 1)
+            return pb('pan.UnCompressPackageResponse', { queryProgressIntervalMs: 1n });
+          return pb('pan.UnCompressPackageResponse', {
+            folderKey: 'file_v3_root',
+            browseResult: { infos: [info(1)], allCount: 1n },
+          });
+        }
+        // Two pages: the first says there is more
+        const start = Number(q.get('start'));
+        return pb('pan.BrowseFolderResponse', {
+          infos: start === 0 ? [info(1), info(2, true)] : [info(3)],
+          allCount: 3n,
+          hasMore: start === 0,
+        });
+      },
+    });
+    urls.fileHost = () => `http://localhost:${server.port}`;
+  });
+  afterEach(() => {
+    urls.fileHost = origHost;
+    server.stop(true);
+  });
+
+  test('浏览文件夹按已取条数翻页直到没有更多；子文件夹标为 folder', async () => {
+    const entries = await listFolder(auth, 'file_v3_root');
+    expect(entries.map((e) => [e.name, e.folder, e.size])).toEqual([
+      ['文件1.txt', false, 1],
+      ['目录2', true, 2],
+      ['文件3.txt', false, 3],
+    ]);
+    expect(entries[0]?.ownerName).toBe('同事甲');
+    expect(seen).toEqual([
+      '/api/folder/browse key=file_v3_root start=0',
+      '/api/folder/browse key=file_v3_root start=2',
+    ]);
+  });
+
+  test('解压压缩包：解压中就按服务端给的间隔再问，完成后返回解压出的文件夹 key；失败带服务端原因', async () => {
+    expect(await unpackArchive(auth, 'file_v3_zip')).toBe('file_v3_root');
+    expect(unpackPolls).toBe(2);
+    await expect(unpackArchive(auth, 'file_v3_bad')).rejects.toMatchObject({
+      status: 400,
+      reason: '解压失败，暂不支持此文件格式',
+    });
   });
 });
 
