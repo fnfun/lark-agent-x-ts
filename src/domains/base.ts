@@ -23,7 +23,9 @@
  *   `[{type: "url", text, link}]`. New select options are added in the same commit. A person
  *   cell is `{users: [{userId, name, enName}]}` (2026-11-13, read off what the server stores in a
  *   created-by field; the server keeps the names as sent, so they are looked up first; the array
- *   forms are refused as `type_mismatch`).
+ *   forms are refused as `type_mismatch`). A link cell is the linked record ids, `[recordId]`;
+ *   the server adds `displayValue` (record id → that record's primary text) and keeps it current.
+ *   A link field's property names the linked table: `{tableId, multiple: true}`.
  * - A new record goes at the table's `rankInfo.nextRank`; the server moves nextRank on.
  * - An attachment cell holds `[{id, attachmentToken, name, size, mimeType, timeStamp}]`, `id` being
  *   the file token too (the server rejects a cell without it); files are uploaded with mount
@@ -54,6 +56,7 @@ export const FIELD_TYPES = {
   checkbox: 7,
   person: 11,
   url: 15,
+  link: 18,
 } as const;
 /** Attachment fields: read as file names, written with Base.attach. */
 const ATTACHMENT = 17;
@@ -74,6 +77,8 @@ const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
   checkbox: { styleId: '0' },
   person: { multiple: true },
   url: { extractExternalUrl: false },
+  // The linked table is filled in by addField
+  link: { multiple: true },
   attachment: undefined,
 };
 const UI_TYPES: Record<FieldType, string> = {
@@ -85,6 +90,7 @@ const UI_TYPES: Record<FieldType, string> = {
   checkbox: 'Checkbox',
   person: 'User',
   url: 'Url',
+  link: 'SingleLink',
   attachment: 'Attachment',
 };
 
@@ -264,8 +270,15 @@ function segmentsText(v: unknown[]): string {
 }
 
 /** A stored cell → a readable value. */
-export function readCell(field: BaseField, value: unknown): string | number | boolean | null {
+/** A stored cell → a readable value; display is the cell's displayValue (link cells have one). */
+export function readCell(
+  field: BaseField,
+  value: unknown,
+  display?: Dict,
+): string | number | boolean | null {
   if (value === null || value === undefined) return null;
+  if (field.type === FIELD_TYPES.link && Array.isArray(value))
+    return value.map((id) => String(display?.[String(id)] || id)).join(', ');
   const option = (id: unknown) => field.options.find((o) => o.id === id)?.name ?? String(id);
   switch (field.type) {
     case FIELD_TYPES.number:
@@ -505,7 +518,11 @@ export class Base {
       fields: Object.fromEntries(
         t.fields.map((f, i) => [
           keys[i] as string,
-          readCell(f, (cells[id]?.[f.id] as Dict | undefined)?.value),
+          readCell(
+            f,
+            (cells[id]?.[f.id] as Dict | undefined)?.value,
+            (cells[id]?.[f.id] as Dict | undefined)?.displayValue as Dict | undefined,
+          ),
         ]),
       ),
     }));
@@ -673,8 +690,18 @@ export class Base {
   }
 
   /** Add a field at the end of the table; returns its id. */
-  async addField(baseToken: string, name: string, type: FieldType, o: { table?: string } = {}) {
+  /** Add a field at the end; a link field links to linkTable (this table when omitted). */
+  async addField(
+    baseToken: string,
+    name: string,
+    type: FieldType,
+    o: { table?: string; linkTable?: string } = {},
+  ) {
     const t = await this.load(baseToken, o.table, 1);
+    const property =
+      type === 'link'
+        ? { ...FIELD_PROPERTY.link, tableId: o.linkTable ?? t.id }
+        : FIELD_PROPERTY[type];
     const fieldId = newId('fld', 7);
     const uiType = UI_TYPES[type];
     const enumerable = type === 'select' || type === 'multiselect' || type === 'checkbox';
@@ -714,7 +741,7 @@ export class Base {
               defaultValueRule: null,
               fieldUIType: uiType,
               enumerable,
-              ...(FIELD_PROPERTY[type] ? { property: FIELD_PROPERTY[type] } : {}),
+              ...(property ? { property } : {}),
               exInfo,
             },
           },
@@ -1102,6 +1129,10 @@ export class Base {
       }
       case FIELD_TYPES.url:
         return { value: [{ type: 'url', text, link: text }], newOptions };
+      case FIELD_TYPES.link: {
+        const ids = listInput(input);
+        return { value: ids.length ? ids : null, newOptions };
+      }
       case FIELD_TYPES.person: {
         const users = listInput(input).map((userId) => {
           const name = names.get(userId);

@@ -317,6 +317,33 @@ describe('多维表格', () => {
     expect(row?.fields.负责人).toBe('同事甲, 7000000000000000002');
   });
 
+  test('关联：字段的 property 指向关联的表（默认本表）；单元格写记录 id 数组；读出时用 displayValue 里的文字，没有就显示 id', async () => {
+    const table = {
+      ...TABLE,
+      viewMap: { vew1: { property: { fields: ['fldText', 'fldLink'] } } },
+      fieldMap: { fldText: { name: '标题', type: 1 }, fldLink: { name: '上游', type: 18 } },
+      recordMap: {
+        rec1: { fldLink: { value: ['recA', 'recB'], displayValue: { recA: '合同一', recB: '' } } },
+      },
+    };
+    const { base, commits } = fake([table]);
+    await base.addField('B1', '上游', 'link');
+    await base.addField('B1', '客户', 'link', { linkTable: 'tbl9' });
+    const attr = (i: number) => ((commits[i]?.ops[0]?.actions ?? []) as Dict[])[1]?.data as Dict;
+    expect(attr(0)).toMatchObject({
+      type: 18,
+      fieldUIType: 'SingleLink',
+      property: { tableId: 'tbl1', multiple: true },
+    });
+    expect((attr(1).property as Dict).tableId).toBe('tbl9');
+    await base.setRecord('B1', 'rec1', { 上游: 'recA, recC' });
+    expect(firstAction(commits[2]?.ops[0]).data).toEqual({
+      fldLink: { type: 18, value: ['recA', 'recC'] },
+    });
+    const [row] = await base.records('B1');
+    expect(row?.fields.上游).toBe('合同一, recB');
+  });
+
   test('搜索和筛选在整张表里找、找完再按 limit 截断；搜索不分大小写、任一字段含有即可', async () => {
     const queries: Dict[] = [];
     const web = {

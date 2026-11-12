@@ -168,7 +168,7 @@ const records: Command = {
 
 const add: Command = {
   name: 'add',
-  help: '新增一条记录(字段=值;单选、多选填选项名,没有的选项会新建,多选用逗号分隔;日期填 2026-11-20 或 2026-11-20 18:30;人员填 user_id,多人用逗号分隔)',
+  help: '新增一条记录(字段=值;单选、多选填选项名,没有的选项会新建,多选用逗号分隔;日期填 2026-11-20 或 2026-11-20 18:30;人员填 user_id,关联填 record_id,多个用逗号分隔)',
   access: 'base.add',
   positionals: [BASE_ARG, { name: 'values', nargs: '*', help: '字段=值' }],
   options: [TABLE_OPTION],
@@ -235,6 +235,11 @@ const fieldAdd: Command = {
       default: 'text',
       help: '字段类型',
     },
+    {
+      name: 'link-table',
+      kind: 'string',
+      help: 'link 字段关联到的数据表 id(tbl 开头;默认本表)',
+    },
   ],
   run: (a) =>
     guarded(async () => {
@@ -243,7 +248,10 @@ const fieldAdd: Command = {
         t.token,
         (a.name as string[]).join(' '),
         String(a.type) as FieldType,
-        t.table ? { table: t.table } : {},
+        {
+          ...(t.table ? { table: t.table } : {}),
+          ...(a.link_table ? { linkTable: String(a.link_table) } : {}),
+        },
       );
       out(`已添加 field_id=${id}`);
       return 0;
