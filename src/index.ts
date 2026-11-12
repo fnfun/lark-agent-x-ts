@@ -59,6 +59,7 @@ export {
   Calendar,
   type CalendarEvent,
   type CalendarInfo,
+  type DeleteScope,
   type EventHit,
   type EventUpdate,
   type NewEvent,

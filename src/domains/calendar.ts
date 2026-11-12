@@ -25,6 +25,17 @@
  * busy over a range is `calendarevents.GetBusyUserRequest` on their primary calendars (an empty
  * answer means nobody is busy), which WEB_GET_USER_ATTENDEES_BY_USER_IDS (1002008) maps user ids
  * to. It answers busy or free for the whole range, not the busy intervals.
+ *
+ * Recurring events (2026-11-13, both accounts): the web listing returns a series once, as its
+ * first occurrence, for any window that touches it (and loosely: also after the series ended),
+ * because the web app expands the rule itself. `calendarevents.QueryInstanceRequest` (the gateway)
+ * expands it on the server, with exceptions applied, so occurrences come from there and the other
+ * fields (location) from the listing. Deleting one occurrence leaves an exception with the
+ * occurrence's start as originalTime and status CANCELLED; "this and following" shortens the rule
+ * (COUNT or UNTIL). A delete names a plain occurrence with originalTime 0 and its start as
+ * instanceStartTime, and an exception by its own originalTime. A whole series is deleted with span
+ * ALL_EVENTS and its first start; span NONE_SPAN, which a single event takes, fails on a series
+ * that has exceptions ("unexpected empty processedEvents").
  */
 import type { LarkClient } from '../client.js';
 import { authorize, guardMethods, type Permission } from '../permissions.js';
@@ -47,6 +58,11 @@ const WINDOW_MS = 90 * 86_400_000;
 const SOURCE_WEB = 1;
 const SELF_ACCEPTED = 2;
 const NO_NOTIFICATION = 2;
+// entities.CalendarEvent.Status.CANCELLED: a deleted occurrence of a recurring event
+const CANCELLED = 3;
+// calendarweb.SaveSpan
+const SPAN = { single: 0, this: 1, future: 2, all: 3 } as const;
+export type DeleteScope = 'this' | 'future' | 'all';
 
 export interface CalendarInfo {
   id: string;
@@ -86,6 +102,8 @@ export interface NewEvent {
   timezone?: string | undefined;
   /** Calendar to create in; the primary calendar when omitted. */
   calendarId?: string | undefined;
+  /** Recurrence rule (RFC 5545 RRULE without the `RRULE:` prefix), e.g. `FREQ=WEEKLY;COUNT=4`. */
+  rrule?: string | undefined;
 }
 
 /** An event found by search. */
@@ -208,9 +226,52 @@ export class Calendar {
   }): Promise<CalendarEvent[]> {
     const ids = o.calendarIds?.length ? o.calendarIds : [(await this.primary()).id];
     const out: CalendarEvent[] = [];
-    for (const id of ids)
-      for (const e of await this.listRaw(id, o.since, o.until)) out.push(toEvent(e));
+    for (const id of ids) {
+      // Listed events by key and originalTime, for the fields occurrences lack (location)
+      const listed = new Map<string, Dict>();
+      for (const e of await this.listRaw(id, o.since, o.until))
+        listed.set(`${String(e.key)}:${num(e.originalTime)}`, e);
+      for (const [occurrence, e] of await this.occurrences(id, o.since, o.until)) {
+        const key = String(e.uniqueKey ?? '');
+        const base = listed.get(`${key}:${num(e.originalTime)}`) ?? {};
+        out.push(
+          toEvent({
+            ...base,
+            key,
+            id: e.id,
+            calendarId: e.calendarId ?? id,
+            originalTime: e.originalTime,
+            summary: e.summary,
+            startTime: occurrence.beginTime,
+            endTime: occurrence.endTime,
+            isAllDay: e.isAllDay,
+            startTimezone: e.startTimezone,
+            rrule: e.rrule,
+            organizerCalendarId: e.organizerCalendarId,
+          }),
+        );
+      }
+    }
     return out.sort((a, b) => a.start - b.start).slice(0, o.limit ?? 500);
+  }
+
+  /** Occurrences in [since, until) ms with their events, expanded by the server, cancelled ones left out. */
+  private async occurrences(calendarId: string, since: number, until: number) {
+    const out = new Map<string, [Dict, Dict]>();
+    for (let from = since; from < until; from += WINDOW_MS) {
+      const resp = await this.client.api('calendarevents.QueryInstanceRequest', {
+        calendarIds: [calendarId],
+        startTime: String(Math.floor(from / 1000)),
+        endTime: String(Math.ceil(Math.min(until, from + WINDOW_MS) / 1000)),
+      });
+      const events = (resp.events ?? {}) as Record<string, Dict>;
+      for (const i of (resp.calendarEventInstance ?? []) as Dict[]) {
+        const e = events[String(i.eventRefId)];
+        if (!e || e.isDeleted === true || num(e.status) === CANCELLED) continue;
+        out.set(`${String(e.uniqueKey)}:${num(i.beginTime)}`, [i, e]);
+      }
+    }
+    return [...out.values()];
   }
 
   /** Raw events of one calendar in [since, until) ms, listed in 90-day windows. */
@@ -278,6 +339,7 @@ export class Calendar {
         endTimezone: tz,
         isAllDay: e.allDay === true,
         ...(e.location ? { locations: [{ name: e.location }] } : {}),
+        ...(e.rrule ? { rrule: e.rrule } : {}),
         source: SOURCE_WEB,
         selfAttendeeStatus: SELF_ACCEPTED,
       },
@@ -314,16 +376,40 @@ export class Calendar {
     });
   }
 
-  /** Delete an event (or this instance of a recurring one). */
-  async delete(key: string, o: { calendarId?: string; originalTime?: number } = {}): Promise<void> {
+  /**
+   * Delete an event. For a recurring one, scope `this` or `future` with an occurrence (as listed
+   * by events: its start, and originalTime when it is an exception) deletes that occurrence or it
+   * and the ones after; `all` (the default) deletes the whole series.
+   */
+  async delete(
+    key: string,
+    o: {
+      calendarId?: string;
+      scope?: DeleteScope;
+      occurrence?: Pick<CalendarEvent, 'start' | 'originalTime'>;
+    } = {},
+  ): Promise<void> {
     const calendarId = o.calendarId ?? (await this.primary()).id;
+    const scope = o.scope ?? 'all';
+    const request = { calendarId, key, notificationType: NO_NOTIFICATION };
+    if (scope === 'all') {
+      const series = await this.raw(key, calendarId).catch(() => null);
+      await this.client.command(CMD.delete, 'calendarweb.DeleteEventRequest', {
+        ...request,
+        originalTime: '0',
+        ...(series?.rrule
+          ? { span: SPAN.all, instanceStartTime: String(num(series.startTime)) }
+          : { span: SPAN.single }),
+      });
+      return;
+    }
+    const at = o.occurrence;
+    if (!at) throw new Error('删除重复日程的某一次要给出是哪一次');
     await this.client.command(CMD.delete, 'calendarweb.DeleteEventRequest', {
-      calendarId,
-      key,
-      originalTime: String(o.originalTime ?? 0),
-      // SaveSpan.NONE_SPAN: the whole event
-      span: 0,
-      notificationType: NO_NOTIFICATION,
+      ...request,
+      originalTime: String(at.originalTime),
+      span: SPAN[scope],
+      instanceStartTime: String(at.originalTime || Math.floor(at.start / 1000)),
     });
   }
 
@@ -418,9 +504,10 @@ export class Calendar {
     const starts = [centre];
     for (let k = 1; k <= 4; k++) starts.push(centre + k * WINDOW_MS, centre - k * WINDOW_MS);
     for (const from of starts) {
-      const e = (await this.listWindow(id, from, from + WINDOW_MS)).find(
-        (x) => String(x.key) === key,
-      );
+      // The series itself rather than one of its exceptions; deleted occurrences never
+      const e = (await this.listWindow(id, from, from + WINDOW_MS))
+        .filter((x) => String(x.key) === key && num(x.status) !== CANCELLED)
+        .sort((a, b) => num(a.originalTime) - num(b.originalTime))[0];
       if (e) return this.full(e);
     }
     throw new Error(`找不到日程(只在前后一年内找): ${key}`);

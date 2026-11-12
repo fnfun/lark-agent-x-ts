@@ -8,11 +8,39 @@ import { newClient } from './helpers.js';
 const CAL = '7300000000000000001';
 const DAY = 86_400_000;
 
-/** Fake client: answers calendar commands, encoding each request strictly against its type. */
-function fake(listing: (since: number, until: number, token: string) => Dict) {
+/**
+ * Fake client: answers calendar commands, encoding each request strictly against its type. The
+ * server-expanded occurrences default to the listed events, each occurring once at its start.
+ */
+function fake(
+  listing: (since: number, until: number, token: string) => Dict,
+  instances?: (since: number, until: number) => Dict,
+) {
   const c = newClient();
   const calls: [number, Dict][] = [];
-  c.api = async () => ({ calendar: { id: CAL } });
+  const listedAsInstances = (since: number, until: number) => {
+    const events: Dict[] = [];
+    for (let token = '', page = 0; page < 20; page++) {
+      const r = listing(since, until, token);
+      events.push(...((r.calendarEvents ?? []) as Dict[]));
+      token = String(r.nextPageToken ?? '');
+      if (!token) break;
+    }
+    return {
+      calendarEventInstance: events.map((e, i) => ({
+        eventRefId: `r${i}`,
+        beginTime: e.startTime,
+        endTime: e.endTime,
+      })),
+      events: Object.fromEntries(events.map((e, i) => [`r${i}`, { ...e, uniqueKey: e.key }])),
+    };
+  };
+  c.api = async (type, data) => {
+    if (type !== 'calendarevents.QueryInstanceRequest') return { calendar: { id: CAL } };
+    const d = data as Dict;
+    const [since, until] = [Number(d.startTime) * 1000, Number(d.endTime) * 1000];
+    return (instances ?? listedAsInstances)(since, until);
+  };
   c.command = async (cmd, reqType, data) => {
     fromJson(larkType(reqType), data as JsonValue);
     calls.push([cmd, data]);
@@ -127,6 +155,69 @@ describe('日历', () => {
       startTime: '1800000000',
     });
     expect(updated.span).toBe(1);
+
+    // A single event is deleted whole with NONE_SPAN
+    await cal.delete('k1');
+    const deleted = (calls.find(([cmd]) => cmd === 1002005)?.[1] ?? {}) as Dict;
+    expect([deleted.span, deleted.instanceStartTime]).toEqual([0, undefined]);
+  });
+
+  test('重复日程：按服务端展开的每一次列出（取消的那次不列），地点取自列表；删某一次 / 以后 / 整组按范围与那一次发', async () => {
+    const t0 = 1_800_000_000;
+    const series = {
+      key: 'wk',
+      calendarId: CAL,
+      originalTime: 0n,
+      summary: '周会',
+      rrule: 'FREQ=WEEKLY;COUNT=4',
+      startTime: BigInt(t0),
+      endTime: BigInt(t0 + 3600),
+      locations: [{ name: '会议室A' }],
+    };
+    const week = 7 * 86_400;
+    const { cal, calls } = fake(
+      () => ({ calendarEvents: [series] }),
+      () => ({
+        calendarEventInstance: [
+          { eventRefId: 'm', beginTime: BigInt(t0), endTime: BigInt(t0 + 3600) },
+          { eventRefId: 'x', beginTime: BigInt(t0 + week), endTime: BigInt(t0 + week + 3600) },
+          {
+            eventRefId: 'm',
+            beginTime: BigInt(t0 + 2 * week),
+            endTime: BigInt(t0 + 2 * week + 3600),
+          },
+          {
+            eventRefId: 'c',
+            beginTime: BigInt(t0 + 3 * week),
+            endTime: BigInt(t0 + 3 * week + 3600),
+          },
+        ],
+        events: {
+          m: { uniqueKey: 'wk', originalTime: 0n, summary: '周会', rrule: 'FREQ=WEEKLY;COUNT=4' },
+          // An occurrence moved by an hour: an exception with its original start
+          x: { uniqueKey: 'wk', originalTime: BigInt(t0 + week - 3600), summary: '周会（改时间）' },
+          c: { uniqueKey: 'wk', originalTime: BigInt(t0 + 3 * week), status: 3 },
+        },
+      }),
+    );
+    const got = await cal.events({ since: t0 * 1000, until: (t0 + 30 * 86_400) * 1000 });
+    expect(got.map((e) => [e.start / 1000 - t0, e.originalTime, e.location])).toEqual([
+      [0, 0, '会议室A'],
+      [week, t0 + week - 3600, ''],
+      [2 * week, 0, '会议室A'],
+    ]);
+
+    const deletes = () => calls.filter(([cmd]) => cmd === 1002005).map(([, d]) => d);
+    await cal.delete('wk', { scope: 'this', occurrence: got[2] as (typeof got)[number] });
+    await cal.delete('wk', { scope: 'future', occurrence: got[1] as (typeof got)[number] });
+    await cal.delete('wk');
+    expect(deletes().map((d) => [d.span, d.originalTime, d.instanceStartTime])).toEqual([
+      [1, '0', String(t0 + 2 * week)],
+      [2, String(t0 + week - 3600), String(t0 + week - 3600)],
+      // The whole series: ALL_EVENTS from its first start (NONE_SPAN fails once it has exceptions)
+      [3, '0', String(t0)],
+    ]);
+    await expect(cal.delete('wk', { scope: 'this' })).rejects.toThrow('哪一次');
   });
 
   test('搜索：高级场景、时间范围按秒过滤；结果按实例与内容对上，key 取 uid、时间换成毫秒', async () => {

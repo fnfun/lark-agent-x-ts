@@ -1,4 +1,9 @@
-import { Calendar, type CalendarEvent, type EventHit } from '../domains/calendar.js';
+import {
+  Calendar,
+  type CalendarEvent,
+  type DeleteScope,
+  type EventHit,
+} from '../domains/calendar.js';
 import type { Option, Parsed } from './args.js';
 import { type Command, type CommandGroup, client, err, out, s } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
@@ -19,7 +24,7 @@ function printEvents(list: CalendarEvent[], json: boolean): void {
   }
   for (const e of list)
     out(
-      `${e.key}\t${e.allDay ? '全天' : `${when(e.start)} - ${shortTime(Math.floor(e.end / 1000)).slice(-5)}`}\t${e.summary}${e.location ? `\t@${e.location}` : ''}`,
+      `${e.key}\t${e.allDay ? '全天' : `${when(e.start)} - ${shortTime(Math.floor(e.end / 1000)).slice(-5)}`}\t${e.summary}${e.location ? `\t@${e.location}` : ''}${e.rrule || e.originalTime ? '\t(重复)' : ''}`,
     );
 }
 
@@ -144,6 +149,11 @@ const create: Command = {
     },
     { name: 'end', kind: 'string', help: '结束时间(默认开始后 1 小时)' },
     ...EVENT_OPTIONS,
+    {
+      name: 'rrule',
+      kind: 'string',
+      help: '重复规则(RFC 5545 RRULE),如 FREQ=WEEKLY;COUNT=4、FREQ=DAILY;UNTIL=20261231',
+    },
     { name: 'calendar', kind: 'string', help: '日历 id(默认主日历)' },
   ],
   async run(a) {
@@ -157,6 +167,7 @@ const create: Command = {
         location: s(a.location),
         allDay: Boolean(a.all_day),
         calendarId: s(a.calendar),
+        rrule: s(a.rrule),
       });
       out(`已新建日程 key=${e.key} ${when(e.start)}`);
       return 0;
@@ -227,16 +238,51 @@ const get: Command = {
 
 const del: Command = {
   name: 'delete',
-  help: '删除日程(重复日程整组删除)',
+  help: '删除日程;重复日程默认整组删除,--at 指定某一次后用 --scope 只删这一次或这一次及以后',
   access: 'cal.delete',
   positionals: [{ name: 'keys', nargs: '+' }],
-  options: [{ name: 'calendar', kind: 'string', help: '日历 id(默认主日历)' }],
+  options: [
+    { name: 'calendar', kind: 'string', help: '日历 id(默认主日历)' },
+    { name: 'at', kind: 'string', help: '重复日程的某一次:它的开始时间(见 agenda)' },
+    {
+      name: 'scope',
+      kind: 'string',
+      choices: ['this', 'future', 'all'],
+      help: '配合 --at:this 只删这一次(默认),future 删这一次及以后,all 整组',
+    },
+  ],
   async run(a) {
     return attempt('删日程', async () => {
       const c = await calendar();
-      for (const key of a.keys as string[])
-        await c.delete(key, a.calendar ? { calendarId: String(a.calendar) } : {});
-      out(`已删除 ${(a.keys as string[]).length} 个日程`);
+      const keys = a.keys as string[];
+      const calendarId = s(a.calendar);
+      if (a.at === undefined) {
+        if (a.scope && a.scope !== 'all') throw new Error('--scope this/future 要配合 --at');
+        for (const key of keys) await c.delete(key, calendarId ? { calendarId } : {});
+        out(`已删除 ${keys.length} 个日程`);
+        return 0;
+      }
+      if (keys.length !== 1) throw new Error('--at 只能配一个日程');
+      const start = at(a.at) as number;
+      const occurrence = (
+        await c.events({
+          since: start - 86_400_000,
+          until: start + 86_400_000,
+          calendarIds: calendarId ? [calendarId] : undefined,
+        })
+      ).find((e) => e.key === keys[0] && e.start === Math.floor(start / 60_000) * 60_000);
+      if (!occurrence) throw new Error(`找不到这个日程在 ${when(start)} 开始的那一次`);
+      const scope = (s(a.scope) ?? 'this') as DeleteScope;
+      await c.delete(keys[0] as string, {
+        ...(calendarId ? { calendarId } : {}),
+        scope,
+        occurrence,
+      });
+      out(
+        scope === 'all'
+          ? '已删除整组日程'
+          : `已删除 ${when(start)} 的那一次${scope === 'future' ? '及以后' : ''}`,
+      );
       return 0;
     });
   },
