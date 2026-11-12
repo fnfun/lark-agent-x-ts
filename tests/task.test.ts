@@ -126,7 +126,11 @@ describe('任务', () => {
       group: { fieldKey: '__field_task_section' },
       resource: { type: 1, section: { guid: `s-${name}`, name } },
     });
-    let meta: Dict = { container: { guid: 'L1' } };
+    const sections = [
+      { guid: 's-', name: '', isDefault: true },
+      { guid: 's-本周', name: '本周' },
+    ];
+    let meta: Dict = { container: { guid: 'L1' }, sections };
     const { t } = recorder((type, data) => {
       if (type === 'todo.GetContainerMetaDataAndGroupInfoRequest')
         return {
@@ -158,8 +162,67 @@ describe('任务', () => {
       ['c', '本周'],
     ]);
     expect((await t.listTasks('L1')).map((x) => x.guid)).toEqual(['a', 'c']);
-    meta = { container: { guid: 'L1' }, asyncLoad: true };
+    meta = { container: { guid: 'L1' }, sections, asyncLoad: true };
     await expect(t.listTasks('L1')).rejects.toThrow('异步加载');
+  });
+
+  test('清单与分组：放进清单要带分组（默认分组）；已在清单里的改到目标分组、带旧引用；移出是旧引用加删除时间；新分组由客户端给 guid', async () => {
+    const meta = {
+      container: { guid: 'L1' },
+      sections: [
+        { guid: 's-old', name: '旧分组', deleteMilliTime: 5n },
+        { guid: 's-week', name: '本周' },
+        { guid: 's-def', name: '', isDefault: true },
+      ],
+    };
+    const groups = [
+      {
+        groupInfos: [{ resource: { section: { guid: 's-def' } } }],
+        taskSortedInfos: [{ guid: 'in' }],
+      },
+      {
+        groupInfos: [{ resource: { section: { guid: 's-week' } } }],
+        taskSortedInfos: [{ guid: 'wk' }],
+      },
+    ];
+    const { t, calls } = recorder((type) =>
+      type === 'todo.GetContainerMetaDataAndGroupInfoRequest'
+        ? { containerMetaData: meta, containerGroupInfo: { groupDataList: groups } }
+        : type === 'todo.UpsertTaskSectionRequest'
+          ? { section: { guid: 's-new', name: '下周' } }
+          : {},
+    );
+    expect((await t.sections('L1')).map((x) => x.guid)).toEqual(['s-def', 's-week']);
+    const refs = () =>
+      calls.filter(([type]) => type === 'todo.UpdateTaskContainerRefRequest').map(([, d]) => d);
+
+    await t.addToList('L1', ['out', 'in', 'wk']);
+    expect(refs()).toEqual([
+      { newTaskContainerRef: { containerGuid: 'L1', taskGuid: 'out', sectionGuid: 's-def' } },
+      {
+        oldTaskContainerRef: { containerGuid: 'L1', taskGuid: 'wk', sectionGuid: 's-week' },
+        newTaskContainerRef: { containerGuid: 'L1', taskGuid: 'wk', sectionGuid: 's-def' },
+      },
+    ]);
+    calls.length = 0;
+    await t.removeFromList('L1', ['wk']);
+    const [removal] = refs();
+    expect(removal?.oldTaskContainerRef).toEqual({
+      containerGuid: 'L1',
+      taskGuid: 'wk',
+      sectionGuid: 's-week',
+    });
+    const newRef = (removal?.newTaskContainerRef ?? {}) as Dict;
+    expect(Number(newRef.deleteMilliTime)).toBeGreaterThan(0);
+    await expect(t.removeFromList('L1', ['out'])).rejects.toThrow('out');
+    await expect(t.addToList('L1', ['out'], '旧分组')).rejects.toThrow('没有这个分组');
+
+    calls.length = 0;
+    await t.addSection('L1', '下周');
+    const added = (calls[0]?.[1].newSection ?? {}) as Dict;
+    expect(added).toMatchObject({ name: '下周', containerId: 'L1' });
+    expect(String(added.guid)).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(t.deleteSection('L1', 's-def')).rejects.toThrow('默认分组');
   });
 
   test('提醒：截止前的分钟数作为 RELATIVE 提醒整体替换；清除时只把当前提醒放进 deleted', async () => {

@@ -104,6 +104,7 @@ export {
   type Task,
   type TaskComment,
   type TaskList,
+  type TaskSection,
   Tasks,
   type TaskUpdate,
 } from './domains/task.js';

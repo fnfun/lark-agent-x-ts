@@ -20,6 +20,13 @@
  * - Attachments are Drive files uploaded to mount point `task` on the task's guid. Their commit
  *   adds the `added` entries and removes the `deleted` ones, matched by each entry's guid (entries
  *   sent without one end up as copies of one another).
+ * - Inside a list (2026-11-13): search is `SearchTaskListsRequest`; sections are
+ *   `UpsertTaskSectionRequest` with a client-chosen guid (without one the server stores the
+ *   section with an empty guid; renaming sends the old and new section) and
+ *   `DeleteTaskSectionRequest` (its tasks go back to the default section). A task joins, moves
+ *   within or leaves a list with `UpdateTaskContainerRefRequest`: each ref names the section (a ref
+ *   without one is accepted but the task shows up nowhere), and leaving is the old ref with
+ *   `deleteMilliTime` set; the commit key TASK_CONTAINER_REF is refused by UpdateTaskByCommits.
  * - The tasks in a list (2026-11-13, both accounts) come from
  *   `todo.GetContainerMetaDataAndGroupInfoRequest`: every task's guid by section, in the list's
  *   order and done ones included, with the details read by guid. Very large lists are meant to be
@@ -82,6 +89,19 @@ export interface TaskList {
   name: string;
   ownerId: string;
   createdAt: number;
+}
+
+/** A section of a task list; every list has a default one (with an empty name). */
+export interface TaskSection {
+  guid: string;
+  name: string;
+  isDefault: boolean;
+}
+
+/** A task list's sections and which section each of its tasks is in, in the list's order. */
+interface ListLayout {
+  sections: TaskSection[];
+  sectionOf: Map<string, string>;
 }
 
 export interface NewTask {
@@ -148,6 +168,13 @@ const TASK_PERMISSIONS: { [K in keyof Tasks]?: Permission } = {
   get: 'task.get',
   subtasks: 'task.get',
   listTasks: 'task.list',
+  searchLists: 'task.lists',
+  sections: 'task.lists',
+  addSection: 'task.section-add',
+  renameSection: 'task.section-rename',
+  deleteSection: 'task.section-rm',
+  addToList: 'task.list-add',
+  removeFromList: 'task.list-remove',
   comments: 'task.comments',
   lists: 'task.lists',
   create: 'task.create',
@@ -181,6 +208,26 @@ export function richContent(text: string): Dict {
 }
 
 /** A lark message encoded from its JSON form, as base64 (commit values are serialized messages). */
+const toSection = (x: Dict): TaskSection => ({
+  guid: String(x.guid ?? ''),
+  name: String(x.name ?? ''),
+  isDefault: x.isDefault === true,
+});
+
+function findSection(sections: TaskSection[], section: string): TaskSection {
+  const found =
+    sections.find((x) => x.guid === section) ?? sections.find((x) => x.name === section);
+  if (!found) throw new Error(`清单里没有这个分组: ${section}`);
+  return found;
+}
+
+const toList = (x: Dict): TaskList => ({
+  guid: String(x.guid),
+  name: String(x.name ?? ''),
+  ownerId: String(x.ownerId ?? ''),
+  createdAt: int(x.createMilliTime),
+});
+
 /** Deleted tasks still come back from sync and by guid, emptied except for the deletion time. */
 const deleted = (t: Dict) => int(t.deletedMilliTime) > 0;
 
@@ -263,6 +310,98 @@ export class Tasks {
     listGuid: string,
     o: { status?: 'open' | 'done' | 'all' } = {},
   ): Promise<ListedTask[]> {
+    const { sections, sectionOf } = await this.layout(listGuid);
+    const nameOf = new Map(sections.map((x) => [x.guid, x.name]));
+    const guids = [...sectionOf.keys()];
+    const found: Task[] = [];
+    for (let i = 0; i < guids.length; i += GET_BATCH)
+      found.push(...(await this.get(guids.slice(i, i + GET_BATCH))));
+    const status = o.status ?? 'open';
+    return found
+      .filter((t) => status === 'all' || (status === 'done') === (t.completedAt !== null))
+      .map((t) => ({ ...t, section: nameOf.get(sectionOf.get(t.guid) ?? '') ?? '' }));
+  }
+
+  /** Task lists I can read whose name matches query. */
+  async searchLists(query: string, limit = 20): Promise<TaskList[]> {
+    // SearchTaskListsRequest.Scene.READABLE
+    const resp = await this.client.api('todo.SearchTaskListsRequest', {
+      scene: 1,
+      query,
+      count: limit,
+    });
+    return ((resp.metaData ?? []) as Dict[])
+      .map((m) => m.container as Dict | undefined)
+      .filter((x): x is Dict => Boolean(x) && !int(x?.deleteMilliTime))
+      .map(toList);
+  }
+
+  /** A task list's sections, the default one first. */
+  async sections(listGuid: string): Promise<TaskSection[]> {
+    return (await this.layout(listGuid)).sections;
+  }
+
+  async addSection(listGuid: string, name: string): Promise<TaskSection> {
+    const resp = await this.client.api('todo.UpsertTaskSectionRequest', {
+      newSection: { guid: crypto.randomUUID(), name, containerId: listGuid },
+    });
+    return toSection((resp.section ?? {}) as Dict);
+  }
+
+  /** Rename a section, named by guid or name. */
+  async renameSection(listGuid: string, section: string, name: string): Promise<void> {
+    const old = await this.rawSection(listGuid, section);
+    await this.client.api('todo.UpsertTaskSectionRequest', {
+      oldSection: old,
+      newSection: { ...old, name },
+    });
+  }
+
+  /** Delete a section (by guid or name); its tasks go back to the default section. */
+  async deleteSection(listGuid: string, section: string): Promise<void> {
+    const old = await this.rawSection(listGuid, section);
+    if (old.isDefault) throw new Error('默认分组不能删除');
+    await this.client.api('todo.DeleteTaskSectionRequest', {
+      sectionGuid: old.guid,
+      containerGuid: listGuid,
+    });
+  }
+
+  /**
+   * Put tasks into a task list, in a section (guid or name; the default one when omitted); tasks
+   * already in the list move to that section.
+   */
+  async addToList(listGuid: string, taskGuids: string[], section?: string): Promise<void> {
+    const { sections, sectionOf } = await this.layout(listGuid);
+    const target = section ? findSection(sections, section) : sections.find((x) => x.isDefault);
+    if (!target) throw new Error('这个清单没有默认分组');
+    for (const taskGuid of taskGuids) {
+      const current = sectionOf.get(taskGuid);
+      if (current === target.guid) continue;
+      await this.client.api('todo.UpdateTaskContainerRefRequest', {
+        ...(current !== undefined
+          ? { oldTaskContainerRef: { containerGuid: listGuid, taskGuid, sectionGuid: current } }
+          : {}),
+        newTaskContainerRef: { containerGuid: listGuid, taskGuid, sectionGuid: target.guid },
+      });
+    }
+  }
+
+  /** Take tasks out of a task list (the tasks stay); ones not in it are an error. */
+  async removeFromList(listGuid: string, taskGuids: string[]): Promise<void> {
+    const { sectionOf } = await this.layout(listGuid);
+    const missing = taskGuids.filter((g) => !sectionOf.has(g));
+    if (missing.length) throw new Error(`这些任务不在清单里: ${missing.join(', ')}`);
+    for (const taskGuid of taskGuids) {
+      const ref = { containerGuid: listGuid, taskGuid, sectionGuid: sectionOf.get(taskGuid) };
+      await this.client.api('todo.UpdateTaskContainerRefRequest', {
+        oldTaskContainerRef: ref,
+        newTaskContainerRef: { ...ref, deleteMilliTime: String(Date.now()) },
+      });
+    }
+  }
+
+  private async layout(listGuid: string): Promise<ListLayout> {
     const resp = await this.client.api('todo.GetContainerMetaDataAndGroupInfoRequest', {
       containerGuid: listGuid,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -278,16 +417,25 @@ export class Tasks {
         .map((i) => (i.resource as Dict | undefined)?.section as Dict | undefined)
         .find(Boolean);
       for (const t of (g.taskSortedInfos ?? []) as Dict[])
-        sectionOf.set(String(t.guid), String(section?.name ?? ''));
+        sectionOf.set(String(t.guid), String(section?.guid ?? ''));
     }
-    const guids = [...sectionOf.keys()];
-    const found: Task[] = [];
-    for (let i = 0; i < guids.length; i += GET_BATCH)
-      found.push(...(await this.get(guids.slice(i, i + GET_BATCH))));
-    const status = o.status ?? 'open';
-    return found
-      .filter((t) => status === 'all' || (status === 'done') === (t.completedAt !== null))
-      .map((t) => ({ ...t, section: sectionOf.get(t.guid) ?? '' }));
+    const sections = ((meta.sections ?? []) as Dict[])
+      .filter((x) => x.guid && !int(x.deleteMilliTime))
+      .map(toSection)
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+    return { sections, sectionOf };
+  }
+
+  /** A section as the server returns it (sent back unchanged when renaming or deleting). */
+  private async rawSection(listGuid: string, section: string): Promise<Dict> {
+    const resp = await this.client.api('todo.GetContainerMetaDataAndGroupInfoRequest', {
+      containerGuid: listGuid,
+    });
+    const raw = (((resp.containerMetaData as Dict | undefined)?.sections ?? []) as Dict[]).filter(
+      (x) => x.guid && !int(x.deleteMilliTime),
+    );
+    const found = findSection(raw.map(toSection), section);
+    return raw.find((x) => x.guid === found.guid) as Dict;
   }
 
   /** Tasks I can read whose title matches query. */
@@ -560,12 +708,7 @@ export class Tasks {
     return ((resp.items ?? []) as Dict[])
       .map((i) => i.container as Dict | undefined)
       .filter((x): x is Dict => Boolean(x) && !int(x?.deleteMilliTime))
-      .map((x) => ({
-        guid: String(x.guid),
-        name: String(x.name ?? ''),
-        ownerId: String(x.ownerId ?? ''),
-        createdAt: int(x.createMilliTime),
-      }));
+      .map(toList);
   }
 
   async createList(name: string): Promise<TaskList> {

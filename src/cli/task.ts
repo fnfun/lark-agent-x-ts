@@ -103,7 +103,7 @@ const search: Command = {
 
 const get: Command = {
   name: 'get',
-  help: '任务详情(描述、截止时间、负责人、关注人、所属清单、父任务)',
+  help: '任务详情(描述、截止时间、提醒、负责人、关注人、所属清单、父任务、附件)',
   access: 'task.get',
   positionals: [{ name: 'guids', nargs: '+' }],
   options: [JSON_OPTION],
@@ -303,6 +303,115 @@ const lists: Command = {
   },
 };
 
+const listSearch: Command = {
+  name: 'list-search',
+  help: '按名字搜任务清单(我能看到的)',
+  access: 'task.lists',
+  positionals: [{ name: 'query', nargs: '+' }],
+  options: [{ name: 'limit', kind: 'int', default: 20 }, JSON_OPTION],
+  async run(a) {
+    const found = await (await tasks()).searchLists(
+      (a.query as string[]).join(' '),
+      Number(a.limit),
+    );
+    if (a.json) printJson(found);
+    else for (const l of found) out(`${l.guid}\t${l.name}\t创建于 ${when(l.createdAt)}`);
+    return 0;
+  },
+};
+
+const LIST_ARG = { name: 'list', help: '任务清单 guid(见 lists)' };
+const SECTION_ARG = { name: 'section', help: '分组 guid 或名字(见 sections)' };
+
+const sections: Command = {
+  name: 'sections',
+  help: '任务清单的分组(默认分组在前)',
+  access: 'task.lists',
+  positionals: [LIST_ARG],
+  options: [JSON_OPTION],
+  async run(a) {
+    const all = await (await tasks()).sections(String(a.list));
+    if (a.json) printJson(all);
+    else for (const x of all) out(`${x.guid}\t${x.isDefault ? '(默认分组)' : x.name}`);
+    return 0;
+  },
+};
+
+const sectionAdd: Command = {
+  name: 'section-add',
+  help: '在任务清单里新建分组',
+  access: 'task.section-add',
+  positionals: [LIST_ARG, { name: 'name', nargs: '+' }],
+  async run(a) {
+    return attempt('建分组', async () => {
+      const x = await (await tasks()).addSection(String(a.list), (a.name as string[]).join(' '));
+      out(`已建分组 guid=${x.guid}`);
+      return 0;
+    });
+  },
+};
+
+const sectionRename: Command = {
+  name: 'section-rename',
+  help: '改分组名',
+  access: 'task.section-rename',
+  positionals: [LIST_ARG, SECTION_ARG, { name: 'name', nargs: '+' }],
+  async run(a) {
+    return attempt('改分组名', async () => {
+      await (await tasks()).renameSection(
+        String(a.list),
+        String(a.section),
+        (a.name as string[]).join(' '),
+      );
+      out('已改名');
+      return 0;
+    });
+  },
+};
+
+const sectionRm: Command = {
+  name: 'section-rm',
+  help: '删除分组(里面的任务回到默认分组)',
+  access: 'task.section-rm',
+  positionals: [LIST_ARG, SECTION_ARG],
+  async run(a) {
+    return attempt('删分组', async () => {
+      await (await tasks()).deleteSection(String(a.list), String(a.section));
+      out('已删除分组');
+      return 0;
+    });
+  },
+};
+
+const listAdd: Command = {
+  name: 'list-add',
+  help: '把已有任务放进任务清单(已在清单里的移到 --section 指定的分组)',
+  access: 'task.list-add',
+  positionals: [LIST_ARG, { name: 'guids', nargs: '+', help: '任务 guid' }],
+  options: [{ name: 'section', kind: 'string', help: '分组 guid 或名字(默认分组)' }],
+  async run(a) {
+    return attempt('放进清单', async () => {
+      await (await tasks()).addToList(String(a.list), a.guids as string[], s(a.section));
+      out(`已放进清单 ${(a.guids as string[]).length} 个任务`);
+      return 0;
+    });
+  },
+};
+
+const listRemove: Command = {
+  name: 'list-remove',
+  help: '把任务移出任务清单(任务本身不删)',
+  access: 'task.list-remove',
+  positionals: [LIST_ARG, { name: 'guids', nargs: '+', help: '任务 guid' }],
+  async run(a) {
+    return attempt('移出清单', async () => {
+      await (await tasks()).removeFromList(String(a.list), a.guids as string[]);
+      out(`已移出清单 ${(a.guids as string[]).length} 个任务`);
+      return 0;
+    });
+  },
+};
+
 const listCreate: Command = {
   name: 'list-create',
   help: '新建任务清单',
@@ -333,7 +442,7 @@ const listDelete: Command = {
 
 export const task: CommandGroup = {
   name: 'task',
-  help: '飞书任务:列出、搜索、新建、修改、完成、删除、评论、附件、子任务、任务清单',
+  help: '飞书任务:列出、搜索、新建、修改、完成、删除、评论、附件、子任务、任务清单与分组',
   subcommands: [
     listCmd,
     search,
@@ -348,7 +457,14 @@ export const task: CommandGroup = {
     comment,
     comments,
     lists,
+    listSearch,
     listCreate,
     listDelete,
+    listAdd,
+    listRemove,
+    sections,
+    sectionAdd,
+    sectionRename,
+    sectionRm,
   ],
 };

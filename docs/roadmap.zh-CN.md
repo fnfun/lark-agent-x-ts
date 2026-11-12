@@ -105,7 +105,7 @@
 
 - 底座：协议管线能提取以数组注册的命名空间，所有 `*.v1` 定义都有了（`cmd_map.json` 与核心资产不变）；网页登录态可用性表（`src/web.ts` 文件头）；`WebSession` 与 `lark web`；命令行入口的命令组；权限分组 `destroy`；命令文件共用的工具抽到 `src/cli/common.ts`。
 - 任务：`lark task list/search/get/subtasks/create/update/complete/delete/comment/comments/lists/list-create/list-delete` 与库的 `Tasks`，全部在真实账号上用专为测试新建、测完删除的任务和清单实测过。协议的实际行为（哪些请求能用、修改的 commit 编码、截止时间以秒计）写在 `src/domains/task.ts` 文件头。
-- 2026-11-13 补上，在两个账号上用专为测试新建、事后删除的清单和任务实测：清单里的任务（`task list --list`、`Tasks.listTasks`；`GetContainerMetaDataAndGroupInfoRequest` 按分组给出全部任务，服务端要求异步加载的超大清单报错，因为 `LoadContainerTasksRequest` 回的是空的）、截止前若干分钟的一个提醒（`--remind`；建任务时给两个会报错 121005；单位是分钟的依据是账号默认提前量 30 和 OpenAPI 的 `relative_fire_minute`，测试租户上没收到提醒通知可供核对）、附件（`task attach/detach`，Drive 挂载点 `task`；附件 commit 按 guid 增删条目）。`task list` / `get` 不再显示已删除的任务（服务端仍会返回清空了的条目）。细节见 `src/domains/task.ts` 开头。
+- 2026-11-13 补上，在两个账号上用专为测试新建、事后删除的清单和任务实测：清单里的任务（`task list --list`、`Tasks.listTasks`；`GetContainerMetaDataAndGroupInfoRequest` 按分组给出全部任务，服务端要求异步加载的超大清单报错，因为 `LoadContainerTasksRequest` 回的是空的）、截止前若干分钟的一个提醒（`--remind`；建任务时给两个会报错 121005；单位是分钟的依据是账号默认提前量 30 和 OpenAPI 的 `relative_fire_minute`，测试租户上没收到提醒通知可供核对）、附件（`task attach/detach`，Drive 挂载点 `task`；附件 commit 按 guid 增删条目）。另有搜任务清单、把已有任务放进或移出清单、分组（`task list-search`、`list-add/list-remove`、`sections`、`section-add/rename/rm`）。未做：清单成员（涉及他人）。`task list` / `get` 不再显示已删除的任务（服务端仍会返回清空了的条目）。细节见 `src/domains/task.ts` 开头。
 - 留给后续版本的发现：审批、考勤在测试租户上 404，妙搭在 Lark 国际版没有入口；测试账号里没有文档、日程数据，后续版本要先建测试资源再读写。
 
 ### v0.4：云文档、云盘、知识库（读 + 非协同写）
