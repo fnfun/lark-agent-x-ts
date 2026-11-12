@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { getBackend } from '../agent/backend.js';
 import { AgentDispatcher, type QuotedMessage } from '../agent/dispatcher.js';
+import { linkedDocuments } from '../agent/documents.js';
 import { AuthExpired, LarkAuth, QR_STATUS_NAMES, QrLogin } from '../auth.js';
 import {
   ATTACHMENT_TYPES,
@@ -2007,6 +2008,7 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
     setInterval(refresh, TAG_REFRESH_MS);
   }
   const names = new Map<string, string | null>();
+  const web = dispatcher ? new WebSession(la) : undefined;
   /**
    * The message a reply (quote reply or thread reply) responds to: checks the local database
    * first, then the server; omitted if it cannot be fetched.
@@ -2080,9 +2082,12 @@ async function listenOnce(agentEnabled: boolean, la: LarkAuth): Promise<never> {
     logger.info(isOwn && process.stderr.isTTY ? `\x1b[36m${shown}\x1b[0m` : shown);
     if (cfg.mark_read && !isOwn && msg.position)
       await c.markRead(chatId, msg.position, [msg.msg_id]);
-    if (dispatcher) {
-      const quote = dispatcher.shouldHandle(msg, la.userId) ? await quoted(msg) : undefined;
-      await dispatcher.submit(msg, chatName, senderName, la.userId, quote);
+    if (dispatcher && web) {
+      const handled = dispatcher.shouldHandle(msg, la.userId);
+      const quote = handled ? await quoted(msg) : undefined;
+      // Documents the message links to go into the prompt (read with my access)
+      const docs = handled ? await linkedDocuments(web, msg.content || '', msg.content_data) : [];
+      await dispatcher.submit(msg, chatName, senderName, la.userId, quote, docs);
     }
   };
   /**

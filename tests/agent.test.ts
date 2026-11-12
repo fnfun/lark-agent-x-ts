@@ -1,11 +1,22 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { create, toBinary } from '@bufbuild/protobuf';
 import { type AgentBackend, ClaudeCodeBackend, uuid5 } from '../src/agent/backend.js';
 import { AgentDispatcher, buildXmlMessage, quoteAttr } from '../src/agent/dispatcher.js';
+import {
+  DOC_MAX_CHARS,
+  DOCS_PER_MESSAGE,
+  documentLinks,
+  linkedDocuments,
+} from '../src/agent/documents.js';
+import { Docs } from '../src/domains/docs.js';
+import { Wiki } from '../src/domains/wiki.js';
 import type { LarkMessage } from '../src/proto/decoders.js';
+import { larkType } from '../src/proto/registry.js';
 import { Storage } from '../src/storage/index.js';
+import type { WebSession } from '../src/web.js';
 
 const msg = (over: Partial<LarkMessage> = {}): LarkMessage => ({
   msg_id: 'm1',
@@ -88,6 +99,77 @@ describe('数字人分发', () => {
       '<quote id="m0" sender_id="u-me" sender_name="我">周五前能交 &lt;初稿&gt; 吗</quote>',
     );
     expect(xml.indexOf('<quote')).toBeLessThan(xml.indexOf('<content>'));
+  });
+
+  test('消息里的文档链接：贴进来的链接只在富文本的锚点里（文字里没有），也认文字里的；只认飞书 / Lark 的文档类链接，去重', () => {
+    const anchor = (href: string) =>
+      toBinary(
+        larkType('entities.RichTextElement.AnchorProperty'),
+        create(larkType('entities.RichTextElement.AnchorProperty'), { href, content: href }),
+      );
+    const doc = 'https://example.feishu.cn/docx/AbC123';
+    const contentData = {
+      richText: {
+        elements: {
+          dictionary: {
+            '1': { tag: 1, property: new Uint8Array() },
+            '2': { tag: 6, property: anchor(doc) },
+            '3': { tag: 6, property: anchor('https://example.com/docx/Zz9') },
+            '4': { tag: 6, property: anchor('https://example.feishu.cn/sheets/Sh1') },
+          },
+        },
+      },
+    };
+    expect(
+      documentLinks('看看这个  还有 https://x.sg.larksuite.com/wiki/Wk1 以及', contentData),
+    ).toEqual(['https://x.sg.larksuite.com/wiki/Wk1', doc]);
+    expect(documentLinks(`重复 ${doc}`, contentData)).toEqual([doc]);
+  });
+
+  test('读链接里的文档：每条消息最多几篇、每篇截断到上限并标出；读不了的跳过', async () => {
+    const links = Array.from(
+      { length: DOCS_PER_MESSAGE + 1 },
+      (_, i) => `https://example.feishu.cn/docx/D${i}`,
+    );
+    const ref = spyOn(Wiki.prototype, 'ref').mockImplementation(async (url) => ({
+      type: 'docx',
+      token: String(url).split('/').pop() as string,
+    }));
+    const read = spyOn(Docs.prototype, 'read').mockImplementation(async (r) => {
+      if (r.token === 'D1') throw new Error('没有权限');
+      const markdown = r.token === 'D0' ? `# 长文\n${'字'.repeat(DOC_MAX_CHARS)}` : '# 短文';
+      return { objToken: r.token, title: r.token, markdown };
+    });
+    try {
+      const docs = await linkedDocuments({} as WebSession, links.join(' '), null);
+      expect(docs.map((d) => [d.title, d.truncated, Array.from(d.content).length])).toEqual([
+        ['D0', true, DOC_MAX_CHARS],
+        ['D2', false, 4],
+      ]);
+      expect(read).toHaveBeenCalledTimes(DOCS_PER_MESSAGE);
+    } finally {
+      ref.mockRestore();
+      read.mockRestore();
+    }
+  });
+
+  test('提示词里的文档：放在内容之后，属性与正文转义，截断的标出；没有文档时不加', () => {
+    const xml = buildXmlMessage({
+      ...msg({ content: '看看' }),
+      _docs: [
+        {
+          url: 'https://example.feishu.cn/docx/A1',
+          title: '周报 <草稿>',
+          content: 'a<b',
+          truncated: true,
+        },
+      ],
+    });
+    expect(xml).toContain(
+      '<document url="https://example.feishu.cn/docx/A1" title="周报 &lt;草稿&gt;" truncated="true">a&lt;b</document>',
+    );
+    expect(xml.indexOf('<document')).toBeGreaterThan(xml.indexOf('<content>'));
+    expect(buildXmlMessage(msg({ content: '看看' }))).not.toContain('<document');
   });
 
   test('触发规则：自己发的、前缀、会话类型、排除会话、群里只认 @我', () => {

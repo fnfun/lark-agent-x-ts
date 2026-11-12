@@ -18,7 +18,7 @@
  *   also sends wiki_scope, cover_token and i18n_id, could not be captured. Not offered.
  */
 import type { WebSession } from '../web.js';
-import { check, DOC_TYPES, type DocRef, Docs, type DocType } from './docs.js';
+import { check, DOC_TYPES, type DocRef, Docs, type DocType, docRef } from './docs.js';
 
 type Dict = Record<string, unknown>;
 
@@ -118,6 +118,11 @@ export class Wiki {
       '读取知识库节点',
     );
     return toNode((body.data ?? {}) as Dict);
+  }
+
+  /** What a Docs or wiki link (or a bare object token of type) names, for the Docs APIs. */
+  async ref(input: string, type: DocType = 'docx'): Promise<DocRef> {
+    return /\/wiki\//.test(input) ? this.resolve(input) : docRef(input, type);
   }
 
   /** The document a wiki link points at, for the Docs APIs. */

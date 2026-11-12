@@ -714,6 +714,14 @@ export class Docs {
     };
   }
 
+  /** A document as Markdown by what it is: a docx in full, a mindnote as an outline, slides by page. */
+  async read(r: DocRef): Promise<DocContent> {
+    if (r.type === 'mindnote') return this.fetchMindnote(r.token);
+    if (r.type === 'slides') return this.fetchSlides(r.token);
+    if (r.type === 'docx') return this.fetch(r.token);
+    throw new Error(`不支持读取这类文档: ${r.type}`);
+  }
+
   /** A docx (link or object token; resolve wiki links with Wiki.resolve) as Markdown, paging through all blocks. */
   async fetch(urlOrToken: string): Promise<DocContent> {
     if (/\/wiki\//.test(urlOrToken)) throw new Error('知识库链接要先解析成文档(Wiki.resolve)再读');

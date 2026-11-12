@@ -37,12 +37,8 @@ const TYPE_OPTION: Option = {
   help: '给的是裸 token 时它的类型(链接自带类型)',
 };
 /** The document a command names: a link (wiki links are resolved to their document) or a token. */
-const ref = (a: Record<string, unknown>): Promise<DocRef> => {
-  const input = String(a.doc);
-  return /\/wiki\//.test(input)
-    ? new Wiki(web()).resolve(input)
-    : Promise.resolve(docRef(input, String(a.type ?? 'docx') as DocType));
-};
+const ref = (a: Record<string, unknown>): Promise<DocRef> =>
+  new Wiki(web()).ref(String(a.doc), String(a.type ?? 'docx') as DocType);
 const failures = (what: string, total: number, failed: Map<string, string>) => {
   for (const [t, why] of failed) err(`${what} ${t} 失败: ${why}`);
   out(`已${what} ${total - failed.size} 个`);
@@ -723,13 +719,7 @@ const fetch: Command = {
   positionals: [DOC_ARG],
   options: [TYPE_OPTION, JSON_OPTION],
   async run(a) {
-    const r = await ref(a);
-    const d =
-      r.type === 'mindnote'
-        ? await docs().fetchMindnote(r.token)
-        : r.type === 'slides'
-          ? await docs().fetchSlides(r.token)
-          : await docs().fetch(r.token);
+    const d = await docs().read(await ref(a));
     if (a.json) printJson(d);
     else write(d.markdown);
     return 0;

@@ -118,7 +118,7 @@ Acceptance: `bun test` (fake server); read-only queries on a real account; write
 - Permissions: view and add/remove collaborators, public sharing settings, request access.
 - Wiki: space list, node tree, resolve a node by URL, create nodes, move, copy, delete, space members.
 - Markdown files: create, fetch, overwrite, diff.
-- Digital twin: when it receives a document link, automatically fetch the content into the prompt (with a size cap).
+- Digital twin: when it receives a document link, automatically fetch the content into the prompt (with a size cap). Done on 2026-11-13, see the compat table (`docs/compat.md`, digital twin prompt); checked on both accounts with a link sent to the self chat.
 
 New documents are created via "import Markdown" first, without depending on the collaborative-editing channel.
 

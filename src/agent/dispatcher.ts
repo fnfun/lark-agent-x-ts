@@ -3,6 +3,7 @@ import { getLogger } from '../log.js';
 import type { LarkMessage } from '../proto/decoders.js';
 import { head } from '../text.js';
 import type { AgentBackend } from './backend.js';
+import type { LinkedDocument } from './documents.js';
 
 const logger = getLogger('larkx.agent');
 
@@ -35,6 +36,8 @@ export interface AgentMessage extends LarkMessage {
    * Not a message: the other side added / removed a reaction on the _quote message (sent by me).
    */
   _reaction?: { type: string; cancelled: boolean };
+  /** Documents the message links to, fetched for the agent (see documents.ts). */
+  _docs?: LinkedDocument[];
 }
 
 export type ReplyFn = (chatId: string, text: string, rootId?: string) => Promise<unknown>;
@@ -84,6 +87,10 @@ export function buildXmlMessage(m: AgentMessage): string {
     );
   lines.push(`  <time>${xmlEscape(ts(m))}</time>`);
   lines.push(`  <content>${xmlEscape(m.content || '')}</content>`);
+  for (const d of m._docs ?? [])
+    lines.push(
+      `  <document url=${quoteAttr(d.url)} title=${quoteAttr(d.title)}${d.truncated ? ' truncated="true"' : ''}>${xmlEscape(d.content)}</document>`,
+    );
   lines.push('</message>');
   return lines.join('\n');
 }
@@ -176,6 +183,7 @@ export class AgentDispatcher {
     senderName = '',
     myUserId = '',
     quote?: QuotedMessage,
+    docs?: LinkedDocument[],
   ): Promise<void> {
     if (!this.shouldHandle(msg, myUserId)) return;
     const [cmd, remainder] = this.parseCommand(msg.content || '');
@@ -201,6 +209,7 @@ export class AgentDispatcher {
       _chat_name: chatName,
       _sender_name: senderName,
       ...(quote ? { _quote: quote } : {}),
+      ...(docs?.length ? { _docs: docs } : {}),
     };
     if (cmd) item.content = remainder ?? '';
     this.enqueue(item);

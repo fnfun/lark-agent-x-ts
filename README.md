@@ -44,7 +44,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark message-link <chat_id> <msg_id...>` | Generate official message links (one message links to that message; several produce a combined link) |
 | `lark self-chat` | Print the chat_id of your self chat |
 | `lark listen` | Long-running: receive messages over the long-lived connection and save them to the local database; after reconnecting, automatically backfills messages missed while disconnected (including thread replies); updates the local database when the other side recalls or edits a message; logs reaction changes |
-| `lark listen --agent` (or `bun run agent`) | Long-running: receive messages and hand them to a local coding agent for automatic replies |
+| `lark listen --agent` (or `bun run agent`) | Long-running: receive messages and hand them to a local coding agent for automatic replies; Feishu / Lark document links in a message are read with your access and put into the prompt (at most 3, each cut to 8,000 characters) |
 | `lark messages <chat_id>` | Read message records from the local database (`--anchor` shows only a thread; an empty string shows only the main chat) |
 | `lark history <chat_id>` | Fetch message history (`--save` saves to the local database; `--since` / `--until` fetch the latest `--count` messages in a time range, e.g. `--since 2h`, `--since 2026-10-01`; `--order desc` lists newest first, `--reactions` adds each message's reactions) |
 | `lark get <msg_id...>` | Fetch messages by id (across chats; `--save` saves to the local database, `--json`) |
