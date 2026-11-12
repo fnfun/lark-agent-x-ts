@@ -141,7 +141,7 @@
 
 - 2026-11-13 补上，在两个账号上用专为测试新建、事后删除的日程实测：日程搜索（`cal search`、`Calendar.search`；网页版的 SEARCH_CALENDAR_EVENT，1010036，可带时间范围）和一些人在某段时间是否忙（`cal busy`、`Calendar.busy`；对他们的主日历调 `calendarevents.GetBusyUserRequest`，主日历由 WEB_GET_USER_ATTENDEES_BY_USER_IDS，1002008，查到；回空表示空闲，老版忙闲请求回的空包多半也是这个意思）。只在自己的日历上核对过：问别人的忙闲虽是读操作，但要有别人的日程才能对照。
 - 重复日程，2026-11-13 在两个账号上用专为测试新建、事后删除的日程实测：`cal create --rrule`；`agenda` 列出每一次（网页列表对一组重复日程只返回一条、时间是第一次，所以改从网关的 `QueryInstanceRequest` 取每一次，它在服务端按规则展开并套用例外；之前 `agenda` 把重复日程显示在第一次的日期，并把删掉的那一次当成日程列出）；`cal delete --at --scope this|future|all`。
-- 未做：参会人（邀请他人）、回复邀请、推荐时间、会议室。参会人与回复邀请会涉及他人；服务端只回答整段时间忙不忙，给不出推荐时间需要的忙碌区间。
+- 未做：参会人（邀请他人）、回复邀请、推荐时间、会议室。日程关联的会议纪要按“两个平台都有”的规则跳过：`calendarevents.GetInstancesInfoRequest` 在飞书账号上回 `inNotesFg` 为 true，在 Lark 账号上为 false，在那里挂纪要文档（`CreateNotesDocRequest` 再 `SaveInstanceNotesRequest`）回 “creatorUserID not in fg”（2026-11-13 核对）。参会人与回复邀请会涉及他人；服务端只回答整段时间忙不忙，给不出推荐时间需要的忙碌区间。
 
 ### v0.6：协同编辑：文档、表格、多维表格
 
