@@ -97,6 +97,7 @@ export { MindnoteEditor } from './domains/mindnote.js';
 export { type CellStyle, columnName, Sheets, type SheetTab } from './domains/sheet.js';
 export { SlidesEditor } from './domains/slides.js';
 export {
+  type ListedTask,
   type NewTask,
   type Task,
   type TaskComment,

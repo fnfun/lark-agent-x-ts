@@ -12,15 +12,28 @@
  * - Reopening is `UpdateTodoCompleteStatusRequest` without an operation type (INCOMPLETE fails).
  * - A task's due time is in seconds (`dueTime`), though creating takes `dueMilliTime` in ms.
  * - Task lists come from `todo.PullPagingManagerTaskContainersRequest`, which also returns
- *   deleted lists (filtered out here). No working request lists the tasks inside a list, so a
- *   task's lists are read from the task instead.
+ *   deleted lists (filtered out here).
+ * - Reminders are relative to the due time, in minutes (`TodoReminder.time` with type RELATIVE;
+ *   the account setting `dueReminderOffset` defaults to 30, and the OpenAPI calls the same value
+ *   `relative_fire_minute`). Creating with more than one answers error 121005 (the web app sets one),
+ *   so one is set here. Their commit replaces the whole list; clearing sends only `deleted`.
+ * - Attachments are Drive files uploaded to mount point `task` on the task's guid. Their commit
+ *   adds the `added` entries and removes the `deleted` ones, matched by each entry's guid (entries
+ *   sent without one end up as copies of one another).
+ * - The tasks in a list (2026-11-13, both accounts) come from
+ *   `todo.GetContainerMetaDataAndGroupInfoRequest`: every task's guid by section, in the list's
+ *   order and done ones included, with the details read by guid. Very large lists are meant to be
+ *   loaded asynchronously instead (`asyncLoad`; `QueryContainerTasksRequest` reports the query
+ *   done, but `LoadContainerTasksRequest` answered an empty payload), which is reported as an error.
  */
 import { create, fromJson, type JsonValue, toBinary } from '@bufbuild/protobuf';
 import type { LarkClient } from '../client.js';
 import { authorize, guardMethods, type Permission } from '../permissions.js';
 import { extractRichText } from '../proto/decoders.js';
-import type { Dict } from '../proto/dict.js';
+import { type Dict, fromDict } from '../proto/dict.js';
 import { larkType, protoType } from '../proto/registry.js';
+import { WebSession } from '../web.js';
+import { Docs } from './docs.js';
 
 export interface Task {
   guid: string;
@@ -40,7 +53,22 @@ export interface Task {
   listGuids: string[];
   createdAt: number;
   commentCount: number;
+  /** Reminders, in minutes before the due time. */
+  reminders: number[];
+  attachments: TaskAttachment[];
 }
+
+/** A file attached to a task; it downloads as a Drive file by its token (`lark doc download`). */
+export interface TaskAttachment {
+  token: string;
+  name: string;
+  size: number;
+  uploaderId: string;
+  uploadedAt: number;
+}
+
+/** A task as listed in a task list: with the name of its section ('' for the default one). */
+export type ListedTask = Task & { section: string };
 
 export interface TaskComment {
   id: string;
@@ -68,6 +96,8 @@ export interface NewTask {
   parentGuid?: string | undefined;
   /** Put the task in this task list. */
   listGuid?: string | undefined;
+  /** Reminder, in minutes before the due time (needs a due time). */
+  reminder?: number | undefined;
 }
 
 /** Fields to change; assigneeIds / followerIds replace the whole list. */
@@ -79,6 +109,8 @@ export interface TaskUpdate {
   allDay?: boolean | undefined;
   assigneeIds?: string[] | undefined;
   followerIds?: string[] | undefined;
+  /** Reminder in minutes before the due time, replacing the current ones; null clears them. */
+  reminder?: number | null | undefined;
 }
 
 // todo_entities: TodoSource.TODO, TodoItemMemberType.USER, TaskContainer.Category.TASK_LIST
@@ -89,11 +121,25 @@ const CATEGORY_TASK_LIST = 4;
 const OBJ_TODO = 1;
 const PLATFORM_WEB = 6;
 const OWNER_USER = 1;
-const KEY = { assignees: 5, richSummary: 17, richDescription: 18, followers: 20, due: 34 };
-const DATA = { bytes: 5, vec: 6, startAndDue: 9 };
+const KEY = {
+  assignees: 5,
+  richSummary: 17,
+  richDescription: 18,
+  reminders: 6,
+  followers: 20,
+  attachments: 33,
+  due: 34,
+};
+const DATA = { bytes: 5, vec: 6, reminder: 8, startAndDue: 9 };
+// todo_entities.TodoReminder.Type.RELATIVE
+const REMINDER_RELATIVE = 2;
 // MGetTodoByGuidRequest.Param: Type.Todo, Field.ALL
+// todo_entities.TodoAttachment.Type.FILE
+const ATTACHMENT_FILE = 2;
 const PARAM_TODO = 1;
 const FIELD_ALL = 1;
+// Tasks read by guid per request when listing a task list
+const GET_BATCH = 100;
 
 /** Permission item of each Tasks method (`task.<action>`). */
 const TASK_PERMISSIONS: { [K in keyof Tasks]?: Permission } = {
@@ -101,11 +147,14 @@ const TASK_PERMISSIONS: { [K in keyof Tasks]?: Permission } = {
   search: 'task.search',
   get: 'task.get',
   subtasks: 'task.get',
+  listTasks: 'task.list',
   comments: 'task.comments',
   lists: 'task.lists',
   create: 'task.create',
   comment: 'task.comment',
   update: 'task.update',
+  attach: 'task.update',
+  detach: 'task.update',
   complete: 'task.complete',
   reopen: 'task.complete',
   delete: 'task.delete',
@@ -132,6 +181,12 @@ export function richContent(text: string): Dict {
 }
 
 /** A lark message encoded from its JSON form, as base64 (commit values are serialized messages). */
+/** Deleted tasks still come back from sync and by guid, emptied except for the deletion time. */
+const deleted = (t: Dict) => int(t.deletedMilliTime) > 0;
+
+const reminderList = (minutes: number[]) =>
+  minutes.map((m) => ({ type: REMINDER_RELATIVE, time: String(m) }));
+
 const encode = (type: string, json: Dict) =>
   b64(toBinary(larkType(type), fromJson(larkType(type), json as JsonValue)));
 
@@ -158,6 +213,16 @@ export function toTask(t: Dict): Task {
     listGuids: ((t.relatedTaskListGuids ?? []) as unknown[]).map(String),
     createdAt: int(t.createMilliTime),
     commentCount: int(t.commentCount),
+    reminders: ((t.reminders ?? []) as Dict[])
+      .filter((r) => int(r.type) === REMINDER_RELATIVE)
+      .map((r) => int(r.time)),
+    attachments: ((t.attachments ?? []) as Dict[]).map((a) => ({
+      token: String(a.fileToken ?? ''),
+      name: String(a.name ?? ''),
+      size: int(a.fileSize),
+      uploaderId: String(a.uploaderUserId ?? ''),
+      uploadedAt: int(a.uploadMilliTime),
+    })),
   };
 }
 
@@ -184,10 +249,45 @@ export class Tasks {
     });
     const status = o.status ?? 'open';
     return ((resp.items ?? []) as Dict[])
-      .filter((i) => i.todo)
+      .filter((i) => i.todo && !deleted(i.todo as Dict))
       .map((i) => toTask(i.todo as Dict))
       .filter((t) => status === 'all' || (status === 'done') === (t.completedAt !== null))
       .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /**
+   * Tasks in a task list, in the list's order (by section); open ones by default, like list. Only
+   * lists the server returns in one piece: one it wants loaded asynchronously throws.
+   */
+  async listTasks(
+    listGuid: string,
+    o: { status?: 'open' | 'done' | 'all' } = {},
+  ): Promise<ListedTask[]> {
+    const resp = await this.client.api('todo.GetContainerMetaDataAndGroupInfoRequest', {
+      containerGuid: listGuid,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    const meta = (resp.containerMetaData ?? {}) as Dict;
+    if (!meta.container) throw new Error(`找不到任务清单: ${listGuid}`);
+    const groups = ((resp.containerGroupInfo as Dict | undefined)?.groupDataList ?? []) as Dict[];
+    if (meta.asyncLoad && !groups.length)
+      throw new Error('这个清单的任务太多,服务端要求异步加载,暂不支持列出');
+    const sectionOf = new Map<string, string>();
+    for (const g of groups) {
+      const section = ((g.groupInfos as Dict[] | undefined) ?? [])
+        .map((i) => (i.resource as Dict | undefined)?.section as Dict | undefined)
+        .find(Boolean);
+      for (const t of (g.taskSortedInfos ?? []) as Dict[])
+        sectionOf.set(String(t.guid), String(section?.name ?? ''));
+    }
+    const guids = [...sectionOf.keys()];
+    const found: Task[] = [];
+    for (let i = 0; i < guids.length; i += GET_BATCH)
+      found.push(...(await this.get(guids.slice(i, i + GET_BATCH))));
+    const status = o.status ?? 'open';
+    return found
+      .filter((t) => status === 'all' || (status === 'done') === (t.completedAt !== null))
+      .map((t) => ({ ...t, section: sectionOf.get(t.guid) ?? '' }));
   }
 
   /** Tasks I can read whose title matches query. */
@@ -205,7 +305,10 @@ export class Tasks {
     });
     const found = (((resp.uuidToResult ?? {}) as Record<string, Dict>).todo?.guidToTodo ??
       {}) as Record<string, Dict>;
-    return guids.flatMap((g) => (found[g] ? [toTask(found[g] as Dict)] : []));
+    return guids.flatMap((g) => {
+      const t = found[g];
+      return t && !deleted(t) ? [toTask(t)] : [];
+    });
   }
 
   async subtasks(guid: string, limit = 100): Promise<Task[]> {
@@ -228,6 +331,7 @@ export class Tasks {
           followers: members(t.followerIds),
           ...(t.parentGuid ? { ancestorGuid: t.parentGuid } : {}),
           ...(t.listGuid ? { taskListContainerRefs: [{ containerGuid: t.listGuid }] } : {}),
+          ...(t.reminder !== undefined ? { reminders: reminderList([t.reminder]) } : {}),
           source: SOURCE_TODO,
         },
       ],
@@ -242,21 +346,8 @@ export class Tasks {
 
   /** Changes the given fields; one commit per field, sent together. */
   async update(guid: string, u: TaskUpdate): Promise<void> {
-    /** A field change: added is the new value, deleted the old one (clearing sends only that). */
-    const commit = (key: number, dataType: number, added: string, deleted?: string) => ({
-      guid: crypto.randomUUID(),
-      objType: OBJ_TODO,
-      objGuid: guid,
-      key,
-      dataType,
-      ...(added ? { added } : {}),
-      ...(deleted ? { deleted } : {}),
-      clientMilliTime: String(Date.now()),
-      platform: PLATFORM_WEB,
-      ownerType: OWNER_USER,
-      ownerId: this.client.auth.userId,
-      source: SOURCE_TODO,
-    });
+    const commit = (key: number, dataType: number, added: string, deleted?: string) =>
+      this.commit(guid, key, dataType, added, deleted);
     const vec = (type: string, idField: string, ids: string[]) =>
       encode('todo_entities.Commit.DataTypeVec', {
         values: ids.map((id) => encode(type, { [idField]: id, type: MEMBER_USER })),
@@ -291,6 +382,22 @@ export class Tasks {
         commits.push(commit(KEY.due, DATA.startAndDue, '', dueValue(current.due, current.allDay)));
     } else if (u.due !== undefined)
       commits.push(commit(KEY.due, DATA.startAndDue, dueValue(u.due, u.allDay === true)));
+    if (u.reminder !== undefined) {
+      const value = (minutes: number[], allDay: boolean) =>
+        encode('todo_entities.Commit.DataTypeReminder', {
+          reminders: reminderList(minutes),
+          isAllDay: allDay,
+        });
+      if (u.reminder !== null)
+        commits.push(commit(KEY.reminders, DATA.reminder, value([u.reminder], false)));
+      else {
+        const [current] = await this.get([guid]);
+        if (current?.reminders.length)
+          commits.push(
+            commit(KEY.reminders, DATA.reminder, '', value(current.reminders, current.allDay)),
+          );
+      }
+    }
     if (u.assigneeIds !== undefined)
       commits.push(
         commit(
@@ -309,6 +416,93 @@ export class Tasks {
       );
     if (!commits.length) return;
     await this.client.api('todo.UpdateTaskByCommitsRequest', { taskGuid: guid, commits });
+  }
+
+  /**
+   * Upload files and attach them to a task, after the ones it has (uploaded to Drive mount point
+   * `task` on the task's guid); returns the task's attachments.
+   */
+  async attach(
+    guid: string,
+    files: { name: string; data: Uint8Array }[],
+  ): Promise<TaskAttachment[]> {
+    const docs = new Docs(new WebSession(this.client.auth));
+    const added: Dict[] = [];
+    for (const f of files) {
+      const up = await docs.upload(f.data, f.name, { mount: { point: 'task', node: guid } });
+      added.push({
+        guid: crypto.randomUUID(),
+        fileToken: up.objToken,
+        fileSize: String(f.data.length),
+        name: f.name,
+        type: ATTACHMENT_FILE,
+      });
+    }
+    return this.changeAttachments(guid, added, []);
+  }
+
+  /** Remove attachments from a task by token; returns the ones left. */
+  async detach(guid: string, tokens: string[]): Promise<TaskAttachment[]> {
+    const resp = await this.client.api('todo.MGetTodoByGuidRequest', {
+      guids: [guid],
+      uuidToParams: { todo: { type: PARAM_TODO, fields: [FIELD_ALL] } },
+    });
+    const t = (
+      ((resp.uuidToResult ?? {}) as Record<string, Dict>).todo?.guidToTodo as
+        | Record<string, Dict>
+        | undefined
+    )?.[guid];
+    if (!t) throw new Error(`找不到任务: ${guid}`);
+    // Sent back as the server returned them: it matches removals by their guid
+    const current = (t.attachments ?? []) as Dict[];
+    const missing = tokens.filter((x) => !current.some((a) => a.fileToken === x));
+    if (missing.length) throw new Error(`任务里没有这些附件: ${missing.join(', ')}`);
+    return this.changeAttachments(
+      guid,
+      [],
+      current.filter((a) => tokens.includes(String(a.fileToken))),
+    );
+  }
+
+  /**
+   * One attachments commit: the server adds the `added` entries and removes the `deleted` ones,
+   * both matched by the attachment's guid (the list is not replaced as a whole).
+   */
+  private async changeAttachments(
+    guid: string,
+    added: Dict[],
+    deleted: Dict[],
+  ): Promise<TaskAttachment[]> {
+    const type = larkType('todo_entities.TodoAttachment');
+    const vec = (list: Dict[]) =>
+      list.length
+        ? encode('todo_entities.Commit.DataTypeVec', {
+            values: list.map((a) => b64(toBinary(type, fromDict(type, a)))),
+          })
+        : '';
+    const resp = await this.client.api('todo.UpdateTaskByCommitsRequest', {
+      taskGuid: guid,
+      commits: [this.commit(guid, KEY.attachments, DATA.vec, vec(added), vec(deleted))],
+    });
+    return toTask((resp.task ?? {}) as Dict).attachments;
+  }
+
+  /** A field change: added is the new value, deleted the old one (clearing sends only that). */
+  private commit(guid: string, key: number, dataType: number, added: string, deleted?: string) {
+    return {
+      guid: crypto.randomUUID(),
+      objType: OBJ_TODO,
+      objGuid: guid,
+      key,
+      dataType,
+      ...(added ? { added } : {}),
+      ...(deleted ? { deleted } : {}),
+      clientMilliTime: String(Date.now()),
+      platform: PLATFORM_WEB,
+      ownerType: OWNER_USER,
+      ownerId: this.client.auth.userId,
+      source: SOURCE_TODO,
+    };
   }
 
   async complete(guid: string): Promise<void> {

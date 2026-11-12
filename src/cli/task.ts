@@ -1,4 +1,6 @@
-import { type Task, Tasks } from '../domains/task.js';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { basename } from 'node:path';
+import { type Task, type TaskAttachment, Tasks } from '../domains/task.js';
 import type { Option, Parsed } from './args.js';
 import { type Command, type CommandGroup, client, err, list, out, s } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
@@ -9,14 +11,14 @@ const JSON_OPTION: Option = { name: 'json', kind: 'flag' };
 
 const when = (ms: number | null) => (ms ? shortTime(Math.floor(ms / 1000)) : '-');
 
-function printTasks(list: Task[], json: boolean): void {
+function printTasks(list: (Task & { section?: string })[], json: boolean): void {
   if (json) {
     printJson(list);
     return;
   }
   for (const t of list)
     out(
-      `${t.guid}\t${t.completedAt ? '已完成' : '进行中'}\t${t.title}\t截止 ${when(t.due)}${t.assigneeIds.length ? `\t负责人 ${t.assigneeIds.join(',')}` : ''}`,
+      `${t.guid}\t${t.completedAt ? '已完成' : '进行中'}\t${t.title}\t截止 ${when(t.due)}${t.assigneeIds.length ? `\t负责人 ${t.assigneeIds.join(',')}` : ''}${t.section ? `\t分组 ${t.section}` : ''}`,
     );
 }
 
@@ -47,20 +49,41 @@ const EDIT_OPTIONS: Option[] = [
   { name: 'all-day', kind: 'flag', help: '截止时间按全天' },
   { name: 'assignees', kind: 'string', help: '负责人 user_id(逗号分隔;update 时整体替换)' },
   { name: 'followers', kind: 'string', help: '关注人 user_id(逗号分隔;update 时整体替换)' },
+  {
+    name: 'remind',
+    kind: 'string',
+    help: '截止前多少分钟提醒(如 30;update 时 none 表示清除)',
+  },
 ];
+
+/** --remind: minutes before the due time; `none` clears it. */
+function remindArg(a: Parsed): number | null | undefined {
+  if (a.remind === undefined) return undefined;
+  const v = String(a.remind);
+  if (v === 'none') return null;
+  const minutes = Number(v);
+  if (!Number.isInteger(minutes) || minutes < 0)
+    throw new Error(`--remind 应为非负整数分钟或 none: ${v}`);
+  return minutes;
+}
 
 const listCmd: Command = {
   name: 'list',
-  help: '我的任务(默认只列进行中的,新的在前)',
+  help: '我的任务(默认只列进行中的,新的在前);--list 列某个清单里的任务(按清单里的顺序)',
   access: 'task.list',
   options: [
+    { name: 'list', kind: 'string', help: '列这个任务清单里的任务(清单 guid)' },
     { name: 'done', kind: 'flag', help: '只列已完成的' },
     { name: 'all', kind: 'flag', help: '全部' },
     JSON_OPTION,
   ],
   async run(a) {
     const status = a.all ? 'all' : a.done ? 'done' : 'open';
-    printTasks(await (await tasks()).list({ status }), Boolean(a.json));
+    const t = await tasks();
+    printTasks(
+      a.list ? await t.listTasks(String(a.list), { status }) : await t.list({ status }),
+      Boolean(a.json),
+    );
     return 0;
   },
 };
@@ -94,6 +117,7 @@ const get: Command = {
         for (const [k, v] of [
           ['状态', t.completedAt ? `已完成(${when(t.completedAt)})` : '进行中'],
           ['截止', t.due ? `${when(t.due)}${t.allDay ? '(全天)' : ''}` : '-'],
+          ['提醒', t.reminders.map((m) => `截止前 ${m} 分钟`).join(',') || '-'],
           ['描述', t.description || '-'],
           ['创建人', t.creatorId || '-'],
           ['负责人', t.assigneeIds.join(',') || '-'],
@@ -103,6 +127,7 @@ const get: Command = {
           ['评论数', String(t.commentCount)],
         ])
           out(`  ${k}\t${v}`);
+        for (const x of t.attachments) out(`  附件\t${attachmentLine(x)}`);
       }
     const missing = guids.filter((g) => !found.some((t) => t.guid === g));
     if (missing.length) err(`找不到任务: ${missing.join(', ')}`);
@@ -143,6 +168,7 @@ const createCmd: Command = {
         followerIds: list(a.followers),
         parentGuid: s(a.parent),
         listGuid: s(a.list),
+        reminder: remindArg(a) ?? undefined,
       });
       out(`已建任务 guid=${t.guid}`);
       return 0;
@@ -152,7 +178,7 @@ const createCmd: Command = {
 
 const update: Command = {
   name: 'update',
-  help: '改任务:标题、描述、截止时间、负责人、关注人(只改给出的)',
+  help: '改任务:标题、描述、截止时间、提醒、负责人、关注人(只改给出的)',
   access: 'task.update',
   positionals: [{ name: 'guid' }],
   options: [{ name: 'title', kind: 'string', help: '新标题' }, ...EDIT_OPTIONS],
@@ -165,8 +191,42 @@ const update: Command = {
         ...(a.all_day ? { allDay: true } : {}),
         assigneeIds: list(a.assignees),
         followerIds: list(a.followers),
+        reminder: remindArg(a),
       });
       out(`已更新任务 guid=${a.guid}`);
+      return 0;
+    });
+  },
+};
+
+const attachmentLine = (x: TaskAttachment) => `${x.token}\t${x.name}\t${x.size}字节`;
+
+const attach: Command = {
+  name: 'attach',
+  help: '上传本地文件作为任务附件(加在已有附件之后;附件用 lark doc download <token> 下载)',
+  access: 'task.update',
+  positionals: [{ name: 'guid' }, { name: 'paths', nargs: '+', help: '本地文件' }],
+  async run(a) {
+    return attempt('加附件', async () => {
+      const files = (a.paths as string[]).map((p) => {
+        if (!existsSync(p) || !statSync(p).isFile()) throw new Error(`不是文件: ${p}`);
+        return { data: new Uint8Array(readFileSync(p)), name: basename(p) };
+      });
+      for (const x of await (await tasks()).attach(String(a.guid), files)) out(attachmentLine(x));
+      return 0;
+    });
+  },
+};
+
+const detach: Command = {
+  name: 'detach',
+  help: '按 token 移除任务附件',
+  access: 'task.update',
+  positionals: [{ name: 'guid' }, { name: 'tokens', nargs: '+', help: '附件 token(见 task get)' }],
+  async run(a) {
+    return attempt('移除附件', async () => {
+      const left = await (await tasks()).detach(String(a.guid), a.tokens as string[]);
+      out(`已移除 ${(a.tokens as string[]).length} 个附件,还剩 ${left.length} 个`);
       return 0;
     });
   },
@@ -273,7 +333,7 @@ const listDelete: Command = {
 
 export const task: CommandGroup = {
   name: 'task',
-  help: '飞书任务:列出、搜索、新建、修改、完成、删除、评论、子任务、任务清单',
+  help: '飞书任务:列出、搜索、新建、修改、完成、删除、评论、附件、子任务、任务清单',
   subcommands: [
     listCmd,
     search,
@@ -281,6 +341,8 @@ export const task: CommandGroup = {
     subtasks,
     createCmd,
     update,
+    attach,
+    detach,
     complete,
     del,
     comment,

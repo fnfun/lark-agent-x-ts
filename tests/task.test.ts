@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { fromBinary } from '@bufbuild/protobuf';
 import type { LarkAuth } from '../src/auth.js';
 import { LarkClient } from '../src/client.js';
+import { Docs } from '../src/domains/docs.js';
 import { Tasks, toTask } from '../src/domains/task.js';
 import { PermissionDenied } from '../src/permissions.js';
 import { type Dict, toDict } from '../src/proto/dict.js';
@@ -87,14 +88,16 @@ describe('任务', () => {
     });
   });
 
-  test('我的任务：先取根清单再拉其下的任务；按状态过滤，新的在前', async () => {
+  test('我的任务：先取根清单再拉其下的任务；按状态过滤，新的在前，已删除的不列', async () => {
     const todo = (guid: string, created: bigint, done: bigint) => ({
       category: 1,
       todo: { guid, summary: guid, createMilliTime: created, completedMilliTime: done },
     });
+    // A deleted task comes back emptied except for its deletion time
+    const gone = { category: 1, todo: { guid: 'd', deletedMilliTime: 1_794_289_499n } };
     const { t, calls } = recorder((_type, data) =>
       data.params
-        ? { items: [todo('a', 1n, 0n), todo('b', 3n, 9n), todo('c', 2n, 0n)] }
+        ? { items: [todo('a', 1n, 0n), todo('b', 3n, 9n), gone, todo('c', 2n, 0n)] }
         : { items: [{ category: 2, todoList: { guid: 'root' } }] },
     );
     expect((await t.list()).map((x) => x.guid)).toEqual(['c', 'a']);
@@ -102,6 +105,137 @@ describe('任务', () => {
     expect((await t.list({ status: 'all' })).map((x) => x.guid)).toEqual(['b', 'c', 'a']);
     const pull = calls[1] as [string, Dict];
     expect((pull[1].params as Dict[])[0]?.parentItemGuid).toBe('root');
+  });
+
+  test('按 guid 取任务：已删除的当作找不到', async () => {
+    const { t } = recorder(() => ({
+      uuidToResult: {
+        todo: {
+          guidToTodo: {
+            a: { guid: 'a', summary: '周报' },
+            d: { guid: 'd', deletedMilliTime: 5n },
+          },
+        },
+      },
+    }));
+    expect((await t.get(['a', 'd'])).map((x) => x.guid)).toEqual(['a']);
+  });
+
+  test('清单里的任务：按分组与清单里的顺序，带分组名；按状态过滤；要异步加载的大清单报错', async () => {
+    const section = (name: string) => ({
+      group: { fieldKey: '__field_task_section' },
+      resource: { type: 1, section: { guid: `s-${name}`, name } },
+    });
+    let meta: Dict = { container: { guid: 'L1' } };
+    const { t } = recorder((type, data) => {
+      if (type === 'todo.GetContainerMetaDataAndGroupInfoRequest')
+        return {
+          containerMetaData: meta,
+          containerGroupInfo: {
+            groupDataList: meta.asyncLoad
+              ? []
+              : [
+                  { groupInfos: [section('')], taskSortedInfos: [{ guid: 'b' }, { guid: 'a' }] },
+                  { groupInfos: [section('本周')], taskSortedInfos: [{ guid: 'c' }] },
+                ],
+          },
+        };
+      const todos: Record<string, Dict> = {
+        a: { guid: 'a', summary: 'A' },
+        b: { guid: 'b', summary: 'B', completedMilliTime: 9n },
+        c: { guid: 'c', summary: 'C' },
+      };
+      const guids = data.guids as string[];
+      return {
+        uuidToResult: {
+          todo: { guidToTodo: Object.fromEntries(guids.map((g) => [g, todos[g] as Dict])) },
+        },
+      };
+    });
+    expect((await t.listTasks('L1', { status: 'all' })).map((x) => [x.guid, x.section])).toEqual([
+      ['b', ''],
+      ['a', ''],
+      ['c', '本周'],
+    ]);
+    expect((await t.listTasks('L1')).map((x) => x.guid)).toEqual(['a', 'c']);
+    meta = { container: { guid: 'L1' }, asyncLoad: true };
+    await expect(t.listTasks('L1')).rejects.toThrow('异步加载');
+  });
+
+  test('提醒：截止前的分钟数作为 RELATIVE 提醒整体替换；清除时只把当前提醒放进 deleted', async () => {
+    const { t, calls } = recorder((type) =>
+      type === 'todo.MGetTodoByGuidRequest'
+        ? {
+            uuidToResult: {
+              todo: { guidToTodo: { [G]: { guid: G, reminders: [{ type: 2, time: 30n }] } } },
+            },
+          }
+        : {},
+    );
+    expect(toTask({ guid: G, reminders: [{ type: 2, time: 30n }] }).reminders).toEqual([30]);
+    await t.update(G, { reminder: 15 });
+    const set = ((calls.at(-1) as [string, Dict])[1].commits as Dict[])[0] as Dict;
+    expect([set.key, set.dataType, set.deleted]).toEqual([6, 8, undefined]);
+    expect(value('todo_entities.Commit.DataTypeReminder', set.added).reminders).toEqual([
+      { type: 2, time: 15n },
+    ]);
+    await t.update(G, { reminder: null });
+    const clear = ((calls.at(-1) as [string, Dict])[1].commits as Dict[])[0] as Dict;
+    expect(clear.added).toBeUndefined();
+    expect(value('todo_entities.Commit.DataTypeReminder', clear.deleted).reminders).toEqual([
+      { type: 2, time: 30n },
+    ]);
+  });
+
+  test('附件：新文件传到 task 挂载点后只放进 added（各带 guid）；移除只把那一项原样放进 deleted', async () => {
+    const existing = {
+      guid: 'g-old',
+      fileToken: 'tok-old',
+      name: '旧.txt',
+      fileSize: '3',
+      type: 2,
+    };
+    const { t, calls } = recorder((type) =>
+      type === 'todo.MGetTodoByGuidRequest'
+        ? { uuidToResult: { todo: { guidToTodo: { [G]: { guid: G, attachments: [existing] } } } } }
+        : { task: { guid: G } },
+    );
+    // Uploading opens a web session, which needs the account's region (no request is made)
+    Object.assign(t.client.auth, { region: { name: 'feishu', domain: 'example.invalid' } });
+    const mounts: unknown[] = [];
+    const upload = spyOn(Docs.prototype, 'upload').mockImplementation(async (_d, name, o) => {
+      mounts.push(o?.mount);
+      return { objToken: `tok-${name}` } as Awaited<ReturnType<Docs['upload']>>;
+    });
+    try {
+      await t.attach(G, [{ name: '新.txt', data: new Uint8Array(4) }]);
+    } finally {
+      upload.mockRestore();
+    }
+    expect(mounts).toEqual([{ point: 'task', node: G }]);
+    const entries = (b64: unknown) =>
+      (value('todo_entities.Commit.DataTypeVec', b64).values as Uint8Array[]).map((v) =>
+        toDict(
+          larkType('todo_entities.TodoAttachment'),
+          fromBinary(larkType('todo_entities.TodoAttachment'), v),
+        ),
+      );
+    const add = ((calls.at(-1) as [string, Dict])[1].commits as Dict[])[0] as Dict;
+    expect([add.key, add.dataType, add.deleted]).toEqual([33, 6, undefined]);
+    const [added] = entries(add.added);
+    expect(added).toMatchObject({
+      fileToken: 'tok-新.txt',
+      name: '新.txt',
+      fileSize: '4',
+      type: 2,
+    });
+    expect(String(added?.guid)).toMatch(/^[0-9a-f-]{36}$/);
+
+    await t.detach(G, ['tok-old']);
+    const del = ((calls.at(-1) as [string, Dict])[1].commits as Dict[])[0] as Dict;
+    expect(del.added).toBeUndefined();
+    expect(entries(del.deleted)).toEqual([existing]);
+    await expect(t.detach(G, ['tok-x'])).rejects.toThrow('tok-x');
   });
 
   test('任务清单：服务端连已删除的也返回，这里滤掉', async () => {
