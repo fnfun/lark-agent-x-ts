@@ -126,7 +126,7 @@
 
 - 2026-11-11 补上，同样在两个账号上实测：`rename`、`mv`、`cp`、`trash` / `restore`、`upload`（超过 4MB 分块）/ `download`、`export`（docx 导出 docx / pdf，表格导出 xlsx）、评论（`comments` / `comment` / `reply` / `resolve` / `comment-rm`，库的 `DocComments`）和分享（`sharing` / `set-link`，库的 `DocPermissions`）。把测试文档的链接范围放宽被会话的安全检查拦下，`set-link` 只用"设成当前值"验证过。评论和权限的细节写在 `src/domains/doc-comments.ts`、`src/domains/doc-permissions.ts` 文件头。
 - 知识库，2026-11-11 补上：`lark wiki spaces/ls/get/create/rename/mv/cp/rm` 与库的 `Wiki`；`doc` 各命令接受知识库链接（先解析成对应文档）。在飞书账号的个人文档库里用专为测试新建、测完删除的页面实测；Lark 账号没有知识空间；通过 HTTP 新建空间在两个账号上都回 920004103（网页自己的请求在浏览器网络事件和页面钩子里都抓不到），所以不提供新建空间。细节写在 `src/domains/wiki.ts` 文件头。
-- 未做：增删协作者和空间成员（涉及他人）、新建知识空间（见上），以及 Markdown 文件与本地草稿的比对（项目里没有 diff 库；`doc cat` 再用本地 diff 即可）。Markdown 文件本身是云空间文件：`doc upload` 新建、`doc cat` 读取、`doc upload --replace` 作为新版本覆盖。
+- 未做：增删协作者和空间成员（涉及他人）、新建知识空间（见上）。Markdown 文件与本地草稿的比对已于 2026-11-13 补上（`doc diff <文件> <本地文件>`，项目里自写的 Myers 行 diff，输出与 `diff -u` 对照过；两个账号）。Markdown 文件本身是云空间文件：`doc upload` 新建、`doc cat` 读取、`doc upload --replace` 作为新版本覆盖。
 
 ### v0.5：日历
 

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { LarkAuth } from '../auth.js';
+import { unifiedDiff } from '../diff.js';
 import { DocComments } from '../domains/doc-comments.js';
 import { DocEditor } from '../domains/doc-edit.js';
 import { DocHistory, type DocVersion } from '../domains/doc-history.js';
@@ -252,6 +253,28 @@ const cat: Command = {
     guarded(async () => {
       write((await docs().download(docRef(String(a.file), 'file').token)).data);
       return 0;
+    }),
+};
+
+const diff: Command = {
+  name: 'diff',
+  help: '比较云空间里的文本文件(如 Markdown 文件)和本地文件,按 diff -u 的格式输出差异;有差异时退出码为 1',
+  access: 'doc.diff',
+  positionals: [
+    { name: 'file', help: '文件链接或 file_token' },
+    { name: 'local', help: '本地文件' },
+  ],
+  run: (a) =>
+    guarded(async () => {
+      const remote = await docs().download(docRef(String(a.file), 'file').token);
+      const text = unifiedDiff(
+        new TextDecoder().decode(remote.data),
+        readFileSync(String(a.local), 'utf8'),
+        { fromName: `云端 ${remote.name}`, toName: String(a.local) },
+      );
+      if (!text) return 0;
+      out(text);
+      return 1;
     }),
 };
 
@@ -824,6 +847,7 @@ export const doc: CommandGroup = {
     upload,
     download,
     cat,
+    diff,
     exportCmd,
     comments,
     comment,

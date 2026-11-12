@@ -40,6 +40,7 @@ export {
   type UserSearchOptions,
 } from './client.js';
 export { parseCsv, toCsv } from './csv.js';
+export { diffLines, unifiedDiff } from './diff.js';
 export {
   Base,
   type BaseField,
