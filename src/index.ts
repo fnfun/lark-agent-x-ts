@@ -39,6 +39,7 @@ export {
   type UserProfile,
   type UserSearchOptions,
 } from './client.js';
+export { parseCsv, toCsv } from './csv.js';
 export {
   Base,
   type BaseField,

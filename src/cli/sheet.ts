@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { LarkAuth } from '../auth.js';
+import { parseCsv, toCsv } from '../csv.js';
 import { type CellStyle, Sheets } from '../domains/sheet.js';
 import { Wiki } from '../domains/wiki.js';
 import type { CellValue } from '../domains/xlsx.js';
@@ -66,12 +68,13 @@ const tabs: Command = {
 
 const read: Command = {
   name: 'read',
-  help: '读工作表的单元格,每行一行、单元格用 Tab 分隔(公式有存下的计算结果时取结果,否则显示 =公式)',
+  help: '读工作表的单元格,每行一行、单元格用 Tab 分隔(公式有存下的计算结果时取结果,否则显示 =公式);--csv 输出 CSV',
   access: 'sheet.read',
   positionals: [SHEET_ARG],
   options: [
     TAB_OPTION,
     { name: 'range', kind: 'string', help: '只读这个范围,如 A1:C10' },
+    { name: 'csv', kind: 'flag', help: '输出 CSV(单元格里的换行、逗号、引号按 CSV 规则保留)' },
     JSON_OPTION,
   ],
   run: (a) =>
@@ -81,6 +84,7 @@ const read: Command = {
         ...(a.range ? { range: String(a.range) } : {}),
       });
       if (a.json) printJson(rows);
+      else if (a.csv) out(toCsv(rows.map((r) => r.map((v) => (v === null ? '' : String(v))))));
       else for (const row of rows) out(row.map(show).join('\t'));
       return 0;
     }),
@@ -102,14 +106,28 @@ const write: Command = {
 
 const append: Command = {
   name: 'append',
-  help: '在最后一行有内容的行下面追加行(每个参数一行,单元格用 --sep 分隔)',
+  help: '在最后一行有内容的行下面追加行(每个参数一行,单元格用 --sep 分隔;或 --csv 从 CSV 文件读)',
   access: 'sheet.append',
-  positionals: [SHEET_ARG, { name: 'rows', nargs: '+' }],
-  options: [TAB_OPTION, { name: 'sep', kind: 'string', default: ',', help: '单元格分隔符' }],
+  positionals: [SHEET_ARG, { name: 'rows', nargs: '*' }],
+  options: [
+    TAB_OPTION,
+    { name: 'sep', kind: 'string', default: ',', help: '单元格分隔符' },
+    { name: 'csv', kind: 'string', help: '从这个 CSV 文件读要追加的行(- 为标准输入)' },
+  ],
   run: (a) =>
     guarded(async () => {
       const sep = String(a.sep);
-      const rows = (a.rows as string[]).map((r) => r.split(sep) as CellValue[]);
+      const given = (a.rows as string[] | undefined) ?? [];
+      if (a.csv !== undefined && given.length) throw new Error('--csv 和行参数只能给一种');
+      const rows: CellValue[][] =
+        a.csv !== undefined
+          ? parseCsv(
+              String(a.csv) === '-'
+                ? await new Response(Bun.stdin.stream()).text()
+                : readFileSync(String(a.csv), 'utf8'),
+            )
+          : given.map((r) => r.split(sep));
+      if (!rows.length) throw new Error('没有要追加的行');
       const at = await new Sheets(web()).append(await token(a), rows, tab(a));
       out(`已追加 ${rows.length} 行,从第 ${at} 行起`);
       return 0;
