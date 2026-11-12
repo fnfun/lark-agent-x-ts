@@ -253,6 +253,23 @@ describe('多维表格', () => {
     expect(commits).toHaveLength(1);
   });
 
+  test('加字段：排在当前视图最后，类型号与界面类型成对；附件字段不带 property（由服务端补上）', async () => {
+    const { base, commits } = fake();
+    await base.addField('B1', '阶段', 'select');
+    await base.addField('B1', '资料', 'attachment');
+    const actions = (i: number) => (commits[i]?.ops[0]?.actions ?? []) as Dict[];
+    const [add, attr] = actions(0);
+    expect(add).toMatchObject({
+      action: 'data.addField',
+      data: { name: '阶段', type: 3, fieldUIType: 'SingleSelect', indexes: { vew1: 7 }, total: 7 },
+    });
+    expect(attr?.data).toMatchObject({ type: 3, property: { options: [] } });
+    const [addAtt, attrAtt] = actions(1);
+    expect(addAtt?.data).toMatchObject({ name: '资料', type: 17, fieldUIType: 'Attachment' });
+    expect(attrAtt?.data).toMatchObject({ type: 17, fieldUIType: 'Attachment' });
+    expect(attrAtt?.data).not.toHaveProperty('property');
+  });
+
   test('搜索和筛选在整张表里找、找完再按 limit 截断；搜索不分大小写、任一字段含有即可', async () => {
     const queries: Dict[] = [];
     const web = {

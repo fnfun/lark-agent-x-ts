@@ -51,13 +51,14 @@ export const FIELD_TYPES = {
   checkbox: 7,
   url: 15,
 } as const;
-export type FieldType = keyof typeof FIELD_TYPES;
 /** Attachment fields: read as file names, written with Base.attach. */
 const ATTACHMENT = 17;
-const TYPE_NAMES = {
-  ...Object.fromEntries(Object.entries(FIELD_TYPES).map(([k, v]) => [v, k])),
-  [ATTACHMENT]: 'attachment',
-} as Record<number, string>;
+/** Field types addField creates: the plain ones and attachments. */
+export const NEW_FIELD_TYPES = { ...FIELD_TYPES, attachment: ATTACHMENT } as const;
+export type FieldType = keyof typeof NEW_FIELD_TYPES;
+const TYPE_NAMES = Object.fromEntries(
+  Object.entries(NEW_FIELD_TYPES).map(([k, v]) => [v, k]),
+) as Record<number, string>;
 
 /** Properties a new field of each type starts with, as the web app sends them. */
 const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
@@ -68,6 +69,7 @@ const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
   date: { timeFormat: '', displayTimeZone: false, autoFill: false, dateFormat: 'yyyy/MM/dd' },
   checkbox: { styleId: '0' },
   url: { extractExternalUrl: false },
+  attachment: undefined,
 };
 const UI_TYPES: Record<FieldType, string> = {
   text: 'Text',
@@ -77,6 +79,7 @@ const UI_TYPES: Record<FieldType, string> = {
   date: 'DateTime',
   checkbox: 'Checkbox',
   url: 'Url',
+  attachment: 'Attachment',
 };
 
 export interface BaseTable {
@@ -659,7 +662,7 @@ export class Base {
             ...common,
             data: {
               name,
-              type: FIELD_TYPES[type],
+              type: NEW_FIELD_TYPES[type],
               fieldUIType: uiType,
               enumerable,
               exInfo,
@@ -673,7 +676,7 @@ export class Base {
             data: {
               id: fieldId,
               name,
-              type: FIELD_TYPES[type],
+              type: NEW_FIELD_TYPES[type],
               defaultValueRule: null,
               fieldUIType: uiType,
               enumerable,

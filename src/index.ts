@@ -50,6 +50,7 @@ export {
   FILTER_OPERATORS,
   type FieldType,
   type FilterCondition,
+  NEW_FIELD_TYPES,
   type SelectOption,
   VIEW_TYPES,
   type ViewType,

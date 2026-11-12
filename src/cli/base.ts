@@ -4,9 +4,9 @@ import { LarkAuth } from '../auth.js';
 import {
   Base,
   type CellInput,
-  FIELD_TYPES,
   type FieldType,
   type FilterCondition,
+  NEW_FIELD_TYPES,
   VIEW_TYPES,
   type ViewType,
 } from '../domains/base.js';
@@ -229,7 +229,7 @@ const fieldAdd: Command = {
     {
       name: 'type',
       kind: 'string',
-      choices: Object.keys(FIELD_TYPES),
+      choices: Object.keys(NEW_FIELD_TYPES),
       default: 'text',
       help: '字段类型',
     },
