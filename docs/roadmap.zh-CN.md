@@ -141,7 +141,7 @@
 
 - 2026-11-13 补上，在两个账号上用专为测试新建、事后删除的日程实测：日程搜索（`cal search`、`Calendar.search`；网页版的 SEARCH_CALENDAR_EVENT，1010036，可带时间范围）和一些人在某段时间是否忙（`cal busy`、`Calendar.busy`；对他们的主日历调 `calendarevents.GetBusyUserRequest`，主日历由 WEB_GET_USER_ATTENDEES_BY_USER_IDS，1002008，查到；回空表示空闲，老版忙闲请求回的空包多半也是这个意思）。只在自己的日历上核对过：问别人的忙闲虽是读操作，但要有别人的日程才能对照。
 - 重复日程，2026-11-13 在两个账号上用专为测试新建、事后删除的日程实测：`cal create --rrule`；`agenda` 列出每一次（网页列表对一组重复日程只返回一条、时间是第一次，所以改从网关的 `QueryInstanceRequest` 取每一次，它在服务端按规则展开并套用例外；之前 `agenda` 把重复日程显示在第一次的日期，并把删掉的那一次当成日程列出）；`cal delete --at --scope this|future|all`。
-- 未做：参会人（邀请他人）、回复邀请、推荐时间、会议室。日程关联的会议纪要按“两个平台都有”的规则跳过：`calendarevents.GetInstancesInfoRequest` 在飞书账号上回 `inNotesFg` 为 true，在 Lark 账号上为 false，在那里挂纪要文档（`CreateNotesDocRequest` 再 `SaveInstanceNotesRequest`）回 “creatorUserID not in fg”（2026-11-13 核对）。参会人与回复邀请会涉及他人；服务端只回答整段时间忙不忙，给不出推荐时间需要的忙碌区间。
+- 未做：参会人（邀请他人）、回复邀请、推荐时间、会议室。日程关联的会议纪要按“两个平台都有”的规则跳过：`calendarevents.GetInstancesInfoRequest` 在飞书账号上回 `inNotesFg` 为 true，在 Lark 账号上为 false，在那里挂纪要文档（`CreateNotesDocRequest` 再 `SaveInstanceNotesRequest`）回 “creatorUserID not in fg”（2026-11-13 核对）。参会人与回复邀请会涉及他人；服务端只回答整段时间忙不忙，给不出推荐时间需要的忙碌区间。会议室：网关有现成的请求（`calendarevents.PullBuildingsRequest`、`PullMeetingRoomsInBuildingRequest` 等），但两个测试租户都没有配置会议室（2026-11-13 查询为空），没有数据可以核对。
 
 ### v0.6：协同编辑：文档、表格、多维表格
 
@@ -169,7 +169,8 @@
 - 多维表格也能新建附件字段（`field-add --type attachment`，2026-11-13 起，两个账号）：和其他字段一样建，类型号 17、界面类型 `Attachment`，服务端补上的 property（`{capture: []}`）与新建多维表格自带的附件字段相同；往里上传的文件能读回。
 - 多维表格人员字段，2026-11-13 起两个账号：`field-add --type person`，`add` / `set` 填 user_id（名字经网关查好）。单元格是 `{users: [{userId, name, enName}]}`，是从服务端自己在“创建人”字段里存的值读出来的（之前试的数组形式都被以 `type_mismatch` 拒绝）；读出时显示名字，创建人、修改人字段也一样。
 - 多维表格关联字段也已支持（同日，两个账号）：`field-add --type link`（`--link-table`，默认本表；property 是 `{tableId, multiple: true}`），单元格是被关联记录的 id，读出时显示服务端维护的 `displayValue` 里的文字。查找引用和公式由服务端计算，单元格没有可写的。
-- 多维表格未做：服务端筛选与搜索（本地筛选要读全部记录）、新建查找引用与公式字段。
+- 多维表格公式与查找引用字段（2026-11-13，两个账号，在专为测试新建、事后删除的多维表格上实测）：`field-add --type formula --formula '[单价]*[数量]'`（本表字段写成 `[字段名]`，换成服务端的 `bitable::$table[..].$field[..]` 引用）与 `--type lookup --from <数据表> --take <字段> --match '对方字段=本表字段;...' --rollup sum` 等（在另一张表或本表里按条件查，条件可用 `!=`）。值由服务端计算，放在快照和每页记录的 `formulaInfo` 里，`records` 读出计算结果（之前读出为空）。格式取自多维表格网页应用的代码，细节写在 `src/domains/base.ts` 文件头。
+- 多维表格未做：服务端筛选与搜索。接口找到了（`ondemand/records` 带 `localViewConfig`、`search-records`），但只对服务端按需加载（`rank_page`）的大表开放，其余表回 “table is not ondemand table”；测试租户单表上限 2000 行（Lark）和 2 万行（飞书），导入到上限的表仍是全量加载，造不出能实测的表。网页对这类表也是本地筛选，`records --where/--search` 与之一致。
 - 电子表格，两个账号都实测完成（飞书账号重新登录后补测）：`lark sheet tabs/read/write/append/insert-rows/delete-rows/insert-cols/delete-cols` 与库的 `Sheets`。写入走 `v2/sheet/user_changes`（单元格动作的 protobuf）；读取导出 .xlsx 再解析，因为页面里的单元格块是未公开的编码。细节写在 `src/domains/sheet.ts` 文件头。
 - 电子表格也能写公式（2026-11-11 起，两个账号实测；插入删除行列后服务端会平移公式里的引用）：网页发公式时带上解析结构（引用、逆波兰树、文本片段），`src/domains/sheet-formula.ts` 按同样规则生成；服务端不存计算结果，网页打开时自己算，已在飞书账号的浏览器里核对。所以读取时这类公式显示为 `=公式`。引用其他工作表时带上该表的 id（2026-11-11 起，两个账号实测，并在浏览器里核对过计算结果）。
 - 电子表格也能查找替换（`lark sheet replace`，2026-11-11 起两个账号实测）：从导出的 .xlsx 读单元格，只写回改到的格子，跳过公式单元格（导出里即使显示计算结果也能认出是公式）。
@@ -191,7 +192,7 @@
 - 邮箱：列信、读信与会话、搜索、发信、回复、转发、草稿、文件夹与标签、移动与标记、回收站、收信规则、签名与模板、分享到会话、`mail watch` 监听新邮件（能否复用长连接推送待确认）。
 - 审批：我的待办与已办、实例详情、可发起的审批定义、发起、同意、拒绝、转交、加签、退回、抄送、催办、撤回。
 
-**进展（2026-11-10，卡住）。** 邮箱：两个测试账号都没有邮箱（`mails.ListConnectedEmailAccountsRequest`、`mails.GetTenantDomainsRequest` 都返回空），没有可读可发的邮件。审批：Lark 测试租户上不可用；飞书上能打开管理后台（`www.feishu.cn/approval/admin/`，接口在 `/approval/admin/api/` 下）和数据分析应用（`/approval/web/`，`/approval/web/api/...`：实例管理查询、代理审批、效率报表），但普通用户用的审批中心（待办、同意 / 拒绝、发起审批）在客户端内嵌的小程序里，入口和接口还没找到。
+**进展（2026-11-10，卡住）。** 邮箱：两个测试账号都没有邮箱（`mails.ListConnectedEmailAccountsRequest`、`mails.GetTenantDomainsRequest` 都返回空），没有可读可发的邮件。审批：Lark 测试租户上不可用；飞书上能打开管理后台（`www.feishu.cn/approval/admin/`，接口在 `/approval/admin/api/` 下）和数据分析应用（`/approval/web/`，`/approval/web/api/...`：实例管理查询、代理审批、效率报表），但普通用户用的审批中心（待办、同意 / 拒绝、发起审批）在客户端内嵌的小程序里，入口和接口还没找到。2026-11-13 补查：审批中心是飞书小程序 `cli_9cb844403dbb9108`（页面如 `pc/pages/requested/index`），管理后台通过 `client/mini_program/open` 跳过去；租户域名下的 `/approval/` 各路径回 502，`www.feishu.cn` 上只有 `/approval/admin/` 和 `/approval/web/` 能打开，它们的代码里只有管理员用的实例管理接口（`instance/queryList`、`adminOperate`、`adminTransfer` 等，操作的是别人的审批）。网关里没有小程序取代码包或登录的请求，网页登录态拿不到小程序的会话。
 
 ### v0.8：会议记录、妙记、纪要、OKR、考勤
 
@@ -210,6 +211,25 @@
 - 妙搭：先按 v0.3 的可用性表确认认证方式。范围限于应用列表与详情、创建、HTML 发布与分享链接、云端生成会话、日志与指标、环境变量、协作者与角色、应用数据库与文件、自动化。git 凭据、OpenAPI 密钥这类面向开发者的部分不做。
 
 **进展（2026-11-11，幻灯片、思维笔记和画板完成）。** 幻灯片，两个账号都实测完成：`doc import <文件.pptx>` 生成演示文稿，`doc fetch` 按页列出文字（`slide/pages/client_vars`，和 docx 同一种块结构），`doc slide-cp` / `slide-rm` / `replace` 复制、删除、修改页面（库的 `SlidesEditor`，和 docx 一样走 `slide/blocks/user_change`；细节写在 `src/domains/slides.ts` 文件头）。新页是复制已有的页，而不是按版式新建空白页，后者要逐个字段重建版式的占位形状。画板，两个账号都能读：`doc fetch` 把 docx 里的画板块显示为 `[画板](token)`，`doc whiteboard <token>` 列出节点（`GET whiteboard/block`）。画板也能编辑（2026-11-11 起，两个账号实测，在网页里核对过）：`doc whiteboard-add/text/move/rm` 与库的 `WhiteboardEditor`，可以加带文字的矩形、改文字、移动或改大小、删除节点。画板引擎只通过文档的 WebSocket（`ccm-frontier`，路径 `/api/whiteboard/user_change`）发这些操作，所以库每次调用开一条连接；连接的 access key 是对“我的空间”页面内嵌的 frontier 配置算 md5（细节写在 `src/domains/whiteboard.ts` 文件头）。服务端导出 PDF（`whiteboard/block/export`，类型 2）返回的是空白页；画板图片取自服务端渲染的预览图（`doc whiteboard-image`，即文档里显示的那张）。思维笔记，两个账号都实测完成：`doc import <文件.mm>` 从 FreeMind 文件生成（根主题被去掉，它的子主题成为最外层；标题取导入名），`doc fetch` 读成 Markdown 大纲（`mindnote/v2/client_vars`），`doc append` 把 Markdown 大纲加为主题，加在末尾或 `--under` 某个主题下面（库的 `MindnoteEditor`；`POST mindnote/v2/user_changes`，对主题树做 json0 操作，在飞书账号上观察网页得到，细节写在 `src/domains/mindnote.ts` 文件头）。不能导出（`mm`、`png` 都回 extension mismatch）。妙搭在 Lark 国际版没有入口，跳过。
+
+## 暂缓项
+
+能在"只涉及自己"的前提下做的都已完成。下面这些卡在测试条件或口径上，条件变了再由你发起。
+
+| 项目 | 版本 | 卡在哪 | 怎样能继续 |
+|---|---|---|---|
+| 邮箱 | v0.7 | 两个测试账号都没开邮箱 | 给测试账号开通邮箱 |
+| 审批 | v0.7 | Lark 租户不可用；飞书的审批中心在客户端小程序里，网页登录态拿不到它的会话 | 找到小程序取包和登录的办法，或改用官方 OpenAPI（要建应用） |
+| 妙记、会议记录与纪要 | v0.8 | 测试账号没有妙记，生成妙记要上传音视频（不在范围内） | 账号里有妙记可读（例如开一次只有自己的会并录制） |
+| OKR | v0.8 | 建测试 OKR 默认全组织可见；也没有可读的 OKR | 同意在测试租户里建 OKR，或有一份可读的 OKR |
+| 考勤、日程关联会议纪要、妙搭 | v0.8 / v0.5 / v0.9 | 只有飞书有，不符合"两个平台都有"的规则 | 放宽这条规则 |
+| 会议室 | v0.5 | 两个测试租户都没配置会议室 | 租户里有会议室 |
+| 推荐时间 | v0.5 | 服务端只回答整段时间忙不忙，没有忙碌区间 | 找到返回忙碌区间的接口 |
+| 参会人与回复邀请、清单成员、协作者与空间成员；`group admin` / `group requests` 的实测 | v0.5 / v0.3 / v0.4 / v0.2 | 涉及他人 | 有一个愿意配合的测试账号 |
+| 新建知识空间 | v0.4 | 通过 HTTP 新建回 920004103，网页自己的请求抓不到 | 抓到网页的真实请求 |
+| 多维表格服务端筛选与搜索 | v0.6 | 只对按需加载的大表开放，测试租户的行数上限造不出这种表 | 有一张按需加载的大表可测 |
+| 置顶的插入位置（`shortcut`） | v0.2 | `position` 的效果只能在真实账号上写入确认，会改动已有的置顶顺序 | 同意在测试账号上调整置顶 |
+| 思维笔记导出 | v0.9 | 服务端对 `mm`、`png` 都回 extension mismatch | 找到网页导出用的请求 |
 
 ## 风险
 
