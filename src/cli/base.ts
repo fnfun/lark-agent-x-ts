@@ -6,7 +6,10 @@ import {
   type CellInput,
   type FieldType,
   type FilterCondition,
+  type LookupSpec,
   NEW_FIELD_TYPES,
+  ROLLUPS,
+  type Rollup,
   VIEW_TYPES,
   type ViewType,
 } from '../domains/base.js';
@@ -240,6 +243,24 @@ const fieldAdd: Command = {
       kind: 'string',
       help: 'link 字段关联到的数据表 id(tbl 开头;默认本表)',
     },
+    {
+      name: 'formula',
+      kind: 'string',
+      help: 'formula 字段的公式,本表字段写成 [字段名],如 [单价]*[数量]',
+    },
+    { name: 'from', kind: 'string', help: 'lookup 字段:在哪张数据表里查(id 或名字,可以是本表)' },
+    { name: 'take', kind: 'string', help: 'lookup 字段:取查到记录的哪个字段' },
+    {
+      name: 'match',
+      kind: 'string',
+      help: 'lookup 字段:匹配条件 对方字段=本表字段(!= 为不等于),多个用 ; 分隔,全部满足',
+    },
+    {
+      name: 'rollup',
+      kind: 'string',
+      choices: Object.keys(ROLLUPS),
+      help: 'lookup 字段:怎么汇总查到的值(默认 values 全部列出)',
+    },
   ],
   run: (a) =>
     guarded(async () => {
@@ -251,12 +272,35 @@ const fieldAdd: Command = {
         {
           ...(t.table ? { table: t.table } : {}),
           ...(a.link_table ? { linkTable: String(a.link_table) } : {}),
+          ...(a.formula ? { formula: String(a.formula) } : {}),
+          ...(a.type === 'lookup' ? { lookup: lookupOf(a) } : {}),
         },
       );
       out(`已添加 field_id=${id}`);
       return 0;
     }),
 };
+
+/** The lookup that field-add's --from, --take, --match and --rollup describe. */
+export function lookupOf(a: Record<string, unknown>): LookupSpec {
+  if (!a.from || !a.take || !a.match)
+    throw new Error('lookup 字段要给出 --from、--take 和 --match');
+  const match = String(a.match)
+    .split(';')
+    .filter((x) => x.trim())
+    .map((spec) => {
+      const m = /^(.+?)(!=|=)(.+)$/.exec(spec.trim());
+      if (!m) throw new Error(`看不懂的匹配条件: ${spec}(写成 对方字段=本表字段)`);
+      const [, field, op, equals] = m as unknown as [string, string, string, string];
+      return { field: field.trim(), equals: equals.trim(), ...(op === '!=' ? { not: true } : {}) };
+    });
+  return {
+    table: String(a.from),
+    field: String(a.take),
+    match,
+    ...(a.rollup ? { rollup: String(a.rollup) as Rollup } : {}),
+  };
+}
 
 const attach: Command = {
   name: 'attach',

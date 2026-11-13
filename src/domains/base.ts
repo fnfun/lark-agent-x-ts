@@ -38,6 +38,23 @@
  *   DeleteFields (`data.deleteField` with its position in the view); views are added and removed
  *   with AddViewV2 (`data.addViewV2`: type 1 for a grid, its fields, the owner's user id) and
  *   DeleteView (`data.deleteView`). Read off the web app's traffic on 2026-11-11.
+ * - Formula (type 20) and lookup (type 19) fields are worked out by the server (2026-11-13, read
+ *   off the Base app's code and checked on a test Base on both accounts). Their values are not in
+ *   the record cells but in the snapshot's and each page's `formulaInfo`: `fieldMap` (field id →
+ *   record id → `{value: JSON of {bus_type: [type per item], data: [items]}}`; 202 a number, 201
+ *   text, 1 a text run, 3 / 4 option ids, 5 `{value: ms}`) and `proxyField` (base64 JSON: field id
+ *   → the field a result comes from, with its select options). A formula field's property is
+ *   `{formula, formatter, currencyCode}`, fields referred to as `bitable::$table[t].$field[f]`. A
+ *   lookup searches a table: `{formula, formatter, rollup, targetField, filterInfo: {targetTable,
+ *   conditions: {conjunction, conditions: [], children}}}`, each child matching a field of that
+ *   table with a field of this record (`matchValue: {valueType: 0, value: <field id>}`); its
+ *   formula is `bitable::$table[t].FILTER(CurrentValue.$column[f]=bitable::$table[this].$field[g]
+ *   && ...).$column[target].LISTCOMBINE()` followed by the rollup's functions (`.SUM()` ...).
+ * - Filtering and searching on the server (`POST /space/api/v1/bitable/<token>/ondemand/records`
+ *   with a `localViewConfig`, `.../search-records`) only serve tables the server loads on demand
+ *   (`loadingType` "rank_page"); others are refused as "table is not ondemand table". The test
+ *   tenants cap a table at 2,000 and 20,000 rows, which still load in full ("rank_full"), so
+ *   records() filters locally, as the web app does for such tables.
  */
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { WebSession } from '../web.js';
@@ -60,8 +77,16 @@ export const FIELD_TYPES = {
 } as const;
 /** Attachment fields: read as file names, written with Base.attach. */
 const ATTACHMENT = 17;
-/** Field types addField creates: the plain ones and attachments. */
-export const NEW_FIELD_TYPES = { ...FIELD_TYPES, attachment: ATTACHMENT } as const;
+/** Computed fields: their values come from the server, not from cells. */
+const LOOKUP = 19;
+const FORMULA = 20;
+/** Field types addField creates: the plain ones, attachments and computed fields. */
+export const NEW_FIELD_TYPES = {
+  ...FIELD_TYPES,
+  attachment: ATTACHMENT,
+  lookup: LOOKUP,
+  formula: FORMULA,
+} as const;
 export type FieldType = keyof typeof NEW_FIELD_TYPES;
 const TYPE_NAMES = Object.fromEntries(
   Object.entries(NEW_FIELD_TYPES).map(([k, v]) => [v, k]),
@@ -80,6 +105,9 @@ const FIELD_PROPERTY: Record<FieldType, Dict | undefined> = {
   // The linked table is filled in by addField
   link: { multiple: true },
   attachment: undefined,
+  // Built by addField from the formula or the lookup asked for
+  lookup: undefined,
+  formula: undefined,
 };
 const UI_TYPES: Record<FieldType, string> = {
   text: 'Text',
@@ -92,7 +120,45 @@ const UI_TYPES: Record<FieldType, string> = {
   url: 'Url',
   link: 'SingleLink',
   attachment: 'Attachment',
+  lookup: 'Lookup',
+  formula: 'Formula',
 };
+
+/** How a lookup combines the values it finds, by the server's number. */
+export const ROLLUPS = {
+  values: 0,
+  sum: 1,
+  count: 2,
+  average: 3,
+  max: 4,
+  min: 5,
+  unique: 6,
+  'unique-count': 7,
+} as const;
+export type Rollup = keyof typeof ROLLUPS;
+/** Functions a rollup appends to a lookup's formula. */
+const ROLLUP_FUNCTIONS: Record<Rollup, string[]> = {
+  values: [],
+  sum: ['SUM'],
+  count: ['COUNTA'],
+  average: ['AVERAGE'],
+  max: ['MAX'],
+  min: ['MIN'],
+  unique: ['UNIQUE'],
+  'unique-count': ['UNIQUE', 'COUNTA'],
+};
+
+/** A lookup field: values of a field in the records of a table that match the current record. */
+export interface LookupSpec {
+  /** The table searched (id or name; may be this table). */
+  table: string;
+  /** Its field whose values are taken (id or name). */
+  field: string;
+  /** Conditions, all to be met: a field of that table equals (or, with `not`, differs from) a field of this record. */
+  match: { field: string; equals: string; not?: boolean }[];
+  /** How the values are combined (all of them by default). */
+  rollup?: Rollup;
+}
 
 export interface BaseTable {
   id: string;
@@ -142,6 +208,112 @@ interface TableState {
   firstIds: string[];
   records: Record<string, Dict>;
   views: BaseView[];
+  computed: Computed;
+}
+
+/** Values of formula and lookup fields, from a snapshot's or a page's formulaInfo. */
+interface Computed {
+  /** Field id → record id → the value as the server encodes it (`{bus_type, data}`). */
+  values: Record<string, Record<string, Dict>>;
+  /** Field id → options of the select field its results come from. */
+  options: Record<string, SelectOption[]>;
+}
+
+function computedOf(info: unknown): Computed {
+  const i = (info ?? {}) as Dict;
+  const values: Computed['values'] = {};
+  for (const [fieldId, cells] of Object.entries((i.fieldMap ?? {}) as Record<string, Dict>)) {
+    const parsed: Record<string, Dict> = {};
+    for (const [recordId, cell] of Object.entries(cells as Record<string, Dict>)) {
+      if (typeof cell?.value === 'string') parsed[recordId] = JSON.parse(cell.value) as Dict;
+    }
+    values[fieldId] = parsed;
+  }
+  const proxy = (
+    typeof i.proxyField === 'string'
+      ? JSON.parse(Buffer.from(i.proxyField, 'base64').toString())
+      : (i.proxyField ?? {})
+  ) as Record<string, Dict>;
+  const options = Object.fromEntries(
+    Object.entries(proxy).map(([fieldId, f]) => [
+      fieldId,
+      (((f.property as Dict | undefined)?.options ?? []) as Dict[]).map((o) => ({
+        id: String(o.id ?? ''),
+        name: String(o.name ?? ''),
+      })),
+    ]),
+  );
+  return { values, options };
+}
+
+/** Adds a page's computed values to those read so far. */
+function mergeComputed(into: Computed, more: Computed): void {
+  for (const [fieldId, cells] of Object.entries(more.values))
+    into.values[fieldId] = { ...into.values[fieldId], ...cells };
+  Object.assign(into.options, more.options);
+}
+
+/** Result types that are dates (`{value: ms}`): date, created and modified time. */
+const DATE_RESULTS = new Set([5, 205, 1001, 1002]);
+
+/**
+ * A formula or lookup value (`{bus_type, data}`) → a readable value: a lone number or boolean as
+ * is; otherwise the items as text, option ids as names, dates as local dates, joined like cells
+ * (text runs directly, other items with ", ").
+ */
+export function readComputed(
+  value: Dict | undefined,
+  options: SelectOption[] = [],
+): string | number | boolean | null {
+  const types = (value?.bus_type ?? []) as number[];
+  const items = ((value?.data ?? []) as unknown[])
+    .map((d, i) => ({ type: types[i] ?? types[0] ?? 0, d }))
+    .filter((x) => x.d !== null && x.d !== undefined);
+  const only = items.length === 1 ? items[0]?.d : undefined;
+  if (typeof only === 'number' || typeof only === 'boolean') return only;
+  if (!items.length) return null;
+  const textRuns = items.every((x) => typeof x.d === 'object' && (x.d as Dict).type === 'text');
+  return items
+    .map(({ type, d }) => {
+      if (type === FIELD_TYPES.select || type === FIELD_TYPES.multiselect)
+        return options.find((o) => o.id === d)?.name ?? String(d);
+      if (DATE_RESULTS.has(type))
+        return showDate(Number(typeof d === 'object' ? (d as Dict).value : d));
+      return typeof d === 'object' ? segmentsText([d]) : String(d);
+    })
+    .join(textRuns ? '' : ', ');
+}
+
+/**
+ * A formula as typed, fields of the table written as [name], → the server's form, where a field
+ * is `bitable::$table[<table>].$field[<field>]`. Text in double quotes and references already in
+ * the server's form (a `[` right after a name, as in `$field[...]`) are kept as they are.
+ */
+export function formulaExpression(text: string, tableId: string, fields: BaseField[]): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (c === '"') {
+      const end = text.indexOf('"', i + 1);
+      const next = end < 0 ? text.length : end + 1;
+      out += text.slice(i, next);
+      i = next;
+      continue;
+    }
+    const end = text.indexOf(']', i);
+    if (c === '[' && end > i && !/[\w$\]]/.test(text[i - 1] ?? '')) {
+      const name = text.slice(i + 1, end);
+      const f = fields.find((x) => x.name === name) ?? fields.find((x) => x.id === name);
+      if (!f) throw new Error(`公式里没有这个字段: ${name}`);
+      out += `bitable::$table[${tableId}].$field[${f.id}]`;
+      i = end + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /** View types this module creates, by the server's number. */
@@ -488,6 +660,7 @@ export class Base {
     const wanted = filtering ? t.recordCount : Math.min(limit, t.recordCount);
     const ids = [...t.firstIds];
     const cells = { ...t.records };
+    const computed = t.computed;
     while (ids.length < wanted) {
       const page = check(
         await this.web.json('GET', `/space/api/v1/bitable/${baseToken}/records`, {
@@ -505,6 +678,7 @@ export class Base {
       if (!more.length) break;
       ids.push(...more);
       Object.assign(cells, (data.recordMap ?? {}) as Record<string, Dict>);
+      mergeComputed(computed, computedOf(data.formulaInfo));
     }
     // Field names can repeat; later ones are keyed "name (field id)".
     const seen = new Set<string>();
@@ -518,11 +692,13 @@ export class Base {
       fields: Object.fromEntries(
         t.fields.map((f, i) => [
           keys[i] as string,
-          readCell(
-            f,
-            (cells[id]?.[f.id] as Dict | undefined)?.value,
-            (cells[id]?.[f.id] as Dict | undefined)?.displayValue as Dict | undefined,
-          ),
+          f.type === FORMULA || f.type === LOOKUP
+            ? readComputed(computed.values[f.id]?.[id], computed.options[f.id])
+            : readCell(
+                f,
+                (cells[id]?.[f.id] as Dict | undefined)?.value,
+                (cells[id]?.[f.id] as Dict | undefined)?.displayValue as Dict | undefined,
+              ),
         ]),
       ),
     }));
@@ -689,19 +865,31 @@ export class Base {
     ]);
   }
 
-  /** Add a field at the end of the table; returns its id. */
-  /** Add a field at the end; a link field links to linkTable (this table when omitted). */
+  /**
+   * Add a field at the end of the table; returns its id. A link field links to linkTable (this
+   * table when omitted); a formula field needs `formula` (fields as [name]), a lookup `lookup`.
+   */
   async addField(
     baseToken: string,
     name: string,
     type: FieldType,
-    o: { table?: string; linkTable?: string } = {},
+    o: { table?: string; linkTable?: string; formula?: string; lookup?: LookupSpec } = {},
   ) {
     const t = await this.load(baseToken, o.table, 1);
-    const property =
-      type === 'link'
-        ? { ...FIELD_PROPERTY.link, tableId: o.linkTable ?? t.id }
-        : FIELD_PROPERTY[type];
+    let property: Dict | undefined = FIELD_PROPERTY[type];
+    if (type === 'link') property = { ...FIELD_PROPERTY.link, tableId: o.linkTable ?? t.id };
+    if (type === 'formula') {
+      if (!o.formula?.trim()) throw new Error('公式字段要给出公式');
+      property = {
+        formula: formulaExpression(o.formula, t.id, t.fields),
+        formatter: '',
+        currencyCode: '',
+      };
+    }
+    if (type === 'lookup') {
+      if (!o.lookup) throw new Error('查找引用字段要给出查找的数据表、取值字段和匹配条件');
+      property = await this.lookupProperty(baseToken, t, o.lookup);
+    }
     const fieldId = newId('fld', 7);
     const uiType = UI_TYPES[type];
     const enumerable = type === 'select' || type === 'multiselect' || type === 'checkbox';
@@ -749,6 +937,45 @@ export class Base {
       },
     ]);
     return fieldId;
+  }
+
+  /** A lookup field's property: its search conditions and the formula the server evaluates. */
+  private async lookupProperty(baseToken: string, t: TableState, spec: LookupSpec): Promise<Dict> {
+    if (!spec.match.length) throw new Error('查找引用至少要一个匹配条件');
+    const tables = await this.tables(baseToken);
+    const target =
+      tables.find((x) => x.id === spec.table) ?? tables.find((x) => x.name === spec.table);
+    if (!target) throw new Error(`没有这个数据表: ${spec.table}`);
+    const other = target.id === t.id ? t : await this.load(baseToken, target.id, 1);
+    const take = fieldOf(other, spec.field);
+    const children = spec.match.map((m) => ({
+      fieldType: fieldOf(other, m.field).type,
+      matchValue: { valueType: 0, value: fieldOf(t, m.equals).id },
+      operator: m.not ? 'isNot' : 'is',
+      conditionId: newId('con', 7),
+      fieldId: fieldOf(other, m.field).id,
+    }));
+    const filter = children
+      .map(
+        (c) =>
+          `CurrentValue.$column[${c.fieldId}]${c.operator === 'is' ? '=' : '!='}bitable::$table[${t.id}].$field[${c.matchValue.value}]`,
+      )
+      .join('&&');
+    const rollup = spec.rollup ?? 'values';
+    if (!(rollup in ROLLUPS)) throw new Error(`不认识的汇总方式: ${rollup}`);
+    return {
+      formula: [
+        `bitable::$table[${other.id}].FILTER(${filter}).$column[${take.id}].LISTCOMBINE()`,
+        ...ROLLUP_FUNCTIONS[rollup].map((f) => `${f}()`),
+      ].join('.'),
+      formatter: '',
+      rollup: ROLLUPS[rollup],
+      targetField: take.id,
+      filterInfo: {
+        targetTable: other.id,
+        conditions: { conjunction: 'and', conditions: [], children },
+      },
+    };
   }
 
   /**
@@ -1256,6 +1483,7 @@ export class Base {
         type: Number(viewMap[id]?.type ?? 0),
       })),
       records: (t.recordMap ?? {}) as Record<string, Dict>,
+      computed: computedOf(t.formulaInfo),
     };
   }
 }

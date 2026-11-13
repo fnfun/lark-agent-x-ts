@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { parseAssignments, parseCondition } from '../src/cli/base.js';
+import { lookupOf, parseAssignments, parseCondition } from '../src/cli/base.js';
 import { Base, newRecordId, parseDate } from '../src/domains/base.js';
 import type { WebRequest, WebSession } from '../src/web.js';
 
@@ -342,6 +342,160 @@ describe('多维表格', () => {
     });
     const [row] = await base.records('B1');
     expect(row?.fields.上游).toBe('合同一, recB');
+  });
+
+  test('公式和查找引用：值取自 formulaInfo（单个数字原样，选项 id 换成名字，文本片段直接拼接，日期显示为本地日期），后面几页的值也读得到', async () => {
+    const cell = (bus: number[], data: unknown[]) => ({
+      value: JSON.stringify({ bus_type: bus, data }),
+    });
+    const proxy = { fldSt: { property: { options: [{ id: 'optA', name: '进行中' }] } } };
+    const table = {
+      ...TABLE,
+      recordCount: 2,
+      viewMap: {
+        vew1: { property: { fields: ['fldText', 'fldAmt', 'fldSt', 'fldNames', 'fldDay'] } },
+      },
+      fieldMap: {
+        fldText: { name: '标题', type: 1 },
+        fldAmt: { name: '金额', type: 20 },
+        fldSt: { name: '状态', type: 20 },
+        fldNames: { name: '同组', type: 19 },
+        fldDay: { name: '到期', type: 20 },
+      },
+      recordMap: { rec1: { fldText: { value: [{ type: 'text', text: '周报' }] } } },
+      formulaInfo: {
+        proxyField: Buffer.from(JSON.stringify(proxy)).toString('base64'),
+        fieldMap: {
+          fldAmt: { rec1: cell([202], [30]) },
+          fldSt: { rec1: cell([3], ['optA']) },
+          fldNames: {
+            rec1: cell(
+              [1, 1, 1],
+              [
+                { type: 'text', text: '周报' },
+                { type: 'text', text: ',' },
+                { type: 'text', text: '月报' },
+              ],
+            ),
+          },
+          fldDay: { rec1: cell([5], [{ value: new Date(2026, 10, 20).getTime() }]) },
+        },
+      },
+    };
+    const web = {
+      json: async (_m: string, path: string) =>
+        path.endsWith('/clientvars')
+          ? { code: 0, data: { table: zip(table) } }
+          : {
+              code: 0,
+              data: {
+                records: zip({
+                  groupList: [{ recordIDList: ['rec2'] }],
+                  recordMap: { rec2: {} },
+                  formulaInfo: { fieldMap: { fldAmt: { rec2: cell([202], [10]) } } },
+                }),
+              },
+            },
+    } as unknown as WebSession;
+    const [first, second] = await new Base(web).records('B1');
+    expect(first?.fields).toEqual({
+      标题: '周报',
+      金额: 30,
+      状态: '进行中',
+      同组: '周报,月报',
+      到期: '2026-11-20',
+    });
+    expect(second?.fields.金额).toBe(10);
+    expect(second?.fields.状态).toBeNull();
+  });
+
+  test('公式字段：[字段名] 换成服务端的引用，引号里的文字和已是服务端写法的引用不动；字段不存在或没给公式时报错、不提交', async () => {
+    const { base, commits } = fake();
+    await base.addField('B1', '加倍', 'formula', {
+      formula: 'IF([金额]>1,"[金额]",bitable::$table[tbl1].$field[fldNum])',
+    });
+    const attr = ((commits[0]?.ops[0]?.actions ?? []) as Dict[])[1]?.data as Dict;
+    expect(attr).toMatchObject({ type: 20, fieldUIType: 'Formula' });
+    expect((attr.property as Dict).formula).toBe(
+      'IF(bitable::$table[tbl1].$field[fldNum]>1,"[金额]",bitable::$table[tbl1].$field[fldNum])',
+    );
+    await expect(base.addField('B1', '错', 'formula', { formula: '[没有]+1' })).rejects.toThrow(
+      '没有',
+    );
+    await expect(base.addField('B1', '空', 'formula')).rejects.toThrow('公式');
+    expect(commits.length).toBe(1);
+  });
+
+  test('查找引用：按名字找到要查的表，条件是对方字段等于（或不等于）本表字段、全部满足，公式带上汇总函数；没有条件时不提交', async () => {
+    const other = {
+      ...TABLE,
+      meta: { id: 'tbl2', rev: 3 },
+      latestCSRev: 3,
+      viewMap: { vew1: { property: { fields: ['fldName', 'fldState', 'fldPrice'] } } },
+      fieldMap: {
+        fldName: { name: '名称', type: 1 },
+        fldState: { name: '阶段', type: 3 },
+        fldPrice: { name: '单价', type: 2 },
+      },
+    };
+    const { base, commits } = fake([TABLE, other]);
+    await base.addField('B1', '单价合计', 'lookup', {
+      lookup: {
+        table: '归档',
+        field: '单价',
+        match: [
+          { field: '名称', equals: '标题' },
+          { field: '阶段', equals: '状态', not: true },
+        ],
+        rollup: 'sum',
+      },
+    });
+    const attr = ((commits[0]?.ops[0]?.actions ?? []) as Dict[])[1]?.data as Dict;
+    const property = attr.property as Dict;
+    expect(attr).toMatchObject({ type: 19, fieldUIType: 'Lookup' });
+    expect(property.formula).toBe(
+      'bitable::$table[tbl2].FILTER(CurrentValue.$column[fldName]=bitable::$table[tbl1].$field[fldText]&&CurrentValue.$column[fldState]!=bitable::$table[tbl1].$field[fldSel]).$column[fldPrice].LISTCOMBINE().SUM()',
+    );
+    expect(property).toMatchObject({ rollup: 1, targetField: 'fldPrice' });
+    expect(property.filterInfo).toMatchObject({
+      targetTable: 'tbl2',
+      conditions: {
+        conjunction: 'and',
+        children: [
+          {
+            fieldId: 'fldName',
+            fieldType: 1,
+            operator: 'is',
+            matchValue: { valueType: 0, value: 'fldText' },
+          },
+          {
+            fieldId: 'fldState',
+            fieldType: 3,
+            operator: 'isNot',
+            matchValue: { valueType: 0, value: 'fldSel' },
+          },
+        ],
+      },
+    });
+    await expect(
+      base.addField('B1', '空', 'lookup', { lookup: { table: '归档', field: '单价', match: [] } }),
+    ).rejects.toThrow('条件');
+    expect(commits.length).toBe(1);
+  });
+
+  test('命令行查找引用：--match 按 ; 分隔，= 与 !=，两边可带空格；缺参数时报错', () => {
+    expect(
+      lookupOf({ from: '单价表', take: '单价', match: '水果 = 文本; 阶段!=状态;', rollup: 'max' }),
+    ).toEqual({
+      table: '单价表',
+      field: '单价',
+      match: [
+        { field: '水果', equals: '文本' },
+        { field: '阶段', equals: '状态', not: true },
+      ],
+      rollup: 'max',
+    });
+    expect(() => lookupOf({ from: '单价表', take: '单价' })).toThrow('--match');
   });
 
   test('搜索和筛选在整张表里找、找完再按 limit 截断；搜索不分大小写、任一字段含有即可', async () => {
