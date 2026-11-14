@@ -22,6 +22,24 @@ const hit = (id: string, over: Dict = {}) => ({
 });
 
 describe('跨会话搜消息', () => {
+  test('高亮文字里的 HTML 转义还原成原字符', async () => {
+    // Guards against showing escaped names: highlighted text arrives entity-escaped
+    const c = newClient();
+    Object.assign(c.auth, { region: { locale: 'zh_CN' } });
+    c.api = async () => ({
+      header: { hasMore: false },
+      results: [
+        {
+          ...hit('m4'),
+          titleHighlighted: 'PC&amp;H5 &lt;测试&gt;',
+          summaryHighlighted: '同事甲: a&#39;b',
+        },
+      ],
+    });
+    const [escaped] = await c.searchMessages('月报', { limit: 1 });
+    expect([escaped?.chatTitle, escaped?.summary]).toEqual(['PC&H5 <测试>', "同事甲: a'b"]);
+  });
+
   test('过滤条件进 messageFilter，按会话内同一 session 翻页，直到够数或没有更多', async () => {
     const c = newClient();
     Object.assign(c.auth, { region: { locale: 'zh_CN' } });

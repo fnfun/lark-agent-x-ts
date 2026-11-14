@@ -217,7 +217,14 @@ const SEARCH_ENTITY_USER = 1;
 const SEARCH_ENTITY_BOT = 2;
 const SEARCH_ENTITY_GROUP = 3;
 const SEARCH_ENTITY_MESSAGE = 5;
-const unhighlight = (s: unknown) => String(s ?? '').replace(/<\/?h>/g, '');
+// Highlighted search text is HTML: <h> marks the matches and the rest is entity-escaped
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const unhighlight = (s: unknown) =>
+  String(s ?? '')
+    .replace(/<\/?h>/g, '')
+    .replace(/&(amp|lt|gt|quot|apos|#\d+);/g, (m, e: string) =>
+      e.startsWith('#') ? String.fromCodePoint(Number(e.slice(1))) : (ENTITIES[e] ?? m),
+    );
 /** `![alt](src)` in Markdown. */
 const MD_IMAGE_RE = /!\[([^\]\n]*)\]\(([^)\s]+)\)/g;
 
