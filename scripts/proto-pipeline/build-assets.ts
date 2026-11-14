@@ -63,10 +63,14 @@ const CORE_REQUESTS = [
   'thread.PullThreadsByPositionsRequest',
   'translate.TranslateWebXMLRequest',
   'usearch.UniversalSearchRequest',
+  'users.PullUserProfileV2Request',
 ];
 const CORE_TYPES = [
   'entities.RichTextElement.AnchorProperty',
   'entities.RichTextElement.MarkdownProperty',
+  // File host answers for folder messages and archive unpacking (listFolder, unpackArchive)
+  'pan.BrowseFolderResponse',
+  'pan.UnCompressPackageResponse',
   'reactions.PushReactions',
   // Scheduled messages wrap the send packet in putRequest as the full definitions'
   // PutMessageRequest
