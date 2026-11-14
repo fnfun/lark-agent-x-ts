@@ -159,6 +159,7 @@ await client.command(1002001, 'calendarweb.ListCalendarEventsRequest', { params:
 await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // 另有 { video, name, cover? } 与 { audio }（Ogg/Opus）
 await client.setMuted(['<chat_id>'], true); // 另有 setGroupNickname、chatAdmins / updateAdmins、setPostPermission、joinRequests / handleJoinRequest、chatShareLink、forwardThread、createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // 按 id 取消息；threadMessages(rootId) 取整个话题
+const links = anchorLinks(quoted.content_data); // 富文本锚点里的链接（贴进来的链接只在这里，content 里没有）
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // 断线重连后补收：某时刻之后到达的消息（含话题回复）
 
 // 权限：默认不检查（全部允许）。permissions: true 按与命令行相同的规则，也可以直接给一份规则

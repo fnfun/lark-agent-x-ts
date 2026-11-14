@@ -126,6 +126,33 @@ describe('数字人分发', () => {
     expect(documentLinks(`重复 ${doc}`, contentData)).toEqual([doc]);
   });
 
+  test('富文本锚点里的链接全部取出（不只文档类）：按元素顺序、去重，跳过非锚点元素', async () => {
+    // Guards the embedder's view of pasted links: the decoded text drops anchors entirely
+    const { anchorLinks } = await import('../src/proto/decoders.js');
+    const anchor = (href: string) =>
+      toBinary(
+        larkType('entities.RichTextElement.AnchorProperty'),
+        create(larkType('entities.RichTextElement.AnchorProperty'), { href, content: '链接' }),
+      );
+    const contentData = {
+      richText: {
+        elements: {
+          dictionary: {
+            '1': { tag: 1, property: new Uint8Array() },
+            '2': { tag: 6, property: anchor('https://example.com/a') },
+            '3': { tag: 6, property: anchor('https://example.feishu.cn/docx/AbC123') },
+            '4': { tag: 6, property: anchor('https://example.com/a') },
+          },
+        },
+      },
+    };
+    expect(anchorLinks(contentData)).toEqual([
+      'https://example.com/a',
+      'https://example.feishu.cn/docx/AbC123',
+    ]);
+    expect(anchorLinks(null)).toEqual([]);
+  });
+
   test('读链接里的文档：每条消息最多几篇、每篇截断到上限并标出；读不了的跳过', async () => {
     const links = Array.from(
       { length: DOCS_PER_MESSAGE + 1 },

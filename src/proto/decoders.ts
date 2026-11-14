@@ -347,6 +347,29 @@ export function decodeMessageContent(
   return [`[${typeName(messageType)}类型消息]`, null];
 }
 
+// entities.RichTextElement.Tag.A
+const TAG_ANCHOR = 6;
+
+/**
+ * The hrefs of a message's anchor elements (tag A), in element order, deduplicated. A pasted link
+ * becomes an anchor whose href holds the URL while the decoded text leaves anchors out (as the
+ * fork does), so this is the only place such links survive; contentData is LarkMessage.content_data.
+ */
+export function anchorLinks(contentData: Dict | null | undefined): string[] {
+  const dictionary = ((contentData?.richText as Dict | undefined)?.elements as Dict | undefined)
+    ?.dictionary as Record<string, Dict> | undefined;
+  const anchor = larkType('entities.RichTextElement.AnchorProperty');
+  const out: string[] = [];
+  for (const e of Object.values(dictionary ?? {})) {
+    if (e.tag !== TAG_ANCHOR || !(e.property instanceof Uint8Array)) continue;
+    try {
+      const href = String(toDict(anchor, fromBinary(anchor, e.property)).href ?? '');
+      if (href) out.push(href);
+    } catch {}
+  }
+  return [...new Set(out)];
+}
+
 /** Long-lived connection frame → [Frame dict, Packet dict]. */
 export function parseWsFrame(raw: Uint8Array): [Dict, Dict] {
   const frame = fromBinary(protoType('Frame'), raw);
@@ -384,8 +407,8 @@ export function toLarkMessage(
     fallbackChatId?: string;
     fallbackPosition?: number;
     /**
-     * Current account id: when there is no atMe from a push (pulled messages), at_me is computed
-     * from who the message @mentions.
+     * Current account id: at_me is also computed from who the message @mentions, which catches
+     * pushed messages the server's at-me flag misses and pulled messages that carry no flag.
      */
     selfId?: string;
   },
@@ -419,7 +442,7 @@ export function toLarkMessage(
     chat_type_name: CHAT_TYPE_NAMES[chatType] ?? String(chatType),
     scope,
     anchor,
-    at_me: o.atMe ?? (o.selfId ? mentions(v, data, o.selfId) : false),
+    at_me: Boolean(o.atMe) || (o.selfId ? mentions(v, data, o.selfId) : false),
     root_id: rootId,
     parent_id: str(v.parentId),
     cid: str(v.cid),
@@ -432,14 +455,17 @@ export function toLarkMessage(
   };
 }
 
-/** All messages in a push frame (cmd=6). */
-export function decodePushMessages(raw: Uint8Array): LarkMessage[] {
+/**
+ * All messages in a push frame (cmd=6). With selfId, at_me also counts @mentions of that account:
+ * the server's at-me flag misses some (rich text and edited messages that @ the account by id).
+ */
+export function decodePushMessages(raw: Uint8Array, selfId?: string): LarkMessage[] {
   const [, packet] = parseWsFrame(raw);
   if (!('payload' in packet)) return [];
   const pmr = parse('PushMessagesRequest', packet.payload as Uint8Array);
   const atMe = (pmr.messagesAtMe as Record<string, boolean> | undefined) ?? {};
   return Object.entries((pmr.messages as Record<string, Dict> | undefined) ?? {}).map(([k, v]) =>
-    toLarkMessage(v, { atMe: Boolean(atMe[str(v.id)] || atMe[k]) }),
+    toLarkMessage(v, { atMe: Boolean(atMe[str(v.id)] || atMe[k]), ...(selfId ? { selfId } : {}) }),
   );
 }
 

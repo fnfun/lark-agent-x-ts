@@ -760,7 +760,7 @@ export class LarkClient {
             return;
           }
           if (packet.cmd !== 6) return;
-          for (const msg of decodePushMessages(raw)) {
+          for (const msg of decodePushMessages(raw, this.auth.userId)) {
             if (!msg.from_id) continue;
             chain = chain.then(() => this.dispatch(msg, onMessage));
           }

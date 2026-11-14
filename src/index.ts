@@ -153,7 +153,12 @@ export type {
   RichRun,
   SearchHit,
 } from './proto/builders.js';
-export { contentDataJson, type LarkMessage, type ReactionEvent } from './proto/decoders.js';
+export {
+  anchorLinks,
+  contentDataJson,
+  type LarkMessage,
+  type ReactionEvent,
+} from './proto/decoders.js';
 export type { Dict } from './proto/dict.js';
 export { getRegion, REGIONS, type Region } from './region.js';
 export { type WebRequest, WebSession } from './web.js';

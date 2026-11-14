@@ -274,6 +274,45 @@ describe('推送里的撤回与编辑', () => {
   });
 });
 
+describe('推送里的 @我', () => {
+  // Guards against trusting only the server's at-me flag, which misses some @mentions by id
+  test('服务端没标 @我、但富文本里 @ 的是我：带上 selfId 时算 @我；@ 别人的不算；不带 selfId 时照原版只看服务端标记', async () => {
+    const { decodePushMessages } = await import('../src/proto/decoders.js');
+    const me = '7100000000000000009';
+    // A text message whose rich text @mentions userId (the push carries no mention list)
+    const atText = (userId: string) =>
+      toBinary(
+        protoType('TextContent'),
+        create(protoType('TextContent'), {
+          text: '@同事甲 看下',
+          richText: {
+            elementIds: ['1'],
+            atIds: ['1'],
+            elements: {
+              dictionary: {
+                '1': {
+                  tag: 5,
+                  property: toBinary(
+                    protoType('AtProperty'),
+                    create(protoType('AtProperty'), { userId, content: '@同事甲' }),
+                  ),
+                },
+              },
+            },
+          },
+        } as Record<string, unknown>),
+      );
+    const frame = pushFrame([
+      entity('7000000000000000001', { content: atText(me) }),
+      entity('7000000000000000002', { content: atText('7100000000000000003') }),
+    ]);
+    const atMe = (ms: { msg_id: string; at_me: boolean }[]) =>
+      Object.fromEntries(ms.map((m) => [m.msg_id.slice(-1), m.at_me]));
+    expect(atMe(decodePushMessages(frame, me))).toEqual({ '1': true, '2': false });
+    expect(atMe(decodePushMessages(frame))).toEqual({ '1': false, '2': false });
+  });
+});
+
 describe('表情事件', () => {
   const reactionFrame = () => {
     const desc = larkType('reactions.PushReactions');

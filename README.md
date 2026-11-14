@@ -159,6 +159,7 @@ await client.command(1002001, 'calendarweb.ListCalendarEventsRequest', { params:
 await client.sendMessage('<chat_id>', { markdown: '图 ![a](img_v3_xxx)', attachments: [{ data: readFileSync('a.pdf'), name: 'a.pdf' }] }); // also { video, name, cover? } and { audio } (Ogg/Opus)
 await client.setMuted(['<chat_id>'], true); // also setGroupNickname, chatAdmins / updateAdmins, setPostPermission, joinRequests / handleJoinRequest, chatShareLink, forwardThread, createFeedGroup / renameFeedGroup / deleteFeedGroup / addToFeedGroup / removeFromFeedGroup
 const [quoted] = await client.getMessages(['<msg_id>']); // fetch messages by id; threadMessages(rootId) fetches a whole thread
+const links = anchorLinks(quoted.content_data); // links in rich-text anchors (a pasted link lives only there, not in content)
 const missed = await client.missedMessages(Date.now() - 10 * 60_000); // backfill after reconnecting: messages that arrived after a given time (including thread replies)
 
 // Permissions: not checked by default (everything allowed). permissions: true uses the same rules as the CLI, or pass a rule set directly
