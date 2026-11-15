@@ -91,6 +91,7 @@ export {
   Docs,
   type DocType,
   type DriveFile,
+  dispositionName,
   docRef,
   docToken,
   EXPORT_FORMATS,
