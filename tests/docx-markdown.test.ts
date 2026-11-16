@@ -93,4 +93,15 @@ describe('docx 转 Markdown', () => {
       ].join('\n'),
     });
   });
+
+  test('自动续号的有序列表项（seq 为 auto）仍是 Markdown 有序列表', () => {
+    const b = (data: Record<string, unknown>) => ({ data });
+    const blocks: BlockMap = {
+      page: b({ type: 'page', text: text('步骤'), children: ['o1', 'o2'] }),
+      o1: b({ type: 'ordered', text: text('打开页面'), seq: '1' }),
+      o2: b({ type: 'ordered', text: text('点导出'), seq: 'auto' }),
+    };
+    const lines = docxToMarkdown(blocks, 'page').markdown.split('\n');
+    expect(lines.filter((l) => /^\d+\. /.test(l))).toHaveLength(2);
+  });
 });

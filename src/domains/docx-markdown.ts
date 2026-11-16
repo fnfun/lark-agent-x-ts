@@ -98,8 +98,11 @@ function render(blocks: BlockMap, id: string, depth: number): string[] {
   switch (type) {
     case 'bullet':
       return [`${indent}- ${text}`, ...nested(depth + 1)];
-    case 'ordered':
-      return [`${indent}${String(data.seq ?? '1')}. ${text}`, ...nested(depth + 1)];
+    case 'ordered': {
+      // Lark stores `auto` for items that continue the numbering; Markdown renumbers `1.` items itself.
+      const seq = /^\d+$/.test(String(data.seq ?? '')) ? String(data.seq) : '1';
+      return [`${indent}${seq}. ${text}`, ...nested(depth + 1)];
+    }
     case 'todo':
       return [`${indent}- [${data.done === true ? 'x' : ' '}] ${text}`, ...nested(depth + 1)];
     case 'quote':
