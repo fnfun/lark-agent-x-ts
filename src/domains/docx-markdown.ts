@@ -9,10 +9,12 @@
  *   `[name, value]`, e.g. `["bold","true"]`, `["link","<url-encoded url>"]`, `["author", id]`.
  * - Kinds seen: page (the title), text, heading1..9, bullet, ordered (`seq`), todo (`done`), quote,
  *   code (`language`), divider, table (`rows_id`, `columns_id`, `cell_set` keyed by row id +
- *   column id → `{block_id}` of a table_cell whose children hold the cell's blocks); an
- *   image (`image.token`, `image.caption.text`) renders as `![caption](file token)`, an attachment
- *   (a `view` block holding a `file` block, `file.name` / `file.token`) as `[name](file token)`. Other kinds
- *   (callouts, grids, ...) render their text, or nothing when they have none.
+ *   column id → `{block_id}` of a table_cell whose children hold the cell's blocks, rendered as
+ *   one Markdown cell with `<br>` between lines); an image (`image.token`, `image.caption.text`)
+ *   renders as `![caption](file token)`, an attachment (a `view` block holding a `file` block,
+ *   `file.name` / `file.token`) as `[name](file token)`, a link card (`bookmark.url` /
+ *   `bookmark.title`) and an embed (`iframe.component.original_text`, url-encoded) as links. Other
+ *   kinds (callouts, grids, ...) render their text, or nothing when they have none.
  */
 
 type Dict = Record<string, unknown>;
@@ -64,19 +66,21 @@ export function attributedText(text: Dict | undefined): string {
   return out;
 }
 
-const textOf = (blocks: BlockMap, id: string) =>
-  attributedText(blocks[id]?.data?.text as Dict | undefined);
+/** Single-line link text: the brackets would end the Markdown link early. */
+const label = (s: string) =>
+  s.replace(/\s+/g, ' ').trim().replace(/\[/g, '［').replace(/\]/g, '］');
 
 function table(blocks: BlockMap, data: Dict): string[] {
   const rows = (data.rows_id ?? []) as string[];
   const cols = (data.columns_id ?? []) as string[];
   const cells = (data.cell_set ?? {}) as Record<string, { block_id?: string }>;
+  // A Markdown cell holds one line: the cell's blocks (images, lists, attachments too) join with <br>
   const cell = (r: string, c: string) => {
     const id = cells[`${r}${c}`]?.block_id;
     const children = (id ? (blocks[id]?.data?.children as string[] | undefined) : undefined) ?? [];
-    return children
-      .map((ch) => textOf(blocks, ch))
-      .join(' ')
+    return renderAll(blocks, children, 0)
+      .filter((l) => l.trim())
+      .join('<br>')
       .replace(/\|/g, '\\|');
   };
   const lines = rows.map((r) => `| ${cols.map((c) => cell(r, c)).join(' | ')} |`);
@@ -84,25 +88,43 @@ function table(blocks: BlockMap, data: Dict): string[] {
   return lines;
 }
 
+/**
+ * Ordinals of sibling blocks: an ordered item's own number when Lark stores one, else the previous
+ * item's plus one (Lark stores `auto` for items that continue the numbering); 0 for other kinds.
+ */
+function ordinals(blocks: BlockMap, ids: string[]): number[] {
+  let n = 0;
+  return ids.map((id) => {
+    const data = blocks[id]?.data;
+    const seq = String(data?.seq ?? '');
+    if (data?.type !== 'ordered') n = 0;
+    else n = /^\d+$/.test(seq) ? Number(seq) : n + 1;
+    return n;
+  });
+}
+
+/** Markdown lines of sibling blocks. */
+function renderAll(blocks: BlockMap, ids: string[], depth: number): string[] {
+  const nums = ordinals(blocks, ids);
+  return ids.flatMap((id, i) => render(blocks, id, depth, nums[i] ?? 0));
+}
+
 /** Markdown lines of one block and its children; depth indents nested list items. */
-function render(blocks: BlockMap, id: string, depth: number): string[] {
+function render(blocks: BlockMap, id: string, depth: number, ordinal = 0): string[] {
   const data = blocks[id]?.data;
   if (!data) return [];
   const type = String(data.type ?? '');
   const text = attributedText(data.text as Dict | undefined);
   const children = (data.children ?? []) as string[];
   const indent = '  '.repeat(depth);
-  const nested = (d: number) => children.flatMap((ch) => render(blocks, ch, d));
+  const nested = (d: number) => renderAll(blocks, children, d);
   const heading = /^heading([1-9])$/.exec(type);
   if (heading) return [`${'#'.repeat(Math.min(6, Number(heading[1])))} ${text}`, ...nested(depth)];
   switch (type) {
     case 'bullet':
       return [`${indent}- ${text}`, ...nested(depth + 1)];
-    case 'ordered': {
-      // Lark stores `auto` for items that continue the numbering; Markdown renumbers `1.` items itself.
-      const seq = /^\d+$/.test(String(data.seq ?? '')) ? String(data.seq) : '1';
-      return [`${indent}${seq}. ${text}`, ...nested(depth + 1)];
-    }
+    case 'ordered':
+      return [`${indent}${ordinal || 1}. ${text}`, ...nested(depth + 1)];
     case 'todo':
       return [`${indent}- [${data.done === true ? 'x' : ' '}] ${text}`, ...nested(depth + 1)];
     case 'quote':
@@ -117,14 +139,29 @@ function render(blocks: BlockMap, id: string, depth: number): string[] {
       const caption = attributedText(
         ((image.caption as Dict | undefined)?.text ?? undefined) as Dict | undefined,
       );
-      return [`![${caption}](${String(image.token ?? '')})`];
+      return [`![${label(caption)}](${String(image.token ?? '')})`];
+    }
+    case 'bookmark': {
+      const bookmark = (data.bookmark ?? {}) as Dict;
+      const url = String(bookmark.url ?? '');
+      return url ? [`[${label(String(bookmark.title ?? '')) || url}](${url})`] : [];
+    }
+    case 'iframe': {
+      // original_text is the link as pasted; component.url is the embed player's address
+      const component = ((data.iframe as Dict | undefined)?.component ?? {}) as Dict;
+      const encoded = String(component.original_text ?? '');
+      let url = String(component.url ?? '');
+      try {
+        if (encoded) url = decodeURIComponent(encoded);
+      } catch {}
+      return url ? [`[${url}](${url})`] : [];
     }
     case 'whiteboard':
       // The token reads the board's nodes (Docs.whiteboard).
       return [`[画板](${String(data.token ?? '')})`];
     case 'file': {
       const file = (data.file ?? {}) as Dict;
-      return [`[${String(file.name ?? '')}](${String(file.token ?? '')})`];
+      return [`[${label(String(file.name ?? ''))}](${String(file.token ?? '')})`];
     }
     case 'table':
       return table(blocks, data);
@@ -145,8 +182,10 @@ export function docxToMarkdown(
   const title = attributedText(page.text as Dict | undefined);
   const parts: string[] = [title ? `# ${title}` : ''];
   let prevKind = '';
-  for (const id of (page.children ?? []) as string[]) {
-    const lines = render(blocks, id, 0);
+  const ids = (page.children ?? []) as string[];
+  const nums = ordinals(blocks, ids);
+  for (const [i, id] of ids.entries()) {
+    const lines = render(blocks, id, 0, nums[i] ?? 0);
     if (!lines.length) continue;
     const kind = String(blocks[id]?.data?.type ?? '');
     parts.push(`${LIST.has(kind) && kind === prevKind ? '' : '\n'}${lines.join('\n')}`);

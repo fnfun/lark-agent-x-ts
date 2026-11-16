@@ -104,4 +104,52 @@ describe('docx 转 Markdown', () => {
     const lines = docxToMarkdown(blocks, 'page').markdown.split('\n');
     expect(lines.filter((l) => /^\d+\. /.test(l))).toHaveLength(2);
   });
+
+  test('表格单元格里的图片、编号列表、附件都留下；带换行的图片说明、链接卡片与嵌入的链接不丢', () => {
+    const b = (data: Record<string, unknown>) => ({ data });
+    const blocks: BlockMap = {
+      page: b({ type: 'page', text: text('需求'), children: ['bm', 'tb', 'ifr'] }),
+      bm: b({
+        type: 'bookmark',
+        bookmark: { title: '设计稿 [PC]', url: 'https://design.example/f?node-id=1-2' },
+      }),
+      tb: b({
+        type: 'table',
+        rows_id: ['r1'],
+        columns_id: ['c1', 'c2'],
+        cell_set: { r1c1: { block_id: 'x1' }, r1c2: { block_id: 'x2' } },
+      }),
+      x1: b({ type: 'table_cell', children: ['o1', 'o2', 'v'] }),
+      o1: b({ type: 'ordered', text: text('选链'), seq: '1' }),
+      o2: b({ type: 'ordered', text: text('输入'), seq: 'auto' }),
+      v: b({ type: 'view', children: ['f'] }),
+      f: b({ type: 'file', file: { name: '演示.mp4', token: 'boxFileToken0000000001' } }),
+      x2: b({ type: 'table_cell', children: ['img', 'empty'] }),
+      img: b({
+        type: 'image',
+        image: { token: 'boxImageToken000000001', caption: { text: text('设计稿：BSC\n') } },
+      }),
+      empty: b({ type: 'text', text: text('') }),
+      ifr: b({
+        type: 'iframe',
+        iframe: {
+          component: {
+            original_text: 'https%3A%2F%2Fdocs.example%2Fminutes%2Fabc',
+            url: 'https://docs.example/minutes/embed/abc',
+          },
+        },
+      }),
+    };
+    expect(docxToMarkdown(blocks, 'page').markdown.split('\n')).toEqual([
+      '# 需求',
+      '',
+      '[设计稿 ［PC］](https://design.example/f?node-id=1-2)',
+      '',
+      '| 1. 选链<br>2. 输入<br>[演示.mp4](boxFileToken0000000001) | ![设计稿：BSC](boxImageToken000000001) |',
+      '| --- | --- |',
+      '',
+      '[https://docs.example/minutes/abc](https://docs.example/minutes/abc)',
+      '',
+    ]);
+  });
 });
