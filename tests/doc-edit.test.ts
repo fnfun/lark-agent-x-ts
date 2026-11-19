@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { DocEditor, newBlockId, operationId } from '../src/domains/doc-edit.js';
+import {
+  DocEditor,
+  type MediaPlacement,
+  newBlockId,
+  operationId,
+} from '../src/domains/doc-edit.js';
 import { docxToMarkdown } from '../src/domains/docx-markdown.js';
 import {
   attributedText,
@@ -337,5 +342,135 @@ describe('Markdown 写入文档', () => {
       [fileId]: { data: { ...file, file: { ...(file.file as Dict), token: 'F1' } } },
     };
     expect(docxToMarkdown(map, 'D').markdown).toBe('# 标题\n\n[说明.txt](F1)\n');
+  });
+});
+
+/**
+ * A fake server holding a document's block map: commits apply their ops (new blocks, children
+ * inserts and removals, text and token changes, each change bumping the block's version) and uploads
+ * answer a token per file name, so a test can read the document back as Markdown.
+ */
+function fakeDocServer(map: Record<string, { version: number; data: Dict }>, failUpload = '') {
+  const commits: Dict[] = [];
+  const web = {
+    origin: async () => 'https://tenant.feishu.cn',
+    json: async (_m: string, path: string, o: WebRequest = {}) => {
+      if (path.endsWith('client_vars'))
+        return {
+          code: 0,
+          data: { block_map: structuredClone(map), block_sequence: ['D'], has_more: false },
+        };
+      if (path.endsWith('/user/')) return { code: 0, data: { suid: 'u1' } };
+      if (path.includes('upload')) {
+        const name = String(o.query?.name ?? '');
+        if (name === failUpload) return { code: 1, msg: '上传失败' };
+        return { code: 0, data: { file_token: `tok-${name}` } };
+      }
+      const changeMap = (o.json as { change_map: Record<string, Dict> }).change_map;
+      commits.push(changeMap);
+      for (const [id, change] of Object.entries(changeMap)) {
+        const c = change as { version: number; payload: { ops: { p: unknown[]; action: Dict }[] } };
+        const known = map[id];
+        if (known && known.version !== c.version) throw new Error(`${id} 版本不对`);
+        for (const op of c.payload.ops) {
+          const [field, key] = op.p as [string?, (string | number)?];
+          if (field === undefined) map[id] = { version: 0, data: op.action.oi as Dict };
+          else {
+            const data = (map[id] as { data: Dict }).data;
+            if (field === 'children') {
+              const kids = data.children as string[];
+              if (op.action.li) kids.splice(key as number, 0, op.action.li as string);
+              else if (kids[key as number] === op.action.ld) kids.splice(key as number, 1);
+              else throw new Error('删的块不在那个位置');
+            } else if (field === 'text') data.text = op.action.oi;
+            else (data[field] as Dict)[key as string] = op.action.oi;
+          }
+        }
+        if (known) known.version++;
+      }
+      return { code: 0, data: { type: 'ACCEPT_COMMIT' } };
+    },
+  } as unknown as WebSession;
+  return { web, commits };
+}
+
+describe('把图片与附件放回占位处', () => {
+  // A 3×2 PNG header is enough for the size
+  const png = new Uint8Array(33);
+  png.set([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 3,
+    0, 0, 0, 2,
+  ]);
+  const b = (data: Dict, version = 3) => ({ version, data });
+  const t = (s: string, parent: string) =>
+    b({ type: 'text', parent_id: parent, children: [], text: attributedText([{ text: s }], 'u1') });
+  /** A document: a paragraph, a lone image marker, a table cell with a marker before its text, and a
+   * paragraph ending with an attachment marker. */
+  const doc = () => ({
+    D: b({
+      type: 'page',
+      text: attributedText([{ text: '标题' }], 'u1'),
+      children: ['p1', 'm1', 'tb', 'p2'],
+    }),
+    p1: t('开头', 'D'),
+    m1: t('IMG0', 'D'),
+    tb: b({
+      type: 'table',
+      parent_id: 'D',
+      rows_id: ['r'],
+      columns_id: ['c'],
+      cell_set: { rc: { block_id: 'cell' } },
+    }),
+    cell: b({ type: 'table_cell', parent_id: 'tb', children: ['ct'] }),
+    ct: t('IMG1\n设计稿说明', 'cell'),
+    p2: t('详见附件FILE0', 'D'),
+  });
+  const items = (): MediaPlacement[] => [
+    { marker: 'IMG0', kind: 'image', file: { data: png, name: 'a.png' }, caption: '第一张' },
+    { marker: 'IMG1', kind: 'image', file: { data: png, name: 'b.png' } },
+    { marker: 'FILE0', kind: 'file', file: { data: new Uint8Array(3), name: '录屏.mp4' } },
+  ];
+
+  test('独占一段的占位换成图片；表格里的图片留在单元格、排在说明前；文字里的附件接在这段后面', async () => {
+    const map = doc();
+    const { web } = fakeDocServer(map);
+    const r = await new DocEditor(web).placeMedia('D', [
+      ...items(),
+      { marker: 'NOPE', kind: 'file', file: { data: new Uint8Array(1), name: 'x.txt' } },
+    ]);
+    expect(r).toEqual({ placed: ['IMG0', 'IMG1', 'FILE0'], failed: [], missing: ['NOPE'] });
+    // 占位那一段整段换掉，不留空段
+    const texts = (map.D.data.children as string[]).map(
+      (id) =>
+        (map[id as keyof typeof map]?.data.text as { initialAttributedTexts?: { text: Dict } })
+          ?.initialAttributedTexts?.text[0],
+    );
+    expect(texts).not.toContain('');
+    expect(docxToMarkdown(map, 'D').markdown.split('\n')).toEqual([
+      '# 标题',
+      '',
+      '开头',
+      '',
+      '![第一张](tok-a.png)',
+      '',
+      '| ![](tok-b.png)<br>设计稿说明 |',
+      '| --- |',
+      '',
+      '详见附件',
+      '',
+      '[录屏.mp4](tok-录屏.mp4)',
+      '',
+    ]);
+  });
+
+  test('传不上的不留空块，占位处写上文件名；其余照常放好', async () => {
+    const map = doc();
+    const { web } = fakeDocServer(map, 'b.png');
+    const r = await new DocEditor(web).placeMedia('D', items());
+    expect(r.failed.map((f) => f.marker)).toEqual(['IMG1']);
+    const md = docxToMarkdown(map, 'D').markdown;
+    expect(md).toContain('| b.png<br>设计稿说明 |');
+    expect(md).not.toContain('![](');
+    expect(md).toContain('[录屏.mp4](tok-录屏.mp4)');
   });
 });

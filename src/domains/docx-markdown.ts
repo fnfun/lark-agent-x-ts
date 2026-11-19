@@ -81,6 +81,7 @@ function table(blocks: BlockMap, data: Dict): string[] {
     return renderAll(blocks, children, 0)
       .filter((l) => l.trim())
       .join('<br>')
+      .replace(/\n/g, '<br>')
       .replace(/\|/g, '\\|');
   };
   const lines = rows.map((r) => `| ${cols.map((c) => cell(r, c)).join(' | ')} |`);
