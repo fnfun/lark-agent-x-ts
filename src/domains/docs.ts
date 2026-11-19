@@ -503,7 +503,8 @@ export class Docs {
             name: fileName,
             size: data.length,
             ...version,
-            ...(extra ? { extra } : {}),
+            // Unlike the direct upload's query string, prepare takes extra as an object (a string is a 400)
+            ...(o.mount?.extra ? { extra: o.mount.extra } : {}),
           },
         }),
         '上传',

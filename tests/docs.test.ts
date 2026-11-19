@@ -261,6 +261,25 @@ describe('云文档', () => {
     });
   });
 
+  test('挂在文档块上的大文件：prepare 的 extra 是对象（字符串会被服务端拒成 400），小文件的上传参数里是字符串', async () => {
+    const { docs, calls } = fake((_m, path) => {
+      if (path.endsWith('upload/prepare/'))
+        return { code: 0, data: { upload_id: 'u1', block_size: 4 * 1024 * 1024, num_blocks: 2 } };
+      return { code: 0, data: { file_token: 'ft' } };
+    });
+    const mount = { point: 'docx_file', node: 'blk', extra: { drive_route_token: 'D' } };
+    await docs.upload(new Uint8Array(3), 'a.txt', { mount });
+    await docs.upload(new Uint8Array(4 * 1024 * 1024 + 1), 'b.mp4', { mount });
+    expect(calls.find(([, p]) => p.endsWith('upload/all/'))?.[2].query?.['ext[extra]']).toBe(
+      JSON.stringify({ drive_route_token: 'D' }),
+    );
+    expect(calls.find(([, p]) => p.endsWith('upload/prepare/'))?.[2].json).toMatchObject({
+      mount_point: 'docx_file',
+      mount_node_token: 'blk',
+      extra: { drive_route_token: 'D' },
+    });
+  });
+
   test('思维笔记读成大纲：标题作一级标题，主题按层级缩进成列表，已完成的划掉', async () => {
     const node = (text: string, children: unknown[] = [], finish = false) => ({
       text: [{ text, type: 1 }],
