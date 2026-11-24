@@ -135,6 +135,14 @@ export interface FileData {
   data: Uint8Array;
 }
 
+export interface DocInfo {
+  title: string;
+  ownerId: string;
+  /** Who created it; ownership can be transferred, creation can't. */
+  creatorId: string;
+  creatorName: string;
+}
+
 export interface DocHit {
   objToken: string;
   title: string;
@@ -417,15 +425,26 @@ export class Docs {
     return node ? toFile(node) : toFile({ token: token ?? '', name, type: DOC_TYPES[ref.type] });
   }
 
-  /** A document's title. */
-  async title(ref: DocRef): Promise<string> {
+  /** A document's title, owner and creator. */
+  async info(ref: DocRef): Promise<DocInfo> {
     const body = check(
       await this.web.json('GET', '/space/api/meta/', {
         query: { token: ref.token, type: DOC_TYPES[ref.type] },
       }),
       '读取文档信息',
     );
-    return String((body.data as Dict | undefined)?.title ?? '');
+    const d = (body.data ?? {}) as Dict;
+    return {
+      title: String(d.title ?? ''),
+      ownerId: String(d.owner_id ?? ''),
+      creatorId: String(d.create_uid ?? ''),
+      creatorName: String(d.create_user_name ?? ''),
+    };
+  }
+
+  /** A document's title. */
+  async title(ref: DocRef): Promise<string> {
+    return (await this.info(ref)).title;
   }
 
   /** What is in my trash, most recently removed first. */

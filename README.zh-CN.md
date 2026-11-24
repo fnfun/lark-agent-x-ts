@@ -86,6 +86,7 @@ LARKX_SYSTEM_PROMPT=         # 数字人系统提示词，留空用内置默认
 LARKX_MARK_READ=true         # 收到消息自动标已读；false 时由调用方在需要时 `lark read`
 LARKX_AGENT_REACTIONS=false  # 别人对我的消息加/取消表情时交给数字人（如把点赞当作同意执行）
 LARKX_DENY=                  # 拒绝执行的命令与分组，LARKX_ALLOW 为允许的，见下面的命令权限
+LARKX_OWN_DOCS_ONLY=false    # true 时编辑文档只限自己创建的，见下面的命令权限
 LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；另有 LARKX_TRIGGER_CHAT_TYPES / _INCLUDE_CHATS / _EXCLUDE_CHATS / _INCLUDE_SENDERS / _INCLUDE_TAGS（会话标签名或 id）/ _KEYWORDS / _GROUP_AT_ONLY
 ```
 
@@ -142,6 +143,7 @@ LARKX_ALLOW=group.rename
 
 - **跟随账号**：`lark permissions edit` 在终端里打开分组树，给当前登录的账号设置规则：方向键移动、左右折叠展开，每一项在继承 / 允许 / 拒绝之间切换（空格轮换，或 `a` / `d` / `i`），每行实时显示最终能否执行、由哪条规则决定，`s` 保存、`q` 退出（有未保存的修改时先确认）。规则存在凭证旁边（即数据目录）的 `permissions.json`（以 user_id 为键），这个账号登录时整体替代上面的全局规则；账号还没有自己的规则时，编辑从全局规则的副本开始。`lark permissions clear` 清除，回到全局规则。脚本里改规则就直接写环境变量或 `permissions.json`。
 - **被拒绝时**：退出码 126，stderr 说明是哪条规则拒绝的；`-h` 不受限制。规则里有不认识的名字、或 `permissions.json` 损坏时，所有命令都报错退出（退出码 1），不会放行。
+- **只改自己创建的文档**：`LARKX_OWN_DOCS_ONLY=true` 时，在上面规则之外再加一道：指定一篇文档的编辑命令（`doc rename` / `append` / `attach` / `write` / `replace` / `slide-cp` / `slide-rm` / `revert` / `resolve` / `comment-rm` / `set-link`）先核对文档的创建者（不是所有者：所有权可以转让，创建者不变），不是当前账号就以 126 拒绝；没法逐篇核对的 `doc rm` / `mv` / `whiteboard-add` / `whiteboard-text` / `whiteboard-move` / `whiteboard-rm` 和 `upload --replace` 一律拒绝。新建（`doc create` / `import` / `cp` / `upload`）不受影响。适合让 agent 以本人身份写文档又不碰别人的文档，例如 `LARKX_DENY='*'`、`LARKX_ALLOW=local,query,doc.import,doc.write,doc.append,doc.replace`、`LARKX_OWN_DOCS_ONLY=true`。
 - 规则拒绝了 `system` 时 `lark permissions edit` / `clear` 也会被拒，要改回请直接编辑 `permissions.json` 或环境变量。
 - 这是防误操作的护栏，不是安全边界：agent 以 `--dangerously-skip-permissions` 运行，能改环境变量或数据目录就能绕过。
 

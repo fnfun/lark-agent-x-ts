@@ -17,7 +17,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { LarkAuth } from './auth.js';
-import { asList } from './config.js';
+import { asBool, asList } from './config.js';
 
 /**
  * Groups are divided by their effect on the outside world; the order is the listing order of
@@ -284,6 +284,23 @@ export class PermissionDenied extends Error {
     super(`权限不允许执行 ${permission}(分组 ${PERMISSIONS[permission]}): ${source}里的 ${rule}`);
     this.name = 'PermissionDenied';
     this.group = PERMISSIONS[permission];
+  }
+}
+
+/**
+ * `LARKX_OWN_DOCS_ONLY`: on top of the rules, edits that name an existing document only go to
+ * documents the current account created (the CLI checks the creator before running), and edits that
+ * can't be checked one document at a time are refused. Creating documents is unaffected. Like the
+ * rules, a guardrail against mistakes.
+ */
+export const ownDocsOnly = (): boolean => asBool(process.env.LARKX_OWN_DOCS_ONLY ?? '');
+
+/** Refused under LARKX_OWN_DOCS_ONLY: same exit code and shape as a refusal by the rules. */
+export class NotOwnDocument extends PermissionDenied {
+  constructor(permission: Permission, detail: string) {
+    super(permission, detail, 'LARKX_OWN_DOCS_ONLY');
+    this.message = `权限不允许执行 ${permission}(分组 ${PERMISSIONS[permission]}): LARKX_OWN_DOCS_ONLY 只允许改自己创建的文档,${detail}`;
+    this.name = 'NotOwnDocument';
   }
 }
 
