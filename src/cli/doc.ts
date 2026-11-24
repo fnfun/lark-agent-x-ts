@@ -8,6 +8,7 @@ import { DocHistory, type DocVersion } from '../domains/doc-history.js';
 import { DocPermissions, LINK_SHARE, type LinkShare } from '../domains/doc-permissions.js';
 import {
   DOC_TYPES,
+  type DocInfo,
   type DocRef,
   Docs,
   type DocType,
@@ -20,8 +21,9 @@ import { MindnoteEditor } from '../domains/mindnote.js';
 import { SlidesEditor } from '../domains/slides.js';
 import { WhiteboardEditor } from '../domains/whiteboard.js';
 import { Wiki } from '../domains/wiki.js';
+import { NotOwnDocument, ownDocsOnly, type Permission } from '../permissions.js';
 import { WebSession } from '../web.js';
-import type { Option } from './args.js';
+import type { Option, Parsed } from './args.js';
 import { type Command, type CommandGroup, err, out, s, write } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
 
@@ -45,6 +47,55 @@ const failures = (what: string, total: number, failed: Map<string, string>) => {
   out(`已${what} ${total - failed.size} 个`);
   return failed.size ? 1 : 0;
 };
+
+/** Under LARKX_OWN_DOCS_ONLY: throws unless the current account created the document. */
+export function checkCreator(
+  info: Pick<DocInfo, 'creatorId' | 'creatorName'>,
+  selfId: string,
+  permission: Permission,
+): void {
+  if (!selfId || info.creatorId !== selfId)
+    throw new NotOwnDocument(
+      permission,
+      `这篇的创建者是 ${info.creatorName || info.creatorId || '未知'}`,
+    );
+}
+
+const accessOf = (cmd: Command, a: Parsed): Permission =>
+  typeof cmd.access === 'string' ? cmd.access : cmd.access(a);
+
+/**
+ * An edit command naming one existing document (`<doc>`): under LARKX_OWN_DOCS_ONLY the document's
+ * creator is checked first. The check runs outside the command's own error handling so a refusal
+ * exits 126 like any other permission refusal.
+ */
+function ownDocument(cmd: Command): Command {
+  return {
+    ...cmd,
+    async run(a) {
+      if (ownDocsOnly()) {
+        const auth = new LarkAuth();
+        checkCreator(await docs().info(await ref(a)), auth.userId, accessOf(cmd, a));
+      }
+      return cmd.run(a);
+    },
+  };
+}
+
+/**
+ * An edit command whose targets can't be checked one document at a time (token lists,
+ * whiteboards, a file version): refused outright under LARKX_OWN_DOCS_ONLY.
+ */
+function uncheckedEdit(cmd: Command, applies: (a: Parsed) => boolean = () => true): Command {
+  return {
+    ...cmd,
+    async run(a) {
+      if (ownDocsOnly() && applies(a))
+        throw new NotOwnDocument(accessOf(cmd, a), '这个命令没法逐篇核对创建者');
+      return cmd.run(a);
+    },
+  };
+}
 
 /** Runs a command body, printing an error and returning 1 when it throws. */
 async function guarded(body: () => Promise<number>): Promise<number> {
@@ -822,29 +873,29 @@ export const doc: CommandGroup = {
     ls,
     create,
     importCmd,
-    rm,
+    uncheckedEdit(rm),
     fetch,
     whiteboard,
     whiteboardImage,
-    whiteboardAdd,
-    whiteboardText,
-    whiteboardMove,
-    whiteboardRm,
-    append,
-    attach,
-    writeDoc,
-    replace,
-    slideCp,
-    slideRm,
+    uncheckedEdit(whiteboardAdd),
+    uncheckedEdit(whiteboardText),
+    uncheckedEdit(whiteboardMove),
+    uncheckedEdit(whiteboardRm),
+    ownDocument(append),
+    ownDocument(attach),
+    ownDocument(writeDoc),
+    ownDocument(replace),
+    ownDocument(slideCp),
+    ownDocument(slideRm),
     history,
     historyFetch,
-    revert,
-    rename,
-    mv,
+    ownDocument(revert),
+    ownDocument(rename),
+    uncheckedEdit(mv),
     cp,
     trash,
     restore,
-    upload,
+    uncheckedEdit(upload, (a) => Boolean(a.replace)),
     download,
     cat,
     diff,
@@ -852,9 +903,9 @@ export const doc: CommandGroup = {
     comments,
     comment,
     reply,
-    resolve,
-    commentRm,
+    ownDocument(resolve),
+    ownDocument(commentRm),
     sharing,
-    setLink,
+    ownDocument(setLink),
   ],
 };

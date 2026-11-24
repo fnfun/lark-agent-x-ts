@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { LarkAuth } from '../src/auth.js';
 import { parse } from '../src/cli/args.js';
 import { COMMANDS } from '../src/cli/commands.js';
+import { checkCreator } from '../src/cli/doc.js';
 import { COMMAND_GROUPS } from '../src/cli/groups.js';
 import { PermissionEditor } from '../src/cli/permissions-editor.js';
 import { LarkClient } from '../src/client.js';
@@ -15,6 +16,7 @@ import {
   guardMethods,
   isPermission,
   loadRules,
+  NotOwnDocument,
   PERMISSIONS,
   type Permission,
   PermissionDenied,
@@ -22,7 +24,7 @@ import {
 } from '../src/permissions.js';
 
 const ME = '7000000000000000001';
-const KEYS = ['LARKX_HOME', 'LARKX_ALLOW', 'LARKX_DENY'];
+const KEYS = ['LARKX_HOME', 'LARKX_ALLOW', 'LARKX_DENY', 'LARKX_OWN_DOCS_ONLY'];
 let saved: Record<string, string | undefined>;
 let home: string;
 
@@ -240,6 +242,43 @@ describe('命令行的权限检查', () => {
     expect(edit.stderr.toString()).toContain('需要在终端里运行');
     expect(run(['permissions', 'clear']).exitCode).toBe(0);
     expect(run(['config']).exitCode).toBe(0);
+  });
+});
+
+describe('只改自己创建的文档（LARKX_OWN_DOCS_ONLY）', () => {
+  test('按创建者核对，不按所有者；认不出自己或创建者时不放行', () => {
+    // Guards the edit boundary: ownership can be transferred to me, creation can't
+    const OTHER = '7000000000000000002';
+    expect(() =>
+      checkCreator({ creatorId: ME, creatorName: '同事甲' }, ME, 'doc.write'),
+    ).not.toThrow();
+    expect(() =>
+      checkCreator({ creatorId: OTHER, creatorName: '同事乙' }, ME, 'doc.write'),
+    ).toThrow(NotOwnDocument);
+    expect(() => checkCreator({ creatorId: '', creatorName: '' }, ME, 'doc.append')).toThrow(
+      NotOwnDocument,
+    );
+    expect(() => checkCreator({ creatorId: '', creatorName: '' }, '', 'doc.append')).toThrow(
+      NotOwnDocument,
+    );
+  });
+
+  test('没法逐篇核对的编辑命令在开关打开时直接以 126 拒绝，不联网', () => {
+    // Guards against an edit command slipping past the switch unwrapped
+    const main = join(import.meta.dir, '../src/cli/main.ts');
+    const env = { PATH: process.env.PATH ?? '', HOME: home, LARKX_HOME: home };
+    const run = (argv: string[], extra: Record<string, string> = {}) =>
+      Bun.spawnSync(['bun', main, ...argv], { cwd: home, env: { ...env, ...extra } });
+    const on = { LARKX_OWN_DOCS_ONLY: 'true' };
+    for (const argv of [
+      ['doc', 'rm', 'tok1'],
+      ['doc', 'mv', 'tok1'],
+      ['doc', 'whiteboard-rm', 'wb1', 'n1'],
+      ['doc', 'upload', 'x.md', '--replace', 'tok1'],
+    ])
+      expect(run(argv, on).exitCode).toBe(126);
+    // Without the switch they get as far as needing a login
+    expect(run(['doc', 'rm', 'tok1']).exitCode).not.toBe(126);
   });
 });
 
