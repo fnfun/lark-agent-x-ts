@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { getBackend } from '../agent/backend.js';
@@ -35,6 +35,7 @@ import {
   type LarkMessage,
   MSG_TYPE_NAMES,
   type ReactionEvent,
+  richTextImageKeys,
 } from '../proto/decoders.js';
 import { type Dict, parseJsonKeepingBigInts } from '../proto/dict.js';
 import { getRegion, REGIONS, type Region, urls } from '../region.js';
@@ -1745,7 +1746,13 @@ const downloadCmd: Command = {
   options: [
     { name: 'key', kind: 'string', help: '直接指定资源 key(img_v3_*/file_v3_*),需配合 --chat' },
     { name: 'chat', kind: 'string', help: 'chat_id(配合 --key 或加速本地查找)' },
-    { name: 'out', short: '-o', kind: 'string', required: true, help: '保存路径' },
+    {
+      name: 'out',
+      short: '-o',
+      kind: 'string',
+      required: true,
+      help: '保存路径(富文本消息为目录,其中的图片全部下载)',
+    },
   ],
   async run(a) {
     const la = new LarkAuth();
@@ -1780,6 +1787,19 @@ const downloadCmd: Command = {
         err(`未找到消息 ${msgId}(可用 --key/--chat 直接指定)`);
         return 1;
       }
+      if (found.msg_type === MSG_TYPE_POST) {
+        let keys = richTextImageKeys(found.content_data);
+        if (!keys.length && r?.content_data) {
+          // The local copy keeps rich-text element properties only as `<n bytes>`
+          const c = await LarkClient.create(la);
+          const fresh = (await c.getMessages([found.msg_id]))[0];
+          keys = richTextImageKeys(fresh?.content_data);
+        }
+        if (keys.length) {
+          await downloadImagesTo(la, found, keys, String(a.out), fileHost);
+          return 0;
+        }
+      }
       const key = extractResourceKey(found.msg_type, found.content_data);
       if (!key) {
         err(`消息 ${msgId} 类型为 ${found.msg_type_name},没有可下载资源`);
@@ -1792,6 +1812,38 @@ const downloadCmd: Command = {
     return 0;
   },
 };
+
+// MSG_TYPE_NAMES: 2 is POST (rich text)
+const MSG_TYPE_POST = 2;
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+/**
+ * All images of a rich-text message into directory `dir`, as `<msg_id>-<n>` plus an extension
+ * from the content type (so image viewers and vision tools recognise them).
+ */
+async function downloadImagesTo(
+  la: LarkAuth,
+  msg: Pick<LarkMessage, 'msg_id' | 'chat_id'>,
+  keys: string[],
+  dir: string,
+  fileHost: string,
+): Promise<void> {
+  mkdirSync(dir, { recursive: true });
+  for (const [i, key] of keys.entries()) {
+    const url = messageResourceUrl(msg.msg_id, key, msg.chat_id, fileHost);
+    const base = join(dir, `${msg.msg_id}-${i + 1}`);
+    const [path, contentType, n] = await download(la, url, base);
+    const ext = IMAGE_EXTENSIONS[contentType.split(';')[0]?.trim() ?? ''] ?? '';
+    const final = ext ? `${path}${ext}` : path;
+    if (ext) renameSync(path, final);
+    out(`已下载: ${final} (${contentType}, ${n} 字节)`);
+  }
+}
 
 const folderCmd: Command = {
   name: 'folder',

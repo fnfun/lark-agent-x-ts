@@ -48,6 +48,7 @@ fork 版的全部功能都已重写；新增功能见下面差异表的“新增
 | 发送失败 | 直接失败（`sendMsg` 返回 None） | 网络错误、5xx、拿不到消息 id 时用同一个消息 cid 自动重试 2 次（服务端按 cid 去重，不会发重）；仍失败才返回 null / 抛错，`SendUnconfirmed` 带回 cid | 数字人的回复不该因为一次网络抖动丢掉，也不能重试出两条 |
 | Markdown 元素 | 富文本里的 MARKDOWN 元素（tag 49，机器人消息常用）不计入摘要；`content_data` 里没有 `markdownIds` | 摘要里按原文取出它的内容；`content_data` 的 `richText` 多出 `markdownIds` | 机器人发的 Markdown 消息，原版摘要为空，数字人看不到内容 |
 | 撤回与编辑 | 长连接重推的同一条消息按重复忽略 | 消息带 `recalled` / `edited` 标记（只在为真时出现）；`listen` 把库里被撤回的消息内容换成 `[已撤回]`（`content_data` 清空），被编辑的换成新内容；排队中的撤回消息不再交给数字人，编辑过的换成新内容，已处理过的带 `<edited>true</edited>` 再交给它 | 对方撤回或改了问题，数字人不能还按旧内容回答 |
+| 富文本消息里的图片 | 对富文本（POST）消息执行 `lark download` 报没有可下载资源 | `lark download <msg_id> -o <目录>` 把富文本消息里嵌的图片全部下到 `<目录>`，文件名为 `<msg_id>-<序号>` 加图片扩展名；本地库只存了 `<n bytes>` 占位时向服务端取消息拿图片 key | 大家常在文字里夹截图提问题（“这两处对不上[图片][图片]”），拿不到图就看不懂问题 |
 | 推送消息的 `at_me` | 只看推送里服务端给的 @我 标记 | 服务端标记之外，也看富文本里被 @ 的人是不是当前账号（`decodePushMessages` 传入账号 id 时；不传时与原版一致） | 服务端标记会漏掉一部分按 id @ 我的消息（实测富文本、编辑过的消息常见），漏了数字人就不知道有人找它 |
 | 命令权限 | 没有，所有命令都能执行 | 执行前按 `LARKX_ALLOW` / `LARKX_DENY` 或当前账号在 `permissions.json` 里的规则检查，不允许时退出码 126；规则配置有误时报错退出（退出码 1）。不配置时与原版一致。库的 `LarkClient.create` 可用 `permissions` 选项开启同一套检查（抛 `PermissionDenied`），不传时不检查 | 限定数字人能做什么，如只读、不拉人不撤回 |
 | 多账号 | 一个数据目录（`LARKX_HOME`）一个账号 | 默认账号仍是 `LARKX_HOME` 本身；其他账号在 `LARKX_HOME/accounts/<名字>/`，用全局参数 `--account`、`LARKX_ACCOUNT` 或 `lark account use`（记在 `LARKX_HOME/current-account`）选择；`lark account list/current/use/rm` 管理。都不用时与原版一致 | 一份安装跑多个账号，每条命令可指定账号，不用来回改 `LARKX_HOME` |

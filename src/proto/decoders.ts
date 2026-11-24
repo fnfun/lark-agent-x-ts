@@ -370,6 +370,36 @@ export function anchorLinks(contentData: Dict | null | undefined): string[] {
   return [...new Set(out)];
 }
 
+// entities.RichTextElement.Tag.IMG
+const TAG_IMAGE = 2;
+
+/**
+ * Resource keys of the images embedded in a rich-text (POST) message, in the order the message
+ * lists them, deduplicated. The decoded text only shows `[图片]` for them, so this is how
+ * `lark download` gets at them. Element properties must still be raw bytes: the local database
+ * stores them as `<n bytes>` placeholders, which yield nothing here.
+ */
+export function richTextImageKeys(contentData: Dict | null | undefined): string[] {
+  const rt = contentData?.richText as Dict | undefined;
+  const dictionary = ((rt?.elements as Dict | undefined)?.dictionary ?? {}) as Record<string, Dict>;
+  const listed = (rt?.imageIds as string[] | undefined) ?? [];
+  const ids = listed.length
+    ? listed
+    : Object.keys(dictionary).filter((id) => dictionary[id]?.tag === TAG_IMAGE);
+  const image = larkType('entities.RichTextElement.ImageProperty');
+  const keys: string[] = [];
+  for (const id of ids) {
+    const prop = dictionary[id]?.property;
+    if (!(prop instanceof Uint8Array) || !prop.length) continue;
+    try {
+      const d = toDict(image, fromBinary(image, prop));
+      const key = String(d.token || d.originKey || '');
+      if (key) keys.push(key);
+    } catch {}
+  }
+  return [...new Set(keys)];
+}
+
 /** Long-lived connection frame → [Frame dict, Packet dict]. */
 export function parseWsFrame(raw: Uint8Array): [Dict, Dict] {
   const frame = fromBinary(protoType('Frame'), raw);
