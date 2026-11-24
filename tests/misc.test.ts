@@ -10,10 +10,13 @@ const KEYS = [
   'LARKX_STORAGE_URL',
   'LARKX_TRIGGER_KEYWORDS',
   'LARKX_HOME',
+  'LARKX_ACCOUNT',
 ];
 let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+  // An account exported in the shell would move the data directory away from LARKX_HOME
+  delete process.env.LARKX_ACCOUNT;
 });
 afterEach(() => {
   for (const [k, v] of Object.entries(saved)) {

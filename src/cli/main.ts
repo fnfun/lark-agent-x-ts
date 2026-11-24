@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import '../bun-assets.js';
 import { AuthExpired, LarkAuth } from '../auth.js';
+import { checkAccountName, currentAccount } from '../config.js';
 import { authorize, PermissionDenied } from '../permissions.js';
 import { HelpRequested, parse, UsageError } from './args.js';
 import { COMMANDS } from './commands.js';
@@ -14,7 +15,7 @@ const PROG = 'lark';
 const ALL: (Command | CommandGroup)[] = [...COMMANDS, ...COMMAND_GROUPS];
 
 function topUsage(): string {
-  return `usage: ${PROG} [-h]\n            {${ALL.map((c) => c.name).join(',')}}\n            ...`;
+  return `usage: ${PROG} [-h] [--account NAME]\n            {${ALL.map((c) => c.name).join(',')}}\n            ...`;
 }
 
 function topHelp(): string {
@@ -23,11 +24,54 @@ function topHelp(): string {
   for (const c of ALL) lines.push(`    ${c.name.padEnd(20)}${c.help}`);
   lines.push('', 'options:', '  -h, --help            show this help message and exit');
   lines.push('  --version             print version and build commit, then exit');
+  lines.push(
+    '  --account NAME        用哪个账号执行(默认取 LARKX_ACCOUNT,再取 lark account use 选定的)',
+  );
   return lines.join('\n');
 }
 
+/**
+ * Takes the global `--account NAME` off the front of argv and pins the account in effect into
+ * `LARKX_ACCOUNT`, so this run and every process it starts (the agent calling `lark`) stay on the
+ * same account even if `lark account use` switches meanwhile.
+ */
+function selectAccount(argv: string[]): string[] {
+  let rest = argv;
+  for (;;) {
+    const [first, second] = rest;
+    if (first === '--account') {
+      if (second === undefined) throw new UsageError('argument --account: expected one argument');
+      process.env.LARKX_ACCOUNT = second;
+      rest = rest.slice(2);
+    } else if (first?.startsWith('--account=')) {
+      process.env.LARKX_ACCOUNT = first.slice('--account='.length);
+      rest = rest.slice(1);
+    } else break;
+  }
+  const given = process.env.LARKX_ACCOUNT?.trim();
+  if (given) {
+    try {
+      checkAccountName(given);
+    } catch (e) {
+      throw new UsageError(`argument --account: ${(e as Error).message}`);
+    }
+  }
+  process.env.LARKX_ACCOUNT = currentAccount();
+  return rest;
+}
+
 async function main(argv: string[]): Promise<number> {
-  const [name, ...rest] = argv;
+  let args: string[];
+  try {
+    args = selectAccount(argv);
+  } catch (e) {
+    const usageError = e instanceof UsageError;
+    process.stderr.write(
+      `${usageError ? `${topUsage()}\n${PROG}: error: ` : ''}${(e as Error).message}\n`,
+    );
+    return usageError ? 2 : 1;
+  }
+  const [name, ...rest] = args;
   if (name === '-h' || name === '--help') {
     write(`${topHelp()}\n`);
     return 0;

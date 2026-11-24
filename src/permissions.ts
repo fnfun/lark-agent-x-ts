@@ -43,6 +43,8 @@ export type Group = keyof typeof GROUPS;
  */
 export const PERMISSIONS = {
   'auth.status': 'local',
+  'account.list': 'local',
+  'account.current': 'local',
   config: 'local',
   chats: 'local',
   sessions: 'local',
@@ -214,6 +216,8 @@ export const PERMISSIONS = {
 
   'auth.qr': 'system',
   'auth.import': 'system',
+  'account.use': 'system',
+  'account.rm': 'system',
   listen: 'system',
   api: 'system',
   web: 'system',

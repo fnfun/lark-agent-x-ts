@@ -26,6 +26,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark auth qr` | 扫码登录（推荐；`--region lark` 登录 Lark 国际版） |
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` / `status` | 校验凭证是否过期 / 查看凭证概况 |
+| `lark account list` / `current` / `use <名字>` / `rm <名字> --yes` | 本机的账号（`*` 为本次生效的；`--json`）/ 打印本次生效的账号 / 切换之后命令默认用的账号 / 删除账号的数据目录，见[多账号](#多账号) |
 | `lark send <chat_id> <text>` | 发送消息（`--root` 回复进话题，`--reply <msg_id>` 引用回复，`--links` 把 `[文字](url)` 发成超链接，`--md [--title]` 发 Markdown（客户端按 Markdown 渲染；`![说明](src)` 里写图片 key、http(s) 地址或相对当前目录的路径时，自动上传并在正文里显示；`--attach <路径,...>` 把文件放进消息的附件区），`--post [--title]` 发 HTML 富文本，`--rich <json\|@file>` 发结构化富文本；`--cid` 指定幂等键，同一个 cid 重发不会发重）。凡是要发往或读取 `<chat_id>` 的命令（`send`、`send-image`、`send-file`、`schedule`、`history`），都可以写 `user:<user_id>` 表示与该用户的私聊（没有时自动创建） |
 | `lark send-image <chat_id> <路径>` / `send-file` / `send-video` / `send-audio` | 发送图片 / 文件 / MP4 视频（`--cover <图片>` 指定封面） / 语音（Ogg/Opus，即客户端录音的格式）；本地文件自动上传，时长从文件读取；同样支持 `--root`、`--reply` |
 | `lark schedule <chat_id> <text> --at <时间>` / `lark scheduled <chat_id>` | 定时发送（`--at 10m`、`--at "2026-10-15 09:30"`，`--md`；每个会话同时只能有一条待发）/ 列出待发的定时消息（`--cancel`、`--reschedule` 配合 `--at`） |
@@ -76,7 +77,8 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 
 ```bash
 LARKX_REGION=feishu          # feishu(飞书国内版) | lark(Lark 国际版)；只影响还没有凭证时的首次登录
-LARKX_HOME=~/.larkx          # 数据目录：credentials.json、messages.db、permissions.json、login_qr.png
+LARKX_HOME=~/.larkx          # 数据目录：credentials.json、messages.db、permissions.json、login_qr.png（默认账号的；其他账号在 accounts/<名字>/ 下）
+LARKX_ACCOUNT=              # 用哪个账号执行；留空=取 `lark account use` 选定的，再没有就用默认账号
 LARKX_STORAGE_URL=           # 留空=SQLite(LARKX_HOME/messages.db)；MySQL 填 mysql+pymysql://<user>:<password>@<host>:3306/<db>
 LARKX_CONTEXT_SCOPE=anchor   # agent 上下文边界: anchor(会话+话题) | chat(会话) | global(全部共享)
 LARKX_AGENT_BACKEND=claude   # claude | none
@@ -88,6 +90,23 @@ LARKX_TRIGGER_PREFIX=        # 只把以此前缀开头的消息交给 agent；�
 ```
 
 凭证不放 `.env`，用 `lark auth qr` / `lark auth import` 管理。
+
+### 多账号
+
+每个账号一个数据目录（凭证、消息库、权限规则、agent 会话）。默认账号就是 `LARKX_HOME` 本身，与单账号时完全一样；其他账号在 `LARKX_HOME/accounts/<名字>/`。名字可用字母、数字、`_`、`.`、`-`，`default` 指默认账号。
+
+```bash
+lark --account work auth qr --region lark   # 登录一个新账号（登录时建目录）
+lark --account work chat-list               # 指定账号执行一条命令
+lark account use work                       # 之后的命令默认用它
+lark account list                           # 列出所有账号，* 为本次生效的
+lark account use default                    # 切回默认账号
+```
+
+- 生效的账号：`--account`（写在命令名前）> `LARKX_ACCOUNT` > `lark account use` 选定的（记在 `LARKX_HOME/current-account`）> 默认账号。一次运行从头到尾用同一个账号，它启动的进程也是：`lark listen` 背后的 agent 调 `lark` 时沿用同一账号，期间 `account use` 切换也不影响。
+- 已有的数据目录可以链接进来当作一个账号：`ln -s ~/.larkx-feishu ~/.larkx/accounts/feishu`，之后 `lark account rm` 只删链接。
+- `LARKX_STORAGE_URL` 配了 MySQL 时所有账号共用那个库；要分开就给每个账号单独设 `LARKX_STORAGE_URL`。
+- 库也按同一规则：`new LarkAuth()` 不传路径时读本次生效账号的凭证。
 
 ### 命令权限
 
@@ -134,7 +153,7 @@ LARKX_ALLOW=group.rename
 import { LarkAuth, LarkClient, PermissionDenied, setLogSink } from 'lark-agent-x-ts';
 
 setLogSink((level, module, msg) => myLogger.log(level, `${module} - ${msg}`)); // 可选：接到宿主日志，默认写 stderr
-const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // 默认 ~/.larkx/credentials.json；联网校验
+const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // 默认读本次生效账号的凭证（见多账号）；联网校验
 await client.sendMsg('你好', '<chat_id>');
 await client.sendMessage('<chat_id>', { markdown: '## 结论\n- 周五上线' }); // Markdown 富文本
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // 图片/文件自动上传；file: 字节 + name 发文件

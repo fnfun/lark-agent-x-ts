@@ -26,6 +26,7 @@ Put `dist/lark` on your PATH and you're done. `lark --version` prints the versio
 | `lark auth qr` | Log in by QR code (recommended; `--region lark` logs in to Lark, the international version) |
 | `lark auth import` | Log in by pasting a cookie |
 | `lark auth check` / `status` | Check whether the credentials have expired / show a credentials overview |
+| `lark account list` / `current` / `use <name>` / `rm <name> --yes` | Accounts on this machine (`*` marks the one in effect; `--json`) / print the account in effect / switch the account later commands use / delete an account's data directory; see [Multiple accounts](#multiple-accounts) |
 | `lark send <chat_id> <text>` | Send a message (`--root` replies into a thread, `--reply <msg_id>` sends a quote reply, `--links` sends `[text](url)` as hyperlinks, `--md [--title]` sends Markdown (rendered as Markdown by the client; `![alt](src)` images given as an image key, an http(s) URL or a path relative to the current directory are uploaded and shown inline; `--attach <path,...>` puts files in the message's attachment zone), `--post [--title]` sends HTML rich text, `--rich <json\|@file>` sends structured rich text; `--cid` sets the idempotency key, so resending with the same cid never sends a duplicate). Wherever a command takes `<chat_id>` to send to or read from (`send`, `send-image`, `send-file`, `schedule`, `history`), `user:<user_id>` means the direct chat with that user (created if there is none yet) |
 | `lark send-image <chat_id> <path>` / `send-file` / `send-video` / `send-audio` | Send an image / file / MP4 video (`--cover <image>`) / voice message (Ogg/Opus, the format the client records); local files are uploaded automatically and durations are read from the file; `--root` and `--reply` are supported too |
 | `lark schedule <chat_id> <text> --at <time>` / `lark scheduled <chat_id>` | Schedule a message (`--at 10m`, `--at "2026-10-15 09:30"`, `--md`; each chat can have only one pending scheduled message at a time) / list pending scheduled messages (`--cancel`, `--reschedule` together with `--at`) |
@@ -76,7 +77,8 @@ Everything has a default; override with environment variables or a `.env` in the
 
 ```bash
 LARKX_REGION=feishu          # feishu (Feishu, China) | lark (Lark, international); only affects the first login when there are no credentials yet
-LARKX_HOME=~/.larkx          # data directory: credentials.json, messages.db, permissions.json, login_qr.png
+LARKX_HOME=~/.larkx          # data directory: credentials.json, messages.db, permissions.json, login_qr.png (of the default account; other accounts live in accounts/<name>/)
+LARKX_ACCOUNT=              # account to run as; empty = the one chosen with `lark account use`, else the default account
 LARKX_STORAGE_URL=           # empty = SQLite (LARKX_HOME/messages.db); for MySQL use mysql+pymysql://<user>:<password>@<host>:3306/<db>
 LARKX_CONTEXT_SCOPE=anchor   # agent context boundary: anchor (chat + thread) | chat (chat) | global (shared by all)
 LARKX_AGENT_BACKEND=claude   # claude | none
@@ -88,6 +90,23 @@ LARKX_TRIGGER_PREFIX=        # only hand messages starting with this prefix to t
 ```
 
 Credentials don't go in `.env`; manage them with `lark auth qr` / `lark auth import`.
+
+### Multiple accounts
+
+Each account has its own data directory (credentials, message database, permission rules, agent sessions). The default account is `LARKX_HOME` itself, exactly as with a single account; every other account is `LARKX_HOME/accounts/<name>/`. Names may use letters, digits, `_`, `.` and `-`, and `default` means the default account.
+
+```bash
+lark --account work auth qr --region lark   # log a new account in (the directory is created on login)
+lark --account work chat-list               # run one command as that account
+lark account use work                       # later commands use it by default
+lark account list                           # all accounts; * marks the one in effect
+lark account use default                    # back to the default account
+```
+
+- The account in effect is `--account` (before the command name) > `LARKX_ACCOUNT` > the one chosen with `lark account use` (remembered in `LARKX_HOME/current-account`) > the default account. A run keeps its account to the end, and so do the processes it starts: the agent behind `lark listen` calls `lark` as the same account even if `account use` switches meanwhile.
+- An existing data directory can join as an account by linking it in: `ln -s ~/.larkx-feishu ~/.larkx/accounts/feishu`. `lark account rm` then removes only the link.
+- With `LARKX_STORAGE_URL` set to MySQL, all accounts share that database; give each account its own `LARKX_STORAGE_URL` if their messages must stay apart.
+- The library follows the same rule: `new LarkAuth()` without a path reads the credentials of the account in effect.
 
 ### Command permissions
 
@@ -134,7 +153,7 @@ The library entry point works under both Node (≥ 22.19) and Bun, and exports l
 import { LarkAuth, LarkClient, PermissionDenied, setLogSink } from 'lark-agent-x-ts';
 
 setLogSink((level, module, msg) => myLogger.log(level, `${module} - ${msg}`)); // optional: route to the host's logger; writes to stderr by default
-const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // defaults to ~/.larkx/credentials.json; validates online
+const client = await LarkClient.create(new LarkAuth('/path/to/credentials.json')); // defaults to the credentials of the account in effect (see Multiple accounts); validates online
 await client.sendMsg('你好', '<chat_id>');
 await client.sendMessage('<chat_id>', { markdown: '## 结论\n- 周五上线' }); // Markdown rich text
 await client.sendMessage('<chat_id>', { image: readFileSync('shot.png'), name: 'shot.png' }); // images/files are uploaded automatically; file: bytes + name sends a file

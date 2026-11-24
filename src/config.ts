@@ -1,3 +1,4 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,12 +8,62 @@ export function expandUser(p: string): string {
 }
 
 /**
- * Data directory (credentials, message database, QR code): `LARKX_HOME`, default `~/.larkx`. Reads
- * the environment variable on every call so tests can switch it.
+ * Root of all accounts: `LARKX_HOME`, default `~/.larkx`. The default account keeps its data in the
+ * root itself (the fork's layout, so a single-account setup is unchanged); named accounts live in
+ * `<root>/accounts/<name>/`. Reads the environment on every call so tests can switch it.
  */
-export function dataDir(): string {
+export function dataRoot(): string {
   return expandUser(process.env.LARKX_HOME || join(homedir(), '.larkx'));
 }
+
+/** The account whose data is the root directory itself. */
+export const DEFAULT_ACCOUNT = 'default';
+
+/** Remembers the account chosen with `lark account use`; absent means the default account. */
+const currentFile = () => join(dataRoot(), 'current-account');
+
+/** Account names become directory names, so path separators and leading dots are refused. */
+export function checkAccountName(name: string): string {
+  if (!/^[\w-][\w.-]*$/.test(name))
+    throw new Error(`账号名只能用字母、数字、下划线、点和连字符,且不能以点开头: ${name}`);
+  return name;
+}
+
+/**
+ * The account in effect: `LARKX_ACCOUNT` (the CLI sets it from `--account`) > the one remembered
+ * by `lark account use` > the default account.
+ */
+export function currentAccount(): string {
+  const fromEnv = process.env.LARKX_ACCOUNT?.trim();
+  return fromEnv ? checkAccountName(fromEnv) : rememberedAccount();
+}
+
+/** The account remembered by `lark account use`, ignoring `LARKX_ACCOUNT`. */
+export function rememberedAccount(): string {
+  let saved = '';
+  try {
+    saved = readFileSync(currentFile(), 'utf8').trim();
+  } catch {
+    // No account chosen yet
+  }
+  return saved ? checkAccountName(saved) : DEFAULT_ACCOUNT;
+}
+
+/** Remembers the account for later runs; the default account clears the choice. */
+export function rememberAccount(name: string): void {
+  if (checkAccountName(name) === DEFAULT_ACCOUNT) {
+    rmSync(currentFile(), { force: true });
+    return;
+  }
+  mkdirSync(dataRoot(), { recursive: true });
+  writeFileSync(currentFile(), `${name}\n`, 'utf8');
+}
+
+export const accountDir = (name: string): string =>
+  checkAccountName(name) === DEFAULT_ACCOUNT ? dataRoot() : join(dataRoot(), 'accounts', name);
+
+/** Data directory of the account in effect (credentials, message database, QR code, rules). */
+export const dataDir = (): string => accountDir(currentAccount());
 
 export const credentialsPath = (): string => join(dataDir(), 'credentials.json');
 export const dbDefaultPath = (): string => join(dataDir(), 'messages.db');
