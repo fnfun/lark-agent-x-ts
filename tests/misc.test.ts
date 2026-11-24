@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { create, toBinary } from '@bufbuild/protobuf';
 import { loadConfig } from '../src/config.js';
 import { extractResourceKey, messageResourceUrl } from '../src/media.js';
-import { enumToInt, isThreadChat, resolveScope } from '../src/proto/decoders.js';
+import { enumToInt, isThreadChat, resolveScope, richTextImageKeys } from '../src/proto/decoders.js';
+import { larkType } from '../src/proto/registry.js';
 import { getRegion, urls } from '../src/region.js';
 
 const KEYS = [
@@ -76,5 +78,32 @@ describe('会话归属与资源', () => {
     expect(messageResourceUrl('m1', 'k1', 'c1', 'https://h')).toBe(
       'https://h/download/messages/m1/keys/k1?chat_id=c1',
     );
+  });
+
+  test('富文本里的图片 key：按 imageIds 顺序、去重；本地库的 <n bytes> 占位取不出', () => {
+    // Guards lark download on rich-text messages: images there have no top-level key
+    const t = larkType('entities.RichTextElement.ImageProperty');
+    const img = (token: string) => toBinary(t, create(t, { token }));
+    const dictionary = {
+      '1': { tag: 1, property: new Uint8Array() },
+      '2': { tag: 2, property: img('img_v3_b') },
+      '3': { tag: 2, property: img('img_v3_a') },
+      '4': { tag: 2, property: img('img_v3_b') },
+    };
+    const richText = { imageIds: ['3', '2', '4'], elements: { dictionary } };
+    expect(richTextImageKeys({ richText })).toEqual(['img_v3_a', 'img_v3_b']);
+    // Without imageIds every image element counts, in dictionary order
+    expect(richTextImageKeys({ richText: { elements: { dictionary } } })).toEqual([
+      'img_v3_b',
+      'img_v3_a',
+    ]);
+    const stored = {
+      richText: {
+        imageIds: ['2'],
+        elements: { dictionary: { '2': { tag: 2, property: '<12 bytes>' } } },
+      },
+    };
+    expect(richTextImageKeys(stored)).toEqual([]);
+    expect(richTextImageKeys(null)).toEqual([]);
   });
 });

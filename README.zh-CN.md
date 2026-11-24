@@ -50,7 +50,7 @@ x64 目标用的是 Bun 的 `baseline` 构建（不要求 AVX2，老 CPU 与转�
 | `lark history <chat_id>` | 拉历史消息（`--save` 入库；`--since` / `--until` 按时间范围取最新的 `--count` 条，如 `--since 2h`、`--since 2026-10-01`；`--order desc` 新的在前，`--reactions` 同时列出表情回复） |
 | `lark get <msg_id...>` | 按 id 取消息（可跨会话；`--save` 入库，`--json`） |
 | `lark thread <root_id>` | 拉取一个话题：根消息加最近的回复（`--count`、`--save`、`--json`） |
-| `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取） |
+| `lark download <msg_id> -o <路径>` | 下载消息里的图片/文件（本地没有该消息时向服务端取）；富文本消息的 `-o` 是目录，里面嵌的图片全部下载到这里 |
 | `lark folder <msg_id>` | 列出文件夹消息里的文件，或压缩包文件消息（zip 等，由服务端解压）里的内容；`--path a/b` 只列子文件夹，`-r` 连同各级子文件夹，`--json`；其中的文件用 `lark download <msg_id> --key <key> --chat <chat_id>` 下载 |
 | `lark api <类型名> '<json>'` | 调任意网关接口（类型名见 `assets/cmd_map.json`） |
 | `lark task <动作>` | 任务：`list`（`--done`、`--all`；`--list <guid>` 按清单里的顺序列出清单里的任务，带分组）、`search <关键词>`、`get <guid...>`（描述、截止、提醒、负责人、关注人、所属清单、父任务、附件）、`subtasks <guid>`、`create <标题>`（`--desc`、`--due`、`--all-day`、`--assignees`、`--followers`、`--parent`、`--list`、`--remind <截止前分钟数>`）、`update <guid>`（`--title`、`--desc`、`--due` / `--remind`（`none` 清除）、`--assignees` / `--followers` 整体替换）、`attach <guid> <路径...>` / `detach <guid> <token...>`（附件用 `lark doc download <token>` 下载）、`complete <guid...>`（`--reopen` 重开）、`delete <guid...>`、`comment <guid> <内容>`、`comments <guid>`，任务清单 `lists` / `list-search <关键词>` / `list-create <名字>` / `list-delete <guid>`、`list-add <清单> <guid...>`（`--section`；已在清单里的移到该分组）/ `list-remove <清单> <guid...>`，分组 `sections <清单>` / `section-add <清单> <名字>` / `section-rename <清单> <分组> <名字>` / `section-rm <清单> <分组>`（里面的任务回到默认分组）；列出类的动作支持 `--json`。`lark task -h` 列出全部动作 |
