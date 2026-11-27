@@ -7,6 +7,10 @@
  *   characters and `.attribs` the changeset (`*a*b+len` applies pool attributes a and b to the next
  *   `len` UTF-16 code units, numbers in base 36); `text.apool.numToAttrib` maps an attribute number to
  *   `[name, value]`, e.g. `["bold","true"]`, `["link","<url-encoded url>"]`, `["author", id]`.
+ * - An @mention is one placeholder character carrying `["inline-component", "<json>"]`: a person is
+ *   `{"type":"user","data":{"uid":"<user id>"}}` (no name: callers look names up, see
+ *   mentionedUsers), a document `{"type":"mention_doc","data":{"title","raw_url",...}}`. Seen
+ *   2026-11-27 in a wiki page whose table cells held only mentions.
  * - Kinds seen: page (the title), text, heading1..9, bullet, ordered (`seq`), todo (`done`), quote,
  *   code (`language`), divider, table (`rows_id`, `columns_id`, `cell_set` keyed by row id +
  *   column id → `{block_id}` of a table_cell whose children hold the cell's blocks, rendered as
@@ -27,8 +31,44 @@ const INLINE: Record<string, [string, string]> = {
   inlineCode: ['`', '`'],
 };
 
-/** A block's text with inline styles and links as Markdown. */
-export function attributedText(text: Dict | undefined): string {
+/** Single-line link text: the brackets would end the Markdown link early. */
+const label = (s: string) =>
+  s.replace(/\s+/g, ' ').trim().replace(/\[/g, '［').replace(/\]/g, '］');
+
+/** User id → display name, for rendering @mentions of people. */
+export type UserNames = ReadonlyMap<string, string>;
+
+/** Looks up display names of user ids (e.g. LarkClient.userNames); ids it can't find are left out. */
+export type NameLookup = (ids: string[]) => Promise<UserNames>;
+
+/** An inline component (an @mention) from its pool value; null when it isn't valid JSON. */
+function inlineComponent(value: string): { type?: string; data?: Dict } | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as { type?: string; data?: Dict }) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Markdown standing in for an @mention: `@name` for a person (`@user:<id>` when the name is
+ * unknown), `[title](url)` for a document; undefined for other components, which keep their text.
+ */
+function mention(value: string, names: UserNames): string | undefined {
+  const component = inlineComponent(value);
+  const data = component?.data ?? {};
+  if (component?.type === 'user' && data.uid) {
+    const uid = String(data.uid);
+    return `@${names.get(uid) || `user:${uid}`}`;
+  }
+  if (component?.type === 'mention_doc' && data.raw_url)
+    return `[${label(String(data.title ?? '')) || String(data.raw_url)}](${String(data.raw_url)})`;
+  return undefined;
+}
+
+/** A block's text with inline styles, links and @mentions as Markdown. */
+export function attributedText(text: Dict | undefined, names: UserNames = new Map()): string {
   const initial = (text?.initialAttributedTexts ?? {}) as Dict;
   const segs = (initial.text ?? {}) as Record<string, string>;
   const attribs = (initial.attribs ?? {}) as Record<string, string>;
@@ -37,11 +77,13 @@ export function attributedText(text: Dict | undefined): string {
     [string, string]
   >;
   let out = '';
+  let afterMention = false;
   for (const key of Object.keys(segs).sort((a, b) => Number(a) - Number(b))) {
     const str = segs[key] ?? '';
     const ops = attribs[key];
     if (!ops) {
       out += str;
+      afterMention &&= !str;
       continue;
     }
     let pos = 0;
@@ -49,28 +91,30 @@ export function attributedText(text: Dict | undefined): string {
       const len = Number.parseInt(m[2] as string, 36);
       let piece = str.slice(pos, pos + len);
       pos += len;
-      const names = ((m[1] ?? '').match(/[0-9a-z]+/g) ?? []).map(
+      const attrs = ((m[1] ?? '').match(/[0-9a-z]+/g) ?? []).map(
         (n) => pool[String(Number.parseInt(n, 36))],
       );
       let link = '';
-      for (const attr of names) {
+      let inline: string | undefined;
+      for (const attr of attrs) {
         if (!attr || attr[1] === 'false') continue;
+        if (attr[0] === 'inline-component') inline = mention(attr[1], names) ?? inline;
         const style = INLINE[attr[0]];
         if (style && piece.trim()) piece = `${style[0]}${piece}${style[1]}`;
         if (attr[0] === 'link') link = decodeURIComponent(attr[1]);
       }
-      out += link ? `[${piece}](${link})` : piece;
+      // Adjacent mentions have no text between them; a space keeps `@甲 @乙` readable
+      if (inline !== undefined && afterMention) out += ' ';
+      afterMention = inline !== undefined;
+      out += inline ?? (link ? `[${piece}](${link})` : piece);
     }
     out += str.slice(pos);
+    afterMention &&= pos >= str.length;
   }
   return out;
 }
 
-/** Single-line link text: the brackets would end the Markdown link early. */
-const label = (s: string) =>
-  s.replace(/\s+/g, ' ').trim().replace(/\[/g, '［').replace(/\]/g, '］');
-
-function table(blocks: BlockMap, data: Dict): string[] {
+function table(blocks: BlockMap, data: Dict, names: UserNames): string[] {
   const rows = (data.rows_id ?? []) as string[];
   const cols = (data.columns_id ?? []) as string[];
   const cells = (data.cell_set ?? {}) as Record<string, { block_id?: string }>;
@@ -78,7 +122,7 @@ function table(blocks: BlockMap, data: Dict): string[] {
   const cell = (r: string, c: string) => {
     const id = cells[`${r}${c}`]?.block_id;
     const children = (id ? (blocks[id]?.data?.children as string[] | undefined) : undefined) ?? [];
-    return renderAll(blocks, children, 0)
+    return renderAll(blocks, children, 0, names)
       .filter((l) => l.trim())
       .join('<br>')
       .replace(/\n/g, '<br>')
@@ -105,20 +149,26 @@ function ordinals(blocks: BlockMap, ids: string[]): number[] {
 }
 
 /** Markdown lines of sibling blocks. */
-function renderAll(blocks: BlockMap, ids: string[], depth: number): string[] {
+function renderAll(blocks: BlockMap, ids: string[], depth: number, names: UserNames): string[] {
   const nums = ordinals(blocks, ids);
-  return ids.flatMap((id, i) => render(blocks, id, depth, nums[i] ?? 0));
+  return ids.flatMap((id, i) => render(blocks, id, depth, nums[i] ?? 0, names));
 }
 
 /** Markdown lines of one block and its children; depth indents nested list items. */
-function render(blocks: BlockMap, id: string, depth: number, ordinal = 0): string[] {
+function render(
+  blocks: BlockMap,
+  id: string,
+  depth: number,
+  ordinal: number,
+  names: UserNames,
+): string[] {
   const data = blocks[id]?.data;
   if (!data) return [];
   const type = String(data.type ?? '');
-  const text = attributedText(data.text as Dict | undefined);
+  const text = attributedText(data.text as Dict | undefined, names);
   const children = (data.children ?? []) as string[];
   const indent = '  '.repeat(depth);
-  const nested = (d: number) => renderAll(blocks, children, d);
+  const nested = (d: number) => renderAll(blocks, children, d, names);
   const heading = /^heading([1-9])$/.exec(type);
   if (heading) return [`${'#'.repeat(Math.min(6, Number(heading[1])))} ${text}`, ...nested(depth)];
   switch (type) {
@@ -139,6 +189,7 @@ function render(blocks: BlockMap, id: string, depth: number, ordinal = 0): strin
       const image = (data.image ?? {}) as Dict;
       const caption = attributedText(
         ((image.caption as Dict | undefined)?.text ?? undefined) as Dict | undefined,
+        names,
       );
       return [`![${label(caption)}](${String(image.token ?? '')})`];
     }
@@ -165,7 +216,7 @@ function render(blocks: BlockMap, id: string, depth: number, ordinal = 0): strin
       return [`[${label(String(file.name ?? ''))}](${String(file.token ?? '')})`];
     }
     case 'table':
-      return table(blocks, data);
+      return table(blocks, data, names);
     default:
       return [...(text ? [text] : []), ...nested(depth)];
   }
@@ -174,19 +225,52 @@ function render(blocks: BlockMap, id: string, depth: number, ordinal = 0): strin
 /** List kinds: consecutive items of the same kind stay together (no blank line between them). */
 const LIST = new Set(['bullet', 'ordered', 'todo']);
 
-/** The document as Markdown: the title as `# title`, then the page's blocks in order. */
+/** User ids @mentioned anywhere in the blocks, for looking their names up before docxToMarkdown. */
+export function mentionedUsers(blocks: BlockMap): string[] {
+  const ids = new Set<string>();
+  const scan = (text: unknown) => {
+    const pool = (((text as Dict | undefined)?.apool as Dict | undefined)?.numToAttrib ??
+      {}) as Record<string, [string, string]>;
+    for (const [name, value] of Object.values(pool)) {
+      if (name !== 'inline-component') continue;
+      const component = inlineComponent(value);
+      if (component?.type === 'user' && component.data?.uid) ids.add(String(component.data.uid));
+    }
+  };
+  for (const block of Object.values(blocks)) {
+    scan(block?.data?.text);
+    scan(((block?.data?.image as Dict | undefined)?.caption as Dict | undefined)?.text);
+  }
+  return [...ids];
+}
+
+/** docxToMarkdown with the @mentioned people's names looked up first (only when there are any). */
+export async function docxToMarkdownNamed(
+  blocks: BlockMap,
+  rootId: string,
+  lookup?: NameLookup,
+): Promise<{ title: string; markdown: string }> {
+  const ids = lookup ? mentionedUsers(blocks) : [];
+  return docxToMarkdown(blocks, rootId, ids.length && lookup ? await lookup(ids) : new Map());
+}
+
+/**
+ * The document as Markdown: the title as `# title`, then the page's blocks in order. `names`
+ * renders @mentioned people by name (see mentionedUsers); without it they show as `@user:<id>`.
+ */
 export function docxToMarkdown(
   blocks: BlockMap,
   rootId: string,
+  names: UserNames = new Map(),
 ): { title: string; markdown: string } {
   const page = blocks[rootId]?.data ?? {};
-  const title = attributedText(page.text as Dict | undefined);
+  const title = attributedText(page.text as Dict | undefined, names);
   const parts: string[] = [title ? `# ${title}` : ''];
   let prevKind = '';
   const ids = (page.children ?? []) as string[];
   const nums = ordinals(blocks, ids);
   for (const [i, id] of ids.entries()) {
-    const lines = render(blocks, id, 0, nums[i] ?? 0);
+    const lines = render(blocks, id, 0, nums[i] ?? 0, names);
     if (!lines.length) continue;
     const kind = String(blocks[id]?.data?.type ?? '');
     parts.push(`${LIST.has(kind) && kind === prevKind ? '' : '\n'}${lines.join('\n')}`);

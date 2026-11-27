@@ -18,7 +18,7 @@
  */
 import type { WebSession } from '../web.js';
 import { check, Docs, docToken } from './docs.js';
-import { type BlockMap, docxToMarkdown } from './docx-markdown.js';
+import { type BlockMap, docxToMarkdownNamed, type NameLookup } from './docx-markdown.js';
 
 type Dict = Record<string, unknown>;
 
@@ -82,8 +82,8 @@ export class DocHistory {
     return out.slice(0, limit);
   }
 
-  /** The document as of a history record, as Markdown. */
-  async markdown(urlOrToken: string, version: number): Promise<string> {
+  /** The document as of a history record, as Markdown; `lookup` names @mentioned people (see Docs.fetch). */
+  async markdown(urlOrToken: string, version: number, lookup?: NameLookup): Promise<string> {
     const pageId = docToken(urlOrToken);
     const record = await this.find(pageId, version);
     const { blocks, root } = await new Docs(this.web).blocks(
@@ -91,7 +91,7 @@ export class DocHistory {
       pageId,
       { version: record.pageVersion },
     );
-    return docxToMarkdown(blocks as BlockMap, root).markdown;
+    return (await docxToMarkdownNamed(blocks as BlockMap, root, lookup)).markdown;
   }
 
   /** Restores the document to a history record and waits until the server has done it. */

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { attributedText, type BlockMap, docxToMarkdown } from '../src/domains/docx-markdown.js';
+import {
+  attributedText,
+  type BlockMap,
+  docxToMarkdown,
+  docxToMarkdownNamed,
+  mentionedUsers,
+} from '../src/domains/docx-markdown.js';
 
 /** Attributed text as client_vars returns it; pool 0 is the author, as in real documents. */
 const text = (
@@ -149,6 +155,58 @@ describe('docx 转 Markdown', () => {
       '| --- | --- |',
       '',
       '[https://docs.example/minutes/abc](https://docs.example/minutes/abc)',
+      '',
+    ]);
+  });
+  test('@人和@文档：只放了 @ 的表格单元格不是空的，人名按 user id 查，查不到显示 id', async () => {
+    // As Lark stores them: one placeholder space per mention, carrying an inline-component attribute
+    const person = (uid: string) =>
+      JSON.stringify({ type: 'user', id: 'c1', data: { uid, mention_id: 'm1' } });
+    const doc = JSON.stringify({
+      type: 'mention_doc',
+      data: { title: '需求 [一期]', raw_url: 'https://docs.example/docx/abc' },
+    });
+    const cellText = text('  ', '*0*1+1*0*2+1', {
+      '1': ['inline-component', person('7000000000000000002')],
+      '2': ['inline-component', person('7000000000000000003')],
+    });
+    const blocks: BlockMap = {
+      page: { data: { type: 'page', text: text('报告'), children: ['tbl'] } },
+      tbl: {
+        data: {
+          type: 'table',
+          rows_id: ['r1', 'r2'],
+          columns_id: ['c1', 'c2'],
+          cell_set: {
+            r1c1: { block_id: 'h1' },
+            r1c2: { block_id: 'h2' },
+            r2c1: { block_id: 'x1' },
+            r2c2: { block_id: 'x2' },
+          },
+        },
+      },
+      h1: { data: { type: 'table_cell', children: ['h1t'] } },
+      h1t: { data: { type: 'text', text: text('负责人') } },
+      h2: { data: { type: 'table_cell', children: ['h2t'] } },
+      h2t: { data: { type: 'text', text: text('文档') } },
+      x1: { data: { type: 'table_cell', children: ['x1t'] } },
+      x1t: { data: { type: 'text', text: cellText } },
+      x2: { data: { type: 'table_cell', children: ['x2t'] } },
+      x2t: {
+        data: { type: 'text', text: text(' ', '*0*1+1', { '1': ['inline-component', doc] }) },
+      },
+    };
+    expect(mentionedUsers(blocks).sort()).toEqual(['7000000000000000002', '7000000000000000003']);
+    const asked: string[][] = [];
+    const named = await docxToMarkdownNamed(blocks, 'page', async (ids) => {
+      asked.push(ids);
+      return new Map([['7000000000000000002', '同事甲']]);
+    });
+    expect(asked).toHaveLength(1);
+    expect(named.markdown.split('\n').slice(2)).toEqual([
+      '| 负责人 | 文档 |',
+      '| --- | --- |',
+      '| @同事甲 @user:7000000000000000003 | [需求 ［一期］](https://docs.example/docx/abc) |',
       '',
     ]);
   });
