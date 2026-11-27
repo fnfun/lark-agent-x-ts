@@ -105,7 +105,14 @@ export {
   type TrashedFile,
   type WhiteboardNode,
 } from './domains/docs.js';
-export { attributedText, docxToMarkdown } from './domains/docx-markdown.js';
+export {
+  attributedText,
+  docxToMarkdown,
+  docxToMarkdownNamed,
+  mentionedUsers,
+  type NameLookup,
+  type UserNames,
+} from './domains/docx-markdown.js';
 export { type BlockSpec, parseMarkdown } from './domains/markdown-docx.js';
 export { MindnoteEditor } from './domains/mindnote.js';
 export { type CellStyle, columnName, Sheets, type SheetTab } from './domains/sheet.js';

@@ -52,7 +52,12 @@
  */
 import { imageInfo } from '../media.js';
 import type { WebRequest, WebSession } from '../web.js';
-import { attributedText, type BlockMap, docxToMarkdown } from './docx-markdown.js';
+import {
+  attributedText,
+  type BlockMap,
+  docxToMarkdownNamed,
+  type NameLookup,
+} from './docx-markdown.js';
 
 /** Drive object types (the `type` of explorer nodes). */
 export const DOC_TYPES = {
@@ -734,20 +739,27 @@ export class Docs {
     };
   }
 
-  /** A document as Markdown by what it is: a docx in full, a mindnote as an outline, slides by page. */
-  async read(r: DocRef): Promise<DocContent> {
+  /**
+   * A document as Markdown by what it is: a docx in full, a mindnote as an outline, slides by page.
+   * `lookup` names the people @mentioned in a docx (see Docs.fetch).
+   */
+  async read(r: DocRef, lookup?: NameLookup): Promise<DocContent> {
     if (r.type === 'mindnote') return this.fetchMindnote(r.token);
     if (r.type === 'slides') return this.fetchSlides(r.token);
-    if (r.type === 'docx') return this.fetch(r.token);
+    if (r.type === 'docx') return this.fetch(r.token, lookup);
     throw new Error(`不支持读取这类文档: ${r.type}`);
   }
 
-  /** A docx (link or object token; resolve wiki links with Wiki.resolve) as Markdown, paging through all blocks. */
-  async fetch(urlOrToken: string): Promise<DocContent> {
+  /**
+   * A docx (link or object token; resolve wiki links with Wiki.resolve) as Markdown, paging through
+   * all blocks. The blocks carry only ids for @mentioned people: `lookup` (e.g. LarkClient.userNames)
+   * turns them into `@name`; without it they show as `@user:<id>`.
+   */
+  async fetch(urlOrToken: string, lookup?: NameLookup): Promise<DocContent> {
     if (/\/wiki\//.test(urlOrToken)) throw new Error('知识库链接要先解析成文档(Wiki.resolve)再读');
     const objToken = docToken(urlOrToken);
     const { blocks, root } = await this.blocks('/space/api/docx/pages/client_vars', objToken);
-    return { objToken, ...docxToMarkdown(blocks as BlockMap, root) };
+    return { objToken, ...(await docxToMarkdownNamed(blocks as BlockMap, root, lookup)) };
   }
 
   /**

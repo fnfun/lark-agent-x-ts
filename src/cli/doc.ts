@@ -17,18 +17,34 @@ import {
   type FileData,
   IMPORTABLE,
 } from '../domains/docs.js';
+import type { NameLookup } from '../domains/docx-markdown.js';
 import { MindnoteEditor } from '../domains/mindnote.js';
 import { SlidesEditor } from '../domains/slides.js';
 import { WhiteboardEditor } from '../domains/whiteboard.js';
 import { Wiki } from '../domains/wiki.js';
+import { getLogger } from '../log.js';
 import { NotOwnDocument, ownDocsOnly, type Permission } from '../permissions.js';
 import { WebSession } from '../web.js';
 import type { Option, Parsed } from './args.js';
-import { type Command, type CommandGroup, err, out, s, write } from './common.js';
+import { type Command, type CommandGroup, client, err, out, s, write } from './common.js';
 import { errorText, printJson, shortTime } from './format.js';
 
 const web = () => new WebSession(new LarkAuth());
 const docs = () => new Docs(web());
+const logger = getLogger('larkx.cli');
+
+/**
+ * Names of the people @mentioned in a docx, looked up over the IM gateway. A failed lookup only
+ * costs the names: they show as `@user:<id>` and the document is still printed.
+ */
+const userNames: NameLookup = async (ids) => {
+  try {
+    return await (await client()).userNames(ids);
+  } catch (e) {
+    logger.warning(`查 @ 的人名失败，按 user_id 显示: ${errorText(e)}`);
+    return new Map();
+  }
+};
 const JSON_OPTION: Option = { name: 'json', kind: 'flag' };
 const TYPES = Object.keys(DOC_TYPES) as DocType[];
 const DOC_ARG = { name: 'doc', help: '文档链接(含知识库链接),或 obj_token(配合 --type)' };
@@ -793,7 +809,7 @@ const fetch: Command = {
   positionals: [DOC_ARG],
   options: [TYPE_OPTION, JSON_OPTION],
   async run(a) {
-    const d = await docs().read(await ref(a));
+    const d = await docs().read(await ref(a), userNames);
     if (a.json) printJson(d);
     else write(d.markdown);
     return 0;
@@ -846,7 +862,7 @@ const historyFetch: Command = {
   options: [TYPE_OPTION],
   run: (a) =>
     guarded(async () => {
-      write(await new DocHistory(web()).markdown(await docxRef(a), Number(a.version)));
+      write(await new DocHistory(web()).markdown(await docxRef(a), Number(a.version), userNames));
       return 0;
     }),
 };
